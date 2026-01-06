@@ -1,0 +1,27 @@
+# 종가매매 스크리너 (Closing Trade Screener) - 의존성
+
+# Core
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Scheduling
+APScheduler==3.10.4
+
+# Database (sqlite3 is built-in)
+
+# Dashboard (Phase 3)
+streamlit==1.29.0
+plotly==5.18.0
+pandas==2.1.4
+
+# Data Processing
+numpy==1.26.2
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Development
+# black==23.12.1
+# isort==5.13.2
+# mypy==1.7.1
