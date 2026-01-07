@@ -8,13 +8,21 @@
 - 거래대금 상위 종목 조회
 - Rate Limit 핸들링
 - API 에러 변환
+- 네트워크 타임아웃 구분 처리
 """
 
 import time
 import logging
+import traceback
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 import requests
+from requests.exceptions import (
+    RequestException,
+    ConnectionError,
+    Timeout,
+    HTTPError,
+)
 
 from src.config.settings import settings
 from src.config.constants import (
@@ -31,8 +39,21 @@ from src.domain.models import (
     CurrentPrice,
     ScreenerError,
 )
+from src.infrastructure.logging_config import log_api_call, log_error_with_context
 
 logger = logging.getLogger(__name__)
+
+
+# 에러 코드 상수
+class KISErrorCode:
+    """KIS API 에러 코드"""
+    TOKEN_ISSUE_FAILED = "KIS_001"
+    TOKEN_EXPIRED = "KIS_002"
+    RATE_LIMIT = "KIS_003"
+    API_ERROR = "KIS_004"
+    NETWORK_ERROR = "KIS_005"
+    TIMEOUT_ERROR = "KIS_006"
+    CONNECTION_ERROR = "KIS_007"
 
 
 class KISClient:
@@ -107,34 +128,56 @@ class KISClient:
         body: Optional[Dict] = None,
         retry_count: int = 0,
     ) -> Dict[str, Any]:
-        """API 요청 공통 처리"""
+        """API 요청 공통 처리
+        
+        네트워크 에러 타입별 구분 처리:
+        - Timeout: 응답 지연 (재시도)
+        - ConnectionError: 네트워크 연결 실패 (재시도)
+        - HTTPError: HTTP 상태 코드 에러
+        """
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers(tr_id)
+        
+        # 요청 시작 시간 기록
+        start_time = time.time()
         
         try:
             self._wait_for_rate_limit()
             
             if method.upper() == "GET":
-                response = requests.get(url, headers=headers, params=params, timeout=10)
+                response = requests.get(url, headers=headers, params=params, timeout=15)
             else:
-                response = requests.post(url, headers=headers, json=body, timeout=10)
+                response = requests.post(url, headers=headers, json=body, timeout=15)
+            
+            # 요청 소요 시간 로깅
+            elapsed = time.time() - start_time
+            logger.debug(f"API 요청 완료 [{endpoint}] (소요: {elapsed:.3f}초)")
             
             # Rate Limit 처리
             if response.status_code == 429:
                 retry_after = float(response.headers.get("Retry-After", API_RETRY_DELAY))
-                logger.warning(f"Rate Limit 도달, {retry_after}초 대기")
+                logger.warning(f"Rate Limit 도달, {retry_after}초 대기 (재시도: {retry_count + 1}/{API_MAX_RETRIES})")
                 time.sleep(retry_after)
                 if retry_count < API_MAX_RETRIES:
                     return self._request(method, endpoint, tr_id, params, body, retry_count + 1)
-                raise ScreenerError("KIS_003", "요청 한도 초과", recoverable=True)
+                raise ScreenerError(
+                    KISErrorCode.RATE_LIMIT,
+                    "요청 한도 초과 (Rate Limit)",
+                    recoverable=True,
+                )
             
             # 토큰 만료 처리
             if response.status_code == 401:
-                logger.warning("토큰 만료, 재발급 시도")
+                logger.warning(f"토큰 만료, 재발급 시도 (재시도: {retry_count + 1}/{API_MAX_RETRIES})")
                 self._access_token = None
+                self._token_expires_at = None
                 if retry_count < API_MAX_RETRIES:
                     return self._request(method, endpoint, tr_id, params, body, retry_count + 1)
-                raise ScreenerError("KIS_002", "토큰 만료", recoverable=True)
+                raise ScreenerError(
+                    KISErrorCode.TOKEN_EXPIRED,
+                    "토큰 만료 - 재발급 실패",
+                    recoverable=True,
+                )
             
             response.raise_for_status()
             data = response.json()
@@ -143,17 +186,71 @@ class KISClient:
             rt_cd = data.get("rt_cd", "0")
             if rt_cd != "0":
                 msg = data.get("msg1", "알 수 없는 에러")
-                logger.error(f"API 에러: {msg}")
-                raise ScreenerError("KIS_004", msg, recoverable=False)
+                msg_cd = data.get("msg_cd", "")
+                logger.error(f"API 에러: [{msg_cd}] {msg}")
+                raise ScreenerError(
+                    KISErrorCode.API_ERROR,
+                    f"[{msg_cd}] {msg}",
+                    recoverable=False,
+                )
             
             return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API 요청 실패: {e}")
+        
+        # 타임아웃 에러 (별도 처리)
+        except Timeout as e:
+            elapsed = time.time() - start_time
+            logger.warning(
+                f"API 타임아웃 [{endpoint}] (소요: {elapsed:.1f}초, 재시도: {retry_count + 1}/{API_MAX_RETRIES})"
+            )
             if retry_count < API_MAX_RETRIES:
                 time.sleep(API_RETRY_DELAY)
                 return self._request(method, endpoint, tr_id, params, body, retry_count + 1)
-            raise ScreenerError("SCREEN_002", f"한투 API 호출 실패: {e}", recoverable=True)
+            raise ScreenerError(
+                KISErrorCode.TIMEOUT_ERROR,
+                f"API 타임아웃 (15초 초과): {endpoint}",
+                recoverable=True,
+            )
+        
+        # 연결 에러 (별도 처리)
+        except ConnectionError as e:
+            elapsed = time.time() - start_time
+            logger.warning(
+                f"네트워크 연결 실패 [{endpoint}] (소요: {elapsed:.1f}초, 재시도: {retry_count + 1}/{API_MAX_RETRIES}): {e}"
+            )
+            if retry_count < API_MAX_RETRIES:
+                time.sleep(API_RETRY_DELAY * 2)  # 연결 에러는 더 오래 대기
+                return self._request(method, endpoint, tr_id, params, body, retry_count + 1)
+            raise ScreenerError(
+                KISErrorCode.CONNECTION_ERROR,
+                f"네트워크 연결 실패: {e}",
+                recoverable=True,
+            )
+        
+        # HTTP 에러
+        except HTTPError as e:
+            elapsed = time.time() - start_time
+            logger.error(f"HTTP 에러 [{endpoint}] (소요: {elapsed:.1f}초): {e}")
+            raise ScreenerError(
+                KISErrorCode.NETWORK_ERROR,
+                f"HTTP 에러: {e}",
+                recoverable=False,
+            )
+        
+        # 기타 요청 에러
+        except RequestException as e:
+            elapsed = time.time() - start_time
+            logger.error(
+                f"API 요청 실패 [{endpoint}] (소요: {elapsed:.1f}초, 재시도: {retry_count + 1}/{API_MAX_RETRIES}): {e}",
+                exc_info=True,
+            )
+            if retry_count < API_MAX_RETRIES:
+                time.sleep(API_RETRY_DELAY)
+                return self._request(method, endpoint, tr_id, params, body, retry_count + 1)
+            raise ScreenerError(
+                KISErrorCode.NETWORK_ERROR,
+                f"API 호출 실패: {e}",
+                recoverable=True,
+            )
     
     def get_daily_prices(
         self,

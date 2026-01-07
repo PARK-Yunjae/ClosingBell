@@ -46,6 +46,20 @@ class DiscordSettings:
 
 
 @dataclass
+class KakaoSettings:
+    """카카오톡 알림 설정"""
+    rest_api_key: str
+    redirect_uri: str
+    access_token: str = ""
+    enabled: bool = False
+    
+    def __post_init__(self):
+        # 액세스 토큰이 있으면 활성화
+        if self.access_token and self.access_token.strip():
+            self.enabled = True
+
+
+@dataclass
 class EmailSettings:
     """이메일 알림 설정"""
     enabled: bool = False
@@ -75,7 +89,7 @@ class ScreeningSettings:
     learning_time: str = "16:00"
     
     # Rate Limit (안정성 우선)
-    api_call_interval: float = 0.25  # 초당 4회
+    api_call_interval: float = 0.12  # 초당 8회
 
 
 @dataclass
@@ -83,6 +97,7 @@ class Settings:
     """전체 설정"""
     kis: KISSettings
     discord: DiscordSettings
+    kakao: KakaoSettings
     email: EmailSettings
     database: DatabaseSettings
     screening: ScreeningSettings
@@ -117,6 +132,13 @@ def load_settings() -> Settings:
         enabled=True,
     )
     
+    # Kakao 설정
+    kakao = KakaoSettings(
+        rest_api_key=os.getenv("KAKAO_REST_API_KEY", "").strip('"'),
+        redirect_uri=os.getenv("KAKAO_REDIRECT_URI", "http://localhost:3000/oauth"),
+        access_token=os.getenv("KAKAO_ACCESS_TOKEN", "").strip('"').split('#')[0].strip(),
+    )
+    
     # Email 설정
     email = EmailSettings(
         enabled=os.getenv("EMAIL_ENABLED", "false").lower() == "true",
@@ -137,12 +159,13 @@ def load_settings() -> Settings:
         screening_time_main=os.getenv("SCREENING_TIME_2", "15:00"),
         screening_time_preview=os.getenv("SCREENING_TIME_1", "12:30"),
         learning_time=os.getenv("LEARNING_TIME", "16:00"),
-        api_call_interval=float(os.getenv("API_CALL_INTERVAL", "0.25")),
+        api_call_interval=float(os.getenv("API_CALL_INTERVAL", "0.12")),
     )
     
     return Settings(
         kis=kis,
         discord=discord,
+        kakao=kakao,
         email=email,
         database=database,
         screening=screening,

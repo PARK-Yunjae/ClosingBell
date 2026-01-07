@@ -7,6 +7,7 @@
     python main.py --run-test   # 테스트 실행 (알림 없음)
     python main.py --learn      # 수동 학습 실행
     python main.py --init-db    # DB 초기화만
+    python main.py --validate   # 설정 검증만
 """
 
 import sys
@@ -17,39 +18,13 @@ from datetime import datetime
 from src.config.settings import settings
 from src.infrastructure.database import init_database
 from src.infrastructure.scheduler import create_scheduler, is_market_open
+from src.infrastructure.logging_config import init_logging
+from src.config.validator import validate_settings, ConfigValidationError, print_settings_summary
 from src.services.screener_service import (
     run_screening,
     run_main_screening,
     run_preview_screening,
 )
-
-
-def setup_logging():
-    """로깅 설정"""
-    log_format = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-    
-    # 콘솔 핸들러
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter(log_format))
-    
-    # 파일 핸들러
-    file_handler = logging.FileHandler(
-        settings.log_path,
-        encoding='utf-8',
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter(log_format))
-    
-    # 루트 로거 설정
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
-    
-    # 외부 라이브러리 로깅 레벨 조정
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
 
 def print_banner():
@@ -231,12 +206,46 @@ def main():
         action='store_true',
         help='알림 발송 안함',
     )
+    parser.add_argument(
+        '--validate',
+        action='store_true',
+        help='설정 검증만 실행',
+    )
+    parser.add_argument(
+        '--show-config',
+        action='store_true',
+        help='현재 설정 요약 출력',
+    )
     
     args = parser.parse_args()
     
-    # 로깅 설정
-    setup_logging()
+    # 로깅 설정 (일별 로그 파일 자동 분리)
+    init_logging()
     logger = logging.getLogger(__name__)
+    
+    # 설정 요약만 출력
+    if args.show_config:
+        print_settings_summary()
+        return
+    
+    # 설정 검증
+    try:
+        # 테스트 모드가 아니면 필수 설정 검증
+        if args.run_test or args.validate:
+            result = validate_settings(raise_on_error=False)
+            if args.validate:
+                print_settings_summary()
+                if result.valid:
+                    print("\n✅ 모든 필수 설정이 올바르게 구성되었습니다.")
+                else:
+                    print("\n❌ 설정 검증 실패. 위 에러를 확인하세요.")
+                    sys.exit(1)
+                return
+        else:
+            validate_settings(raise_on_error=True)
+    except ConfigValidationError as e:
+        print(str(e))
+        sys.exit(1)
     
     # DB 초기화
     logger.info("DB 초기화 확인...")

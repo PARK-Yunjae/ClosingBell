@@ -169,8 +169,8 @@ EXCLUDED_CODE_PREFIXES = [
 # ============================================================
 
 # Rate Limit (안전 마진 적용)
-API_CALLS_PER_SECOND = 4     # 초당 4회 (공식: 10회)
-API_CALL_INTERVAL = 0.25     # 0.25초 간격
+API_CALLS_PER_SECOND = 8     # 초당 8회 (공식: 10회)
+API_CALL_INTERVAL = 0.12     # 0.12초 간격
 
 # 재시도 설정
 API_MAX_RETRIES = 3
