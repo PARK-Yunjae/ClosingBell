@@ -125,25 +125,56 @@ def main():
     print_header("조건검색식 목록")
     conditions = client.get_condition_list(args.user_id)
     
+    # verbose 모드일 때 raw json 경로 출력
+    if args.verbose:
+        raw_path = Path("logs/condition_list_raw.json")
+        if raw_path.exists():
+            print(f"  📁 Raw 응답 저장됨: {raw_path.absolute()}")
+    
     if not conditions:
         print("  조건검색식이 없거나 조회에 실패했습니다.")
-        print("  HTS에서 조건검색식을 먼저 등록하세요.")
+        print("\n  [트러블슈팅 힌트]")
+        print("    1. HTS [0110] 조건검색에서 '서버저장' 했는지 확인")
+        print("    2. 실전/모의 환경 불일치 확인 (APP_KEY가 실전용인데 모의서버 사용 등)")
+        print("    3. HTS_ID가 정확한지 확인 (대소문자, 공백 주의)")
+        print(f"    4. logs/condition_list_raw.json 파일을 직접 확인")
         return 1
     
+    # ✅ 조건식 목록 출력 (repr(name)으로 공백/특수문자 문제 확인)
+    print(f"\n  총 {len(conditions)}개 조건검색식 발견:")
     for cond in conditions:
-        marker = " <--" if cond["name"] == args.condition else ""
-        print(f"  seq={cond['seq']:3s}: {cond['name']}{marker}")
+        name_display = cond["name"] or "(빈 문자열)"
+        name_repr = repr(cond["name"])
+        
+        # 대소문자 무시 매칭
+        is_match = (cond["name"] or "").strip().lower() == args.condition.strip().lower()
+        marker = " <-- 매칭됨!" if is_match else ""
+        
+        print(f"    seq={cond['seq']:3s}: {name_display:20s} (repr={name_repr}){marker}")
     
-    # 타겟 조건검색식 확인
-    target_cond = next((c for c in conditions if c["name"] == args.condition), None)
+    # 타겟 조건검색식 확인 (대소문자 무시 매칭)
+    target_cond = None
+    want = args.condition.strip().lower()
+    for c in conditions:
+        c_name = (c["name"] or "").strip().lower()
+        if c_name == want:
+            target_cond = c
+            break
+    
     if not target_cond:
         print(f"\n[에러] 조건검색식 '{args.condition}'을 찾을 수 없습니다.")
+        print("\n  [트러블슈팅 힌트]")
+        print("    1. 위 목록에서 실제 조건식 이름 확인 (공백/특수문자 주의)")
+        print("    2. 이름이 빈 문자열이면 API 응답 키가 다를 수 있음")
+        print("    3. logs/condition_list_raw.json 파일에서 실제 키 확인")
+        print("    4. HTS [0110]에서 조건식을 '서버저장' 했는지 확인")
         return 1
     
     # ============================================================
     # 2. 조건검색 결과 조회 (Raw)
     # ============================================================
     print_header(f"조건검색 결과 (Raw): {args.condition}")
+    print(f"  조건검색식 매칭됨: seq={target_cond['seq']}, name={repr(target_cond['name'])}")
     
     stocks_raw = client.get_condition_universe(
         condition_name=args.condition,
@@ -151,6 +182,12 @@ def main():
         limit=500,
         fetch_names=True,
     )
+    
+    # verbose 모드일 때 결과 raw json 경로 출력
+    if args.verbose:
+        result_raw_path = Path("logs/condition_result_raw.json")
+        if result_raw_path.exists():
+            print(f"  📁 결과 Raw 저장됨: {result_raw_path.absolute()}")
     
     print(f"  총 {len(stocks_raw)}개 종목 조회됨")
     

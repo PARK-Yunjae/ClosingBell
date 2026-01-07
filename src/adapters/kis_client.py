@@ -6,14 +6,17 @@
 - 일봉 데이터 조회
 - 현재가 조회
 - 거래대금 상위 종목 조회
+- 조건검색(psearch) API
 - Rate Limit 핸들링
 - API 에러 변환
 - 네트워크 타임아웃 구분 처리
 """
 
+import json
 import time
 import logging
 import traceback
+from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 import requests
@@ -605,109 +608,167 @@ class KISClient:
     # 조건검색(psearch) API
     # ============================================================
     
+    # src/adapters/kis_client.py
+
     def get_condition_list(self, user_id: str) -> List[Dict[str, str]]:
         """
         사용자 조건검색식 목록 조회 (psearch-title)
-        
-        Args:
-            user_id: HTS 사용자 ID
-            
+
         Returns:
-            조건검색식 리스트 [{"seq": "001", "name": "TV200"}, ...]
+            [{"seq": "0", "name": "TV200"}, ...]
         """
         endpoint = "/uapi/domestic-stock/v1/quotations/psearch-title"
         tr_id = "HHKST03900300"
-        
-        params = {
-            "user_id": user_id,
-        }
-        
+
+        params = {"user_id": user_id}
+
         try:
             data = self._request("GET", endpoint, tr_id, params=params)
-            output = data.get("output2", [])
+
+            # ✅ Raw 응답을 logs/condition_list_raw.json에 저장
+            raw_path = Path("logs/condition_list_raw.json")
+            try:
+                Path("logs").mkdir(exist_ok=True)
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                logger.debug(f"조건검색 raw 저장: {raw_path}")
+            except Exception as e:
+                logger.warning(f"조건검색 raw 저장 실패: {e}")
+
+            # ✅ 조건 목록이 들어있는 리스트 자동 탐색
+            output = None
+            for key in ["output2", "output", "output1", "list", "data", "items", "result"]:
+                candidate = data.get(key)
+                if isinstance(candidate, list) and len(candidate) > 0:
+                    output = candidate
+                    logger.debug(f"조건검색 목록 키: {key} (count={len(output)})")
+                    break
             
-            conditions = []
+            if output is None:
+                output = []
+                logger.warning("조건검색 응답에서 목록을 찾을 수 없습니다")
+
+            def pick_seq(item: dict) -> str:
+                """seq 후보 키를 폭넓게 커버"""
+                seq_keys = ["seq", "sn", "scts_seq", "screen_no", "cond_seq", 
+                            "condition_seq", "no", "idx", "id", "num"]
+                for key in seq_keys:
+                    val = item.get(key)
+                    if val is not None:
+                        return str(val).strip()
+                return ""
+
+            def pick_name(item: dict) -> str:
+                """name 후보 키를 폭넓게 커버"""
+                name_keys = ["name", "condition_name", "cond_nm", "condition_nm", 
+                             "cond_name", "tr_cond_nm", "title", "cond_title",
+                             "screen_name", "screen_nm", "nm", "label"]
+                for key in name_keys:
+                    val = item.get(key)
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
+                return ""
+
+            conditions: List[Dict[str, str]] = []
             for item in output:
-                seq = item.get("seq", "")
-                name = item.get("condition_name", "") or item.get("cond_nm", "")
-                if seq:
+                if not isinstance(item, dict):
+                    continue
+                seq = pick_seq(item)
+                name = pick_name(item)
+                if seq != "":
                     conditions.append({"seq": seq, "name": name})
-            
+
             logger.info(f"조건검색식 목록 조회 완료: {len(conditions)}개")
-            return conditions
             
+            # ✅ 첫 1~3개 항목 raw를 로깅 (트러블슈팅용)
+            if output:
+                sample_items = output[:3]
+                for i, item in enumerate(sample_items):
+                    if isinstance(item, dict):
+                        # 민감정보 제외하고 키/값 출력
+                        safe_item = {k: v for k, v in item.items() 
+                                     if k.lower() not in ["password", "secret", "token"]}
+                        logger.info(f"조건검색 raw 샘플[{i}]: keys={list(safe_item.keys())}, values={list(safe_item.values())}")
+
+            return conditions
+
         except Exception as e:
             logger.error(f"조건검색식 목록 조회 실패: {e}")
             return []
-    
+
     def get_condition_result(
         self,
         user_id: str,
         seq: str,
         limit: int = 500,
-    ) -> List[StockInfo]:
+    ) -> List["StockInfo"]:
         """
         조건검색 결과 조회 (psearch-result)
-        
-        Args:
-            user_id: HTS 사용자 ID
-            seq: 조건검색식 순번
-            limit: 최대 조회 개수
-            
-        Returns:
-            StockInfo 리스트
         """
         endpoint = "/uapi/domestic-stock/v1/quotations/psearch-result"
         tr_id = "HHKST03900400"
-        
-        params = {
-            "user_id": user_id,
-            "seq": seq,
-        }
-        
+
+        params = {"user_id": user_id, "seq": str(seq).strip()}
+
         try:
             data = self._request("GET", endpoint, tr_id, params=params)
-            output = data.get("output2", [])
-            
-            stocks = []
+
+            # raw 저장(필요시)
+            try:
+                Path("logs").mkdir(exist_ok=True)
+                with open("logs/condition_result_raw.json", "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+            output = data.get("output2") or data.get("output") or []
+            if not isinstance(output, list):
+                output = []
+
+            stocks: List[StockInfo] = []
             for item in output[:limit]:
-                # 코드 파싱 (다양한 키 대응)
+                if not isinstance(item, dict):
+                    continue
+
+                # 코드 파싱 (키 다양)
                 code = (
-                    item.get("mksc_shrn_iscd") or
-                    item.get("stck_shrn_iscd") or
-                    item.get("pdno") or
-                    item.get("code") or
-                    ""
+                    item.get("mksc_shrn_iscd")
+                    or item.get("stck_shrn_iscd")
+                    or item.get("pdno")
+                    or item.get("code")
+                    or ""
                 )
+                code = str(code).strip()
                 if not code:
                     continue
                 code = code.zfill(6)
-                
-                # 종목명 파싱 (다양한 키 대응)
+
+                # 이름 파싱 (키 다양)
                 name = (
-                    item.get("hts_kor_isnm") or
-                    item.get("prdt_name") or
-                    item.get("kor_item_name") or
-                    item.get("itmsNm") or
-                    item.get("stck_shrn_iscd_name") or
-                    ""
-                ).strip()
-                
+                    item.get("hts_kor_isnm")
+                    or item.get("prdt_name")
+                    or item.get("kor_item_name")
+                    or item.get("itmsNm")
+                    or item.get("stck_shrn_iscd_name")
+                    or ""
+                )
+                name = str(name).strip()
+
                 # 시장 구분 (가능한 경우)
                 market = "KOSPI"
                 market_code = item.get("mrkt_div_code") or item.get("mrkt_cls_code") or ""
                 if market_code in ("Q", "J2", "KOSDAQ"):
                     market = "KOSDAQ"
-                
+
                 stocks.append(StockInfo(code=code, name=name, market=market))
-            
+
             logger.info(f"조건검색 결과 조회 완료: {len(stocks)}개")
             return stocks
-            
+
         except Exception as e:
             logger.error(f"조건검색 결과 조회 실패: {e}")
             return []
-    
+
     def get_condition_universe(
         self,
         condition_name: str,
@@ -715,66 +776,60 @@ class KISClient:
         user_id: Optional[str] = None,
         limit: int = 500,
         fetch_names: bool = True,
-    ) -> List[StockInfo]:
+    ) -> List["StockInfo"]:
         """
         조건검색 기반 유니버스 조회
-        
-        Args:
-            condition_name: 조건검색식 이름 (예: "TV200")
-            user_id: HTS 사용자 ID (None이면 설정에서 가져옴)
-            limit: 최대 조회 개수
-            fetch_names: 이름이 없는 종목의 이름 조회 여부
-            
-        Returns:
-            StockInfo 리스트
         """
-        # 사용자 ID 결정
         if user_id is None:
-            user_id = settings.kis.hts_id
-        
+            # settings.kis.hts_id / env(hst_id) 등 프로젝트 방식대로
+            user_id = getattr(settings.kis, "hts_id", None)
+
         if not user_id:
             logger.error("HTS 사용자 ID가 설정되지 않았습니다 (KIS_HTS_ID 또는 hts_id)")
             return []
-        
+
+        want = (condition_name or "").strip().lower()
+
         logger.info(f"조건검색 유니버스 조회 시작: {condition_name} (user={user_id})")
-        
-        # 1. 조건검색식 목록에서 seq 찾기
+
         conditions = self.get_condition_list(user_id)
         if not conditions:
-            logger.warning("조건검색식 목록이 비어있습니다")
+            logger.warning("조건검색식 목록이 비어있습니다 (HTS [0110] 서버저장 여부 확인)")
             return []
-        
+
+        # ✅ 이름이 빈 값으로 내려오거나 공백/대소문자 차이도 대비
         target_seq = None
-        for cond in conditions:
-            if cond["name"] == condition_name:
-                target_seq = cond["seq"]
+        for c in conditions:
+            c_name = (c.get("name") or "").strip().lower()
+            if c_name == want and c.get("seq") is not None:
+                target_seq = str(c["seq"]).strip()
                 break
-        
+
         if target_seq is None:
+            # 힌트 로그
+            available = ", ".join([(c.get("name") or "(blank)") for c in conditions[:20]])
             logger.error(f"조건검색식 '{condition_name}'을 찾을 수 없습니다")
-            available = ", ".join(c["name"] for c in conditions[:10])
-            logger.info(f"사용 가능한 조건검색식: {available}")
+            logger.info(f"사용 가능한 조건검색식(앞 20개): {available}")
+            logger.info("HTS [0110]에서 해당 조건을 '서버저장'했는지 확인하세요.")
             return []
-        
+
         logger.info(f"조건검색식 찾음: {condition_name} -> seq={target_seq}")
-        
-        # 2. 조건검색 결과 조회
+
         stocks = self.get_condition_result(user_id, target_seq, limit)
-        
-        # 3. 이름이 없는 종목의 이름 조회 (옵션)
+
+        # (선택) 종목명 빈 값 채우기 - 너무 많이 하면 호출 부담이라 상한 둠
         if fetch_names:
-            stocks_needing_name = [s for s in stocks if not s.name]
-            if stocks_needing_name:
-                logger.info(f"종목명 조회 필요: {len(stocks_needing_name)}개")
-                for stock in stocks_needing_name[:50]:  # 최대 50개만
+            need = [s for s in stocks if not getattr(s, "name", "")]
+            if need:
+                logger.info(f"종목명 조회 필요: {len(need)}개")
+                for s in need[:50]:
                     try:
-                        # 주식기본조회 API로 이름 조회
-                        name = self._get_stock_info_name(stock.code)
+                        name = self._get_stock_info_name(s.code)  # 기존 구현 사용
                         if name:
-                            stock.name = name
-                    except Exception as e:
-                        logger.debug(f"종목명 조회 실패 ({stock.code}): {e}")
-        
+                            s.name = name
+                    except Exception:
+                        pass
+
         logger.info(f"조건검색 유니버스 최종: {len(stocks)}개")
         return stocks
     
