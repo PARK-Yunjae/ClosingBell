@@ -1,203 +1,191 @@
 """
-Overview 페이지
+📋 스크리닝 기록 페이지
 
-오늘의 TOP 3 종목 및 시스템 상태
+기능:
+- 날짜별 스크리닝 결과 조회
+- TOP3/전체 종목 토글
+- 익일 결과 표시
+- CSV 다운로드
 """
 
 import streamlit as st
 import sys
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
+import pandas as pd
 
-# 프로젝트 루트
+# 프로젝트 루트 추가
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-st.set_page_config(page_title="Overview", page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title="스크리닝 기록 - ClosingBell",
+    page_icon="📋",
+    layout="wide",
+)
 
-st.title("📊 Overview")
+st.title("📋 스크리닝 기록")
 st.markdown("---")
 
-
-def load_data():
-    """데이터 로드"""
-    from src.infrastructure.database import init_database
-    from src.infrastructure.repository import get_screening_repository, get_weight_repository
-    
-    init_database()
-    return get_screening_repository(), get_weight_repository()
-
-
-def render_top3_cards(items):
-    """TOP 3 카드 렌더링"""
-    cols = st.columns(3)
-    
-    for i, item in enumerate(items[:3]):
-        with cols[i]:
-            # 색상 결정
-            if i == 0:
-                bg_color = "linear-gradient(135deg, #ffd700 0%, #ffb700 100%)"  # 금색
-                medal = "🥇"
-            elif i == 1:
-                bg_color = "linear-gradient(135deg, #c0c0c0 0%, #a0a0a0 100%)"  # 은색
-                medal = "🥈"
-            else:
-                bg_color = "linear-gradient(135deg, #cd7f32 0%, #b06000 100%)"  # 동색
-                medal = "🥉"
-            
-            st.markdown(f"""
-            <div style="
-                background: {bg_color};
-                padding: 20px;
-                border-radius: 15px;
-                text-align: center;
-                color: white;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            ">
-                <h2 style="margin: 0;">{medal} {item['rank']}위</h2>
-                <h3 style="margin: 10px 0;">{item['stock_name']}</h3>
-                <p style="margin: 5px 0; font-size: 0.9em; opacity: 0.9;">{item['stock_code']}</p>
-                <h2 style="margin: 10px 0;">{item['current_price']:,}원</h2>
-                <p style="margin: 5px 0; font-size: 1.2em;">
-                    {'+' if item['change_rate'] >= 0 else ''}{item['change_rate']:.2f}%
-                </p>
-                <p style="margin: 15px 0 5px 0; font-size: 1.3em; font-weight: bold;">
-                    📊 {item['score_total']:.1f}점 / 50점
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # 점수 상세 expander
-            with st.expander("점수 상세 보기"):
-                st.write(f"CCI 값: {item['score_cci_value']:.1f}")
-                st.write(f"CCI 기울기: {item['score_cci_slope']:.1f}")
-                st.write(f"MA20 기울기: {item['score_ma20_slope']:.1f}")
-                st.write(f"양봉 품질: {item['score_candle']:.1f}")
-                st.write(f"상승률: {item['score_change']:.1f}")
-                st.write(f"---")
-                st.write(f"CCI 원시값: {item.get('raw_cci', 0):.1f}")
-
-
-def render_recent_summary(screenings):
-    """최근 7일 스크리닝 요약"""
-    st.subheader("📅 최근 7일 스크리닝")
-    
-    if not screenings:
-        st.info("최근 스크리닝 데이터가 없습니다.")
-        return
-    
-    # 테이블로 표시
-    data = []
-    for s in screenings[:7]:
-        data.append({
-            "날짜": s['screen_date'],
-            "시간": s['screen_time'],
-            "분석 종목": f"{s['total_count']}개",
-            "상태": s['status'],
-        })
-    
-    st.dataframe(data, use_container_width=True, hide_index=True)
-
-
-def render_weight_status(weight_repo):
-    """가중치 현황"""
-    st.subheader("⚖️ 현재 가중치")
-    
-    weights = weight_repo.get_weights()
-    
-    if not weights:
-        st.warning("가중치가 설정되지 않았습니다.")
-        return
-    
-    weight_dict = weights.to_dict()
-    
-    cols = st.columns(5)
-    labels = {
-        'cci_value': 'CCI 값',
-        'cci_slope': 'CCI 기울기',
-        'ma20_slope': 'MA20 기울기',
-        'candle': '양봉 품질',
-        'change': '상승률',
-    }
-    
-    for i, (key, value) in enumerate(weight_dict.items()):
-        with cols[i]:
-            st.metric(
-                label=labels.get(key, key),
-                value=f"{value:.2f}",
-            )
-    
-    # 가중치 변경 이력
-    with st.expander("가중치 변경 이력"):
-        history = weight_repo.get_weight_history(days=30)
-        if history:
-            for h in history[:10]:
-                st.write(f"• {h['indicator']}: {h['old_weight']:.2f} → {h['new_weight']:.2f} ({h.get('changed_at', '')})")
-        else:
-            st.info("변경 이력이 없습니다.")
-
-
-# 메인 로직
 try:
-    screening_repo, weight_repo = load_data()
+    from dashboard.utils.data_loader import (
+        load_recent_screenings,
+        load_screening_by_date,
+        load_screening_items,
+        load_screening_history_df,
+    )
+    from dashboard.utils.calculations import format_percent, get_result_emoji
     
-    # 오늘 스크리닝 결과
-    today = date.today()
-    today_screening = screening_repo.get_screening_by_date(today)
+    # ==================== 필터 ====================
+    col1, col2, col3 = st.columns([2, 1, 1])
     
-    if today_screening:
-        st.success(f"✅ 오늘 스크리닝 완료! ({today_screening['screen_time']})")
+    with col1:
+        # 최근 스크리닝 날짜 목록
+        recent = load_recent_screenings(days=60)
+        available_dates = [r['screen_date'] for r in recent] if recent else []
         
-        # TOP 3 조회
-        top3_items = screening_repo.get_top3_items(today_screening['id'])
-        
-        if top3_items:
-            st.subheader("🏆 오늘의 TOP 3")
-            render_top3_cards(top3_items)
+        if available_dates:
+            selected_date = st.selectbox(
+                "📅 날짜 선택",
+                options=available_dates,
+                format_func=lambda x: f"{x} ({['월','화','수','목','금','토','일'][date.fromisoformat(x).weekday()]})"
+            )
         else:
-            st.warning("TOP 3 종목이 없습니다.")
-    else:
-        st.info(f"⏳ 오늘({today}) 스크리닝이 아직 실행되지 않았습니다.")
-        
-        # 가장 최근 스크리닝 찾기
-        recent = screening_repo.get_recent_screenings(days=7)
-        if recent:
-            latest = recent[0]
-            st.write(f"가장 최근 스크리닝: {latest['screen_date']} {latest['screen_time']}")
-            
-            top3_items = screening_repo.get_top3_items(latest['id'])
-            if top3_items:
-                st.subheader(f"🏆 {latest['screen_date']} TOP 3")
-                render_top3_cards(top3_items)
-    
-    st.markdown("---")
-    
-    # 2열 레이아웃
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        render_recent_summary(screening_repo.get_recent_screenings(days=7))
+            selected_date = None
+            st.warning("스크리닝 기록이 없습니다.")
     
     with col2:
-        render_weight_status(weight_repo)
-    
-    st.markdown("---")
-    
-    # 시스템 상태
-    st.subheader("🖥️ 시스템 정보")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.info(f"📅 현재 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    with col2:
-        from src.infrastructure.scheduler import is_market_open
-        market_status = "🟢 장 운영일" if is_market_open() else "🔴 휴장일"
-        st.info(f"📈 오늘: {market_status}")
+        top3_only = st.checkbox("🏆 TOP3만 보기", value=False)
     
     with col3:
-        st.info(f"🔔 다음 스크리닝: 15:00")
+        show_details = st.checkbox("📊 상세 점수 보기", value=False)
+    
+    st.markdown("---")
+    
+    # ==================== 스크리닝 결과 테이블 ====================
+    if selected_date:
+        screening = load_screening_by_date(date.fromisoformat(selected_date))
+        
+        if screening:
+            # 스크리닝 요약
+            st.subheader(f"📊 {selected_date} 스크리닝 결과")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("분석 종목", f"{screening['total_count']}개")
+            col2.metric("스크리닝 시각", screening['screen_time'])
+            col3.metric("상태", "✅ 성공" if screening['status'] == 'SUCCESS' else "❌ 실패")
+            col4.metric("실행 시간", f"{screening.get('execution_time_sec', 0):.1f}초")
+            
+            st.markdown("---")
+            
+            # 종목 목록
+            items = load_screening_items(screening['id'], top3_only=top3_only)
+            
+            if items:
+                # DataFrame으로 변환
+                df = pd.DataFrame(items)
+                
+                # 컬럼 선택
+                display_cols = ['rank', 'stock_name', 'stock_code', 'score_total', 'change_rate', 'raw_cci']
+                
+                if show_details:
+                    display_cols.extend([
+                        'score_cci_value', 'score_cci_slope', 'score_ma20_slope',
+                        'score_candle', 'score_change'
+                    ])
+                
+                # 익일 결과 조회
+                from src.infrastructure.database import get_database
+                db = get_database()
+                
+                next_day_data = {}
+                for item in items:
+                    ndr = db.fetch_one(
+                        "SELECT gap_rate, is_open_up FROM next_day_results WHERE screening_item_id = ?",
+                        (item['id'],)
+                    )
+                    if ndr:
+                        next_day_data[item['id']] = dict(ndr)
+                
+                # 결과 컬럼 추가
+                df['익일갭'] = df['id'].apply(
+                    lambda x: format_percent(next_day_data[x]['gap_rate']) if x in next_day_data and next_day_data[x]['gap_rate'] else "대기중"
+                )
+                df['결과'] = df['id'].apply(
+                    lambda x: get_result_emoji(next_day_data[x]['is_open_up']) if x in next_day_data and next_day_data[x]['is_open_up'] is not None else "⏳"
+                )
+                
+                display_cols.extend(['익일갭', '결과'])
+                
+                # 컬럼명 변경
+                col_names = {
+                    'rank': '순위',
+                    'stock_name': '종목명',
+                    'stock_code': '종목코드',
+                    'score_total': '총점',
+                    'change_rate': '당일등락률',
+                    'raw_cci': 'CCI',
+                    'score_cci_value': 'CCI값점수',
+                    'score_cci_slope': 'CCI기울기',
+                    'score_ma20_slope': 'MA20기울기',
+                    'score_candle': '양봉품질',
+                    'score_change': '상승률점수',
+                }
+                
+                df_display = df[display_cols].rename(columns=col_names)
+                
+                # 스타일 적용
+                def highlight_top3(row):
+                    if row['순위'] <= 3:
+                        return ['background-color: #fff3cd'] * len(row)
+                    return [''] * len(row)
+                
+                st.dataframe(
+                    df_display.style.apply(highlight_top3, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                
+                # CSV 다운로드
+                csv = df_display.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="📥 CSV 다운로드",
+                    data=csv,
+                    file_name=f"screening_{selected_date}.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("종목 데이터가 없습니다.")
+        else:
+            st.warning("선택한 날짜의 스크리닝 데이터가 없습니다.")
+    
+    # ==================== 최근 스크리닝 히스토리 ====================
+    st.markdown("---")
+    st.subheader("📈 최근 스크리닝 히스토리")
+    
+    history_days = st.slider("조회 기간 (일)", 7, 90, 30)
+    history_df = load_screening_history_df(days=history_days)
+    
+    if not history_df.empty:
+        # 일별 요약
+        daily_summary = history_df.groupby('screen_date').agg({
+            'stock_code': 'count',
+            'is_top3': 'sum',
+            'is_open_up': lambda x: x.sum() if x.notna().any() else 0,
+            'gap_rate': 'mean',
+        }).reset_index()
+        
+        daily_summary.columns = ['날짜', '분석종목수', 'TOP3수', '승리수', '평균갭']
+        daily_summary['평균갭'] = daily_summary['평균갭'].apply(
+            lambda x: format_percent(x) if pd.notna(x) else "-"
+        )
+        
+        st.dataframe(daily_summary, use_container_width=True, hide_index=True)
+    else:
+        st.info("스크리닝 히스토리가 없습니다.")
 
 except Exception as e:
-    st.error(f"데이터 로드 실패: {e}")
-    st.exception(e)
+    st.error(f"오류 발생: {e}")
+    import traceback
+    st.code(traceback.format_exc())
+    

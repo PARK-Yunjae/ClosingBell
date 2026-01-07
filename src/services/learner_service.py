@@ -2,19 +2,21 @@
 학습 서비스 모듈
 
 책임:
-- 익일 결과 수집
+- 익일 결과 수집 (전체 종목 또는 TOP3만)
 - 성과 분석
 - 가중치 최적화
 - 일일 학습 프로세스
 """
 
+import os
+import time
 import logging
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from src.adapters.kis_client import get_kis_client
-from src.infrastructure.repository import get_repository
+from src.infrastructure.repository import get_repository, get_screening_repository
 from src.domain.weight_optimizer import (
     analyze_correlation,
     calculate_optimal_weights,
@@ -85,12 +87,22 @@ class LearnerService:
     def __init__(self):
         self.kis_client = get_kis_client()
         self.repository = get_repository()
+        self.screening_repo = get_screening_repository()
+        
+        # 환경변수에서 설정 읽기
+        self.collect_all_stocks = os.getenv("COLLECT_ALL_STOCKS", "true").lower() == "true"
+        self.api_call_interval = float(os.getenv("API_CALL_INTERVAL", "0.15"))
     
-    def collect_next_day_results(self, target_date: Optional[date] = None) -> List[NextDayResult]:
-        """전일 스크리닝 종목의 익일 결과 수집
+    def collect_next_day_results(
+        self,
+        target_date: Optional[date] = None,
+        collect_all: Optional[bool] = None,
+    ) -> List[NextDayResult]:
+        """스크리닝 종목의 익일 결과 수집
         
         Args:
             target_date: 수집 대상일 (None이면 전일)
+            collect_all: 전체 종목 수집 여부 (None이면 환경변수 사용)
             
         Returns:
             익일 결과 리스트
@@ -98,23 +110,47 @@ class LearnerService:
         if target_date is None:
             target_date = date.today() - timedelta(days=1)
         
-        logger.info(f"익일 결과 수집 시작: {target_date}")
+        # 수집 범위 결정
+        if collect_all is None:
+            collect_all = self.collect_all_stocks
         
-        # 해당 날짜의 스크리닝 결과 조회
-        screening_results = self.repository.get_screening_results_by_date(target_date)
+        top3_only = not collect_all
+        scope = "TOP3만" if top3_only else "전체 종목"
         
-        if not screening_results:
-            logger.warning(f"{target_date} 스크리닝 결과 없음")
+        logger.info(f"익일 결과 수집 시작: {target_date} ({scope})")
+        
+        # 익일 결과가 없는 종목 조회
+        pending_items = self.screening_repo.get_items_without_next_day_result(
+            screen_date=target_date,
+            top3_only=top3_only,
+        )
+        
+        if not pending_items:
+            logger.info(f"{target_date} 수집 대상 종목 없음 (이미 수집됨 또는 스크리닝 없음)")
             return []
         
+        total_count = len(pending_items)
+        logger.info(f"수집 대상: {total_count}개 종목")
+        
         results = []
-        for sr in screening_results:
+        success_count = 0
+        fail_count = 0
+        
+        for i, item in enumerate(pending_items):
             try:
+                stock_code = item['stock_code']
+                stock_name = item['stock_name']
+                
+                # API Rate Limiting
+                if i > 0:
+                    time.sleep(self.api_call_interval)
+                
                 # 익일 일봉 데이터 조회
-                daily_prices = self.kis_client.get_daily_prices(sr.stock_code, count=2)
+                daily_prices = self.kis_client.get_daily_prices(stock_code, count=2)
                 
                 if len(daily_prices) < 2:
-                    logger.warning(f"일봉 데이터 부족: {sr.stock_name}")
+                    logger.warning(f"일봉 데이터 부족: {stock_name}")
+                    fail_count += 1
                     continue
                 
                 # 전일 데이터 (스크리닝 당일)
@@ -126,23 +162,23 @@ class LearnerService:
                 gap_rate = ((next_day.open - prev_day.close) / prev_day.close) * 100
                 
                 # 당일 수익률 계산
-                day_return = ((next_day.close - next_day.open) / next_day.open) * 100
+                day_return = ((next_day.close - next_day.open) / next_day.open) * 100 if next_day.open > 0 else 0
                 
                 # 변동성 계산
-                volatility = ((next_day.high - next_day.low) / next_day.open) * 100
+                volatility = ((next_day.high - next_day.low) / next_day.open) * 100 if next_day.open > 0 else 0
                 
                 result = NextDayResult(
-                    stock_code=sr.stock_code,
-                    stock_name=sr.stock_name,
+                    stock_code=stock_code,
+                    stock_name=stock_name,
                     screen_date=target_date,
-                    screen_rank=sr.rank,
-                    screen_score=sr.score_total,
+                    screen_rank=item['rank'],
+                    screen_score=item['score_total'],
                     next_open=next_day.open,
                     next_close=next_day.close,
                     next_high=next_day.high,
                     next_low=next_day.low,
                     next_volume=next_day.volume,
-                    next_trading_value=next_day.trading_value,
+                    next_trading_value=getattr(next_day, 'trading_value', 0),
                     gap_rate=gap_rate,
                     day_return=day_return,
                     volatility=volatility,
@@ -152,12 +188,18 @@ class LearnerService:
                 
                 # DB에 저장
                 self._save_next_day_result(result)
+                success_count += 1
+                
+                # 진행률 로깅 (10개마다)
+                if (i + 1) % 10 == 0 or (i + 1) == total_count:
+                    logger.info(f"익일 결과 수집 진행: {i + 1}/{total_count} ({(i + 1) / total_count * 100:.1f}%)")
                 
             except Exception as e:
-                logger.warning(f"익일 결과 수집 실패: {sr.stock_name} - {e}")
+                logger.warning(f"익일 결과 수집 실패: {item.get('stock_name', 'Unknown')} - {e}")
+                fail_count += 1
                 continue
         
-        logger.info(f"익일 결과 수집 완료: {len(results)}개")
+        logger.info(f"익일 결과 수집 완료: 성공 {success_count}개, 실패 {fail_count}개")
         return results
     
     def _save_next_day_result(self, result: NextDayResult):

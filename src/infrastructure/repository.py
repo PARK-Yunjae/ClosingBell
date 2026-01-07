@@ -199,18 +199,50 @@ class ScreeningRepository:
         )
         return [dict(row) for row in rows]
     
-    def get_items_without_next_day_result(self, screen_date: date) -> List[Dict]:
-        """익일 결과가 없는 종목 조회 (특정 날짜)"""
-        rows = self.db.fetch_all(
-            """
-            SELECT si.* FROM screening_items si
-            JOIN screenings s ON si.screening_id = s.id
-            LEFT JOIN next_day_results ndr ON si.id = ndr.screening_item_id
-            WHERE s.screen_date = ? AND ndr.id IS NULL AND si.is_top3 = 1
-            """,
-            (screen_date.isoformat(),)
-        )
+    def get_items_without_next_day_result(
+        self, 
+        screen_date: date,
+        top3_only: bool = False,
+    ) -> List[Dict]:
+        """익일 결과가 없는 종목 조회 (특정 날짜)
+        
+        Args:
+            screen_date: 스크리닝 날짜
+            top3_only: True면 TOP3만, False면 전체 종목
+            
+        Returns:
+            익일 결과가 없는 종목 리스트
+        """
+        if top3_only:
+            rows = self.db.fetch_all(
+                """
+                SELECT si.* FROM screening_items si
+                JOIN screenings s ON si.screening_id = s.id
+                LEFT JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+                WHERE s.screen_date = ? AND ndr.id IS NULL AND si.is_top3 = 1
+                """,
+                (screen_date.isoformat(),)
+            )
+        else:
+            # 전체 종목 조회 (TOP3 + 나머지 모두)
+            rows = self.db.fetch_all(
+                """
+                SELECT si.* FROM screening_items si
+                JOIN screenings s ON si.screening_id = s.id
+                LEFT JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+                WHERE s.screen_date = ? AND ndr.id IS NULL
+                ORDER BY si.rank
+                """,
+                (screen_date.isoformat(),)
+            )
         return [dict(row) for row in rows]
+    
+    def get_all_items_by_date(self, screen_date: date) -> List[Dict]:
+        """특정 날짜의 전체 스크리닝 종목 조회"""
+        screening = self.get_screening_by_date(screen_date)
+        if not screening:
+            return []
+        return self.get_screening_items(screening['id'])
 
 
 class NextDayResultRepository:
@@ -265,28 +297,128 @@ class NextDayResultRepository:
         )
         logger.info(f"익일 결과 저장: item_id={item_id}")
     
-    def get_hit_rate(self, days: int = 30) -> Dict[str, float]:
-        """적중률 조회"""
-        row = self.db.fetch_one(
-            """
-            SELECT 
-                COUNT(CASE WHEN ndr.is_open_up = 1 THEN 1 END) as hit_count,
-                COUNT(ndr.id) as total_count
-            FROM screenings s
-            JOIN screening_items si ON s.id = si.screening_id AND si.is_top3 = 1
-            JOIN next_day_results ndr ON si.id = ndr.screening_item_id
-            WHERE s.screen_date >= DATE('now', ?)
-            """,
-            (f'-{days} days',)
-        )
+    def get_hit_rate(self, days: int = 30, top3_only: bool = True) -> Dict[str, float]:
+        """적중률 조회
+        
+        Args:
+            days: 조회 기간 (일)
+            top3_only: True면 TOP3만, False면 전체 종목
+            
+        Returns:
+            적중률 정보 딕셔너리
+        """
+        if top3_only:
+            row = self.db.fetch_one(
+                """
+                SELECT 
+                    COUNT(CASE WHEN ndr.is_open_up = 1 THEN 1 END) as hit_count,
+                    COUNT(ndr.id) as total_count,
+                    AVG(ndr.gap_rate) as avg_gap_rate
+                FROM screenings s
+                JOIN screening_items si ON s.id = si.screening_id AND si.is_top3 = 1
+                JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+                WHERE s.screen_date >= DATE('now', ?)
+                """,
+                (f'-{days} days',)
+            )
+        else:
+            row = self.db.fetch_one(
+                """
+                SELECT 
+                    COUNT(CASE WHEN ndr.is_open_up = 1 THEN 1 END) as hit_count,
+                    COUNT(ndr.id) as total_count,
+                    AVG(ndr.gap_rate) as avg_gap_rate
+                FROM screenings s
+                JOIN screening_items si ON s.id = si.screening_id
+                JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+                WHERE s.screen_date >= DATE('now', ?)
+                """,
+                (f'-{days} days',)
+            )
         
         if row and row['total_count'] > 0:
             return {
                 'hit_count': row['hit_count'],
                 'total_count': row['total_count'],
                 'hit_rate': row['hit_count'] / row['total_count'] * 100,
+                'avg_gap_rate': row['avg_gap_rate'] or 0.0,
             }
-        return {'hit_count': 0, 'total_count': 0, 'hit_rate': 0.0}
+        return {'hit_count': 0, 'total_count': 0, 'hit_rate': 0.0, 'avg_gap_rate': 0.0}
+    
+    def get_hit_rate_by_rank(self, days: int = 30) -> List[Dict]:
+        """순위별 적중률 조회
+        
+        Returns:
+            순위별 적중률 리스트
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT 
+                si.rank,
+                COUNT(*) as total_count,
+                COUNT(CASE WHEN ndr.is_open_up = 1 THEN 1 END) as hit_count,
+                AVG(ndr.gap_rate) as avg_gap_rate,
+                AVG(ndr.day_change_rate) as avg_day_change
+            FROM screenings s
+            JOIN screening_items si ON s.id = si.screening_id
+            JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+            WHERE s.screen_date >= DATE('now', ?)
+            GROUP BY si.rank
+            ORDER BY si.rank
+            """,
+            (f'-{days} days',)
+        )
+        
+        results = []
+        for row in rows:
+            results.append({
+                'rank': row['rank'],
+                'total_count': row['total_count'],
+                'hit_count': row['hit_count'],
+                'hit_rate': (row['hit_count'] / row['total_count'] * 100) if row['total_count'] > 0 else 0,
+                'avg_gap_rate': row['avg_gap_rate'] or 0.0,
+                'avg_day_change': row['avg_day_change'] or 0.0,
+            })
+        return results
+    
+    def get_all_results_with_screening(self, days: int = 30) -> List[Dict]:
+        """스크리닝 정보와 함께 전체 익일 결과 조회
+        
+        Returns:
+            전체 익일 결과 리스트 (스크리닝 정보 포함)
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT 
+                s.screen_date,
+                si.stock_code,
+                si.stock_name,
+                si.rank,
+                si.is_top3,
+                si.score_total,
+                si.score_cci_value,
+                si.score_cci_slope,
+                si.score_ma20_slope,
+                si.score_candle,
+                si.score_change,
+                si.raw_cci,
+                si.change_rate as screen_change_rate,
+                ndr.gap_rate,
+                ndr.day_change_rate,
+                ndr.volatility,
+                ndr.is_open_up,
+                ndr.is_day_up,
+                ndr.open_price as next_open,
+                ndr.close_price as next_close
+            FROM screenings s
+            JOIN screening_items si ON s.id = si.screening_id
+            JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+            WHERE s.screen_date >= DATE('now', ?)
+            ORDER BY s.screen_date DESC, si.rank
+            """,
+            (f'-{days} days',)
+        )
+        return [dict(row) for row in rows]
 
 
 class WeightRepository:

@@ -156,6 +156,23 @@ INSERT OR IGNORE INTO weight_config (indicator, weight) VALUES
     ('change', 1.0);
 """
 
+# 마이그레이션 스크립트 (버전별)
+MIGRATIONS = {
+    # v1.1: next_day_results에 is_top3 컬럼 추가 (분석 편의용)
+    "v1.1_add_is_top3_to_next_day": """
+        -- is_top3 컬럼 추가 (없는 경우에만)
+        ALTER TABLE next_day_results ADD COLUMN is_top3 INTEGER DEFAULT 0;
+        
+        -- 인덱스 추가
+        CREATE INDEX IF NOT EXISTS idx_nextday_is_top3 ON next_day_results(is_top3);
+    """,
+    
+    # v1.2: next_day_results에 screen_rank 컬럼 추가
+    "v1.2_add_screen_rank_to_next_day": """
+        ALTER TABLE next_day_results ADD COLUMN screen_rank INTEGER DEFAULT 0;
+    """,
+}
+
 
 class Database:
     """SQLite 데이터베이스 관리자"""
@@ -273,7 +290,74 @@ class Database:
         # 초기 데이터 삽입
         self.execute_script(INITIAL_WEIGHTS)
         
+        # 마이그레이션 실행
+        self.run_migrations()
+        
         logger.info("데이터베이스 초기화 완료")
+    
+    def run_migrations(self):
+        """마이그레이션 실행 (컬럼 추가 등)"""
+        for name, script in MIGRATIONS.items():
+            try:
+                # 마이그레이션 필요 여부 확인 (간단한 체크)
+                if "ADD COLUMN is_top3" in script:
+                    # is_top3 컬럼이 이미 있는지 확인
+                    cols = self.fetch_all("PRAGMA table_info(next_day_results)")
+                    col_names = [c['name'] for c in cols]
+                    if 'is_top3' in col_names:
+                        logger.debug(f"마이그레이션 스킵 (이미 적용됨): {name}")
+                        continue
+                
+                if "ADD COLUMN screen_rank" in script:
+                    cols = self.fetch_all("PRAGMA table_info(next_day_results)")
+                    col_names = [c['name'] for c in cols]
+                    if 'screen_rank' in col_names:
+                        logger.debug(f"마이그레이션 스킵 (이미 적용됨): {name}")
+                        continue
+                
+                # 마이그레이션 실행 (각 문장 개별 실행)
+                for statement in script.strip().split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            self.execute(statement)
+                        except sqlite3.OperationalError as e:
+                            if "duplicate column name" in str(e).lower():
+                                logger.debug(f"컬럼 이미 존재: {statement[:50]}...")
+                            else:
+                                raise
+                
+                logger.info(f"마이그레이션 완료: {name}")
+                
+            except Exception as e:
+                logger.warning(f"마이그레이션 실패 (무시): {name} - {e}")
+    
+    def update_next_day_is_top3(self):
+        """기존 next_day_results 데이터의 is_top3 값 업데이트"""
+        try:
+            self.execute("""
+                UPDATE next_day_results
+                SET is_top3 = (
+                    SELECT si.is_top3 
+                    FROM screening_items si 
+                    WHERE si.id = next_day_results.screening_item_id
+                )
+                WHERE is_top3 IS NULL OR is_top3 = 0
+            """)
+            
+            self.execute("""
+                UPDATE next_day_results
+                SET screen_rank = (
+                    SELECT si.rank 
+                    FROM screening_items si 
+                    WHERE si.id = next_day_results.screening_item_id
+                )
+                WHERE screen_rank IS NULL OR screen_rank = 0
+            """)
+            
+            logger.info("next_day_results is_top3/screen_rank 업데이트 완료")
+        except Exception as e:
+            logger.warning(f"is_top3 업데이트 실패: {e}")
     
     def close(self):
         """연결 종료"""
