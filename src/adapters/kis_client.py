@@ -367,41 +367,34 @@ class KISClient:
         return stocks
     
     def _get_volume_rank_stocks(
-        self,
-        min_trading_value: float,
-        limit: int,
-    ) -> List[StockInfo]:
-        """volume-rank API로 거래대금 상위 종목 조회 (KOSPI + KOSDAQ 별도 호출)"""
-        all_stocks = []
-        existing_codes = set()
-        
-        # KOSPI 조회
-        kospi_stocks = self._get_volume_rank_by_market("J", min_trading_value, 100)
-        for stock in kospi_stocks:
-            if stock.code not in existing_codes:
-                all_stocks.append(stock)
-                existing_codes.add(stock.code)
-        logger.info(f"KOSPI 거래대금 상위: {len(kospi_stocks)}개")
-        
-        # KOSDAQ 조회 (시장코드 확인 필요)
-        # 참고: 일부 API에서는 "Q"가 KOSDAQ일 수도 있음
-        kosdaq_stocks = self._get_volume_rank_by_market("Q", min_trading_value, 100)
-        for stock in kosdaq_stocks:
-            if stock.code not in existing_codes:
-                all_stocks.append(stock)
-                existing_codes.add(stock.code)
-        logger.info(f"KOSDAQ 거래대금 상위: {len(kosdaq_stocks)}개")
-        
-        # 거래대금이 없으면 전체(J) 조회도 시도
-        if len(all_stocks) < 10:
-            logger.info("KOSPI/KOSDAQ 별도 조회 부족, 전체(J) 조회 시도")
-            j_stocks = self._get_volume_rank_by_market("J", min_trading_value, 100)
-            for stock in j_stocks:
-                if stock.code not in existing_codes:
-                    all_stocks.append(stock)
-                    existing_codes.add(stock.code)
-        
-        return all_stocks[:limit]
+            self,
+            min_trading_value: float,
+            limit: int,
+        ) -> List[StockInfo]:
+            """거래대금 상위 API를 통해 1차 수집 (통합 조회)"""
+            all_stocks = []
+            existing_codes = set()
+            
+            # J(전체)로 한 번에 조회 (시장 구분 로직 제거)
+            logger.info("거래대금 상위 API 통합 조회 시작 (Code: J)")
+            
+            try:
+                # 여기서 "J"를 넘기지만, 실제 아래 함수에서 J로 고정해서 쓸 겁니다.
+                # limit은 API가 주는 최대치(보통 100개)까지 넉넉히 요청
+                stocks = self._get_volume_rank_by_market("J", min_trading_value, 100)
+                
+                for stock in stocks:
+                    if stock.code not in existing_codes:
+                        all_stocks.append(stock)
+                        existing_codes.add(stock.code)
+                        
+            except Exception as e:
+                logger.warning(f"API 조회 중 에러 발생: {e}")
+
+            logger.info(f"API를 통해 발견한 후보 종목: {len(all_stocks)}개")
+            
+            # 우리가 원하는 limit 개수만큼 자르기
+            return all_stocks[:limit]
     
     def _get_volume_rank_by_market(
         self,
@@ -414,11 +407,11 @@ class KISClient:
         tr_id = "FHPST01710000"
         
         params = {
-            "FID_COND_MRKT_DIV_CODE": market_code,  # J:전체, Q:코스닥
+            "FID_COND_MRKT_DIV_CODE": "J",  # J:전체, Q:코스닥
             "FID_COND_SCR_DIV_CODE": "20171",  # 거래대금
             "FID_INPUT_ISCD": "0000",  # 전체
             "FID_DIV_CLS_CODE": "0",
-            "FID_BLNG_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": "3",       # (0:거래량 -> 3:거래대금순)
             "FID_TRGT_CLS_CODE": "111111111",  # 전체
             "FID_TRGT_EXLS_CLS_CODE": "000000",
             "FID_INPUT_PRICE_1": "",
