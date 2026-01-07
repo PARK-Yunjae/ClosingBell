@@ -168,6 +168,10 @@ EXCLUDED_STOCK_PATTERNS = [
     "KBSTAR",
     "ARIRANG",
     "HANARO",
+    "KOSEF",
+    "KINDEX",
+    "SOL",
+    "ACE",
     
     # 스팩/리츠
     "스팩",
@@ -177,6 +181,17 @@ EXCLUDED_STOCK_PATTERNS = [
     
     # 선물/파생
     "선물",
+    "파생",
+    
+    # 우선주
+    "우선주",
+    "우B",
+    "우C",
+    
+    # 전환사채/신주인수권
+    "전환",
+    "CB",
+    "BW",
 ]
 
 # 제외 종목 코드 접두사

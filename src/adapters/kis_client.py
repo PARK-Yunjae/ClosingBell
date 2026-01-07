@@ -745,7 +745,8 @@ class KISClient:
 
                 # 이름 파싱 (키 다양)
                 name = (
-                    item.get("hts_kor_isnm")
+                    item.get("name")  # psearch API 응답 키
+                    or item.get("hts_kor_isnm")
                     or item.get("prdt_name")
                     or item.get("kor_item_name")
                     or item.get("itmsNm")

@@ -208,7 +208,14 @@ class ScreenerScheduler:
         # 등록된 작업 출력
         jobs = self.scheduler.get_jobs()
         for job in jobs:
-            logger.info(f"  - {job.id}: 다음 실행 {job.next_run_time}")
+            try:
+                next_time = getattr(job, 'next_run_time', None)
+                if next_time is None:
+                    # trigger에서 다음 실행 시간 계산
+                    next_time = job.trigger.get_next_fire_time(None, datetime.now())
+                logger.info(f"  - {job.id}: 다음 실행 {next_time}")
+            except Exception as e:
+                logger.info(f"  - {job.id}: 등록됨 (다음 실행 시간 계산 불가)")
         
         try:
             self.scheduler.start()
@@ -225,7 +232,13 @@ class ScreenerScheduler:
         """다음 실행 시각 조회"""
         result = {}
         for job_id, job in self._jobs.items():
-            result[job_id] = job.next_run_time
+            try:
+                next_time = getattr(job, 'next_run_time', None)
+                if next_time is None:
+                    next_time = job.trigger.get_next_fire_time(None, datetime.now())
+                result[job_id] = next_time
+            except Exception:
+                result[job_id] = None
         return result
 
 
