@@ -6,14 +6,18 @@
 - 필터링 → 분석 → 점수 산출 → 저장 → 알림 순서 관리
 - 에러 처리 및 부분 실패 핸들링
 - 실행 시간 측정
+- 조건검색 기반 유니버스 지원 (2차 필터 적용)
+- fallback 정책 (조건검색 실패/부족 시 자동 대체)
 
 의존성:
 - adapters.kis_client
 - domain.score_calculator
 - infrastructure.repository
 - adapters.discord_notifier
+- utils.stock_filters
 """
 
+import os
 import time
 import logging
 from datetime import date, datetime
@@ -24,6 +28,11 @@ from src.config.constants import (
     MIN_TRADING_VALUE,
     TOP_N_COUNT,
     MIN_DAILY_DATA_COUNT,
+)
+from src.utils.stock_filters import (
+    filter_universe_stocks,
+    is_eligible_universe_stock,
+    FilterResult,
 )
 from src.domain.models import (
     StockData,
@@ -191,16 +200,97 @@ class ScreenerService:
             return Weights()
     
     def _get_filtered_stocks(self) -> List:
-        """거래대금 필터링된 종목 조회"""
+        """
+        유니버스 종목 조회 (조건검색 우선 + fallback 정책)
+        
+        우선순위:
+        1. 조건검색(psearch) 기반 유니버스 -> 2차 필터 적용
+        2. fallback: volume_rank API
+        3. fallback: 주요 종목 리스트 스캔
+        """
+        # 환경변수에서 설정 읽기
+        universe_source = os.getenv("UNIVERSE_SOURCE", "condition_search")
+        condition_name = os.getenv("CONDITION_NAME", "TV200")
+        min_candidates = int(os.getenv("MIN_CANDIDATES", "30"))
+        fallback_enabled = os.getenv("FALLBACK_ENABLED", "true").lower() == "true"
+        
         min_value = settings.screening.min_trading_value
-        logger.info(f"거래대금 {min_value}억 이상 종목 조회 중...")
+        stocks = []
+        filter_result = None
         
-        stocks = self.kis_client.get_top_trading_value_stocks(
-            min_trading_value=min_value,
-            limit=200,
-        )
+        # ============================================================
+        # 1. 조건검색 기반 유니버스 (우선)
+        # ============================================================
+        if universe_source == "condition_search":
+            logger.info(f"조건검색 유니버스 조회: {condition_name}")
+            
+            try:
+                stocks_raw = self.kis_client.get_condition_universe(
+                    condition_name=condition_name,
+                    limit=500,
+                )
+                
+                if stocks_raw:
+                    logger.info(f"조건검색 raw 결과: {len(stocks_raw)}개")
+                    
+                    # 2차 필터 적용
+                    stocks, filter_result = filter_universe_stocks(
+                        stocks_raw,
+                        log_details=True,
+                    )
+                    
+                    logger.info(f"2차 필터 후: {len(stocks)}개")
+                else:
+                    logger.warning("조건검색 결과가 비어있습니다")
+                    
+            except Exception as e:
+                logger.error(f"조건검색 조회 실패: {e}")
         
-        logger.info(f"필터링된 종목: {len(stocks)}개")
+        # ============================================================
+        # 2. Fallback 정책
+        # ============================================================
+        if fallback_enabled and len(stocks) < min_candidates:
+            logger.warning(
+                f"유니버스 부족 ({len(stocks)}개 < {min_candidates}개), "
+                f"fallback 실행..."
+            )
+            
+            # 2-1. volume_rank API fallback
+            if len(stocks) < min_candidates:
+                logger.info("Fallback 1: volume_rank API 조회")
+                try:
+                    fallback_stocks = self.kis_client.get_top_trading_value_stocks(
+                        min_trading_value=min_value,
+                        limit=200,
+                    )
+                    
+                    if fallback_stocks:
+                        # 2차 필터 적용
+                        filtered_fallback, fb_result = filter_universe_stocks(
+                            fallback_stocks,
+                            log_details=True,
+                        )
+                        
+                        # 기존 종목과 병합 (중복 제거)
+                        existing_codes = {s.code for s in stocks}
+                        for stock in filtered_fallback:
+                            if stock.code not in existing_codes:
+                                stocks.append(stock)
+                                existing_codes.add(stock.code)
+                        
+                        logger.info(f"Fallback 후 총: {len(stocks)}개")
+                        
+                except Exception as e:
+                    logger.error(f"volume_rank fallback 실패: {e}")
+        
+        # 최종 결과 로깅
+        if stocks:
+            logger.info(f"최종 유니버스: {len(stocks)}개 종목")
+            if filter_result:
+                logger.info(str(filter_result))
+        else:
+            logger.warning("유니버스가 비어있습니다!")
+        
         return stocks
     
     def _collect_stock_data(self, stocks) -> List[StockData]:

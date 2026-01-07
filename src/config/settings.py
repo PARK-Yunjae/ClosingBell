@@ -123,7 +123,7 @@ def load_settings() -> Settings:
         app_secret=os.getenv("KIS_APP_SECRET", "").strip('"'),
         account_no=os.getenv("KIS_ACCOUNT_NO", "").strip('"'),
         base_url=os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443"),
-        hts_id=os.getenv("hts_id", "").strip() or None,
+        hts_id=os.getenv("KIS_HTS_ID") or os.getenv("hts_id", "").strip() or None,
     )
     
     # Discord 설정

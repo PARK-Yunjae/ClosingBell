@@ -147,14 +147,35 @@ CHANGE_NEGATIVE_PENALTY = 1.0  # 하락 시 점수
 # 거래대금 필터 (억원)
 MIN_TRADING_VALUE = 300
 
-# 제외 종목 패턴
+# 제외 종목 패턴 (이름 기반)
+# 참고: 더 포괄적인 필터는 src/utils/stock_filters.py의 EXCLUDE_KEYWORDS 사용
 EXCLUDED_STOCK_PATTERNS = [
-    "스팩",
-    "SPAC",
-    "ETF",
-    "ETN",
+    # 인버스/레버리지
     "인버스",
     "레버리지",
+    "레버",
+    "2X",
+    "2x",
+    "3X",
+    "3x",
+    "곱버스",
+    
+    # ETF/ETN
+    "ETF",
+    "ETN",
+    "KODEX",
+    "TIGER",
+    "KBSTAR",
+    "ARIRANG",
+    "HANARO",
+    
+    # 스팩/리츠
+    "스팩",
+    "SPAC",
+    "리츠",
+    "REIT",
+    
+    # 선물/파생
     "선물",
 ]
 

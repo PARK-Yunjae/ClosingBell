@@ -600,6 +600,208 @@ class KISClient:
             return ""
         except Exception:
             return ""
+    
+    # ============================================================
+    # 조건검색(psearch) API
+    # ============================================================
+    
+    def get_condition_list(self, user_id: str) -> List[Dict[str, str]]:
+        """
+        사용자 조건검색식 목록 조회 (psearch-title)
+        
+        Args:
+            user_id: HTS 사용자 ID
+            
+        Returns:
+            조건검색식 리스트 [{"seq": "001", "name": "TV200"}, ...]
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/psearch-title"
+        tr_id = "HHKST03900300"
+        
+        params = {
+            "user_id": user_id,
+        }
+        
+        try:
+            data = self._request("GET", endpoint, tr_id, params=params)
+            output = data.get("output2", [])
+            
+            conditions = []
+            for item in output:
+                seq = item.get("seq", "")
+                name = item.get("condition_name", "") or item.get("cond_nm", "")
+                if seq:
+                    conditions.append({"seq": seq, "name": name})
+            
+            logger.info(f"조건검색식 목록 조회 완료: {len(conditions)}개")
+            return conditions
+            
+        except Exception as e:
+            logger.error(f"조건검색식 목록 조회 실패: {e}")
+            return []
+    
+    def get_condition_result(
+        self,
+        user_id: str,
+        seq: str,
+        limit: int = 500,
+    ) -> List[StockInfo]:
+        """
+        조건검색 결과 조회 (psearch-result)
+        
+        Args:
+            user_id: HTS 사용자 ID
+            seq: 조건검색식 순번
+            limit: 최대 조회 개수
+            
+        Returns:
+            StockInfo 리스트
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/psearch-result"
+        tr_id = "HHKST03900400"
+        
+        params = {
+            "user_id": user_id,
+            "seq": seq,
+        }
+        
+        try:
+            data = self._request("GET", endpoint, tr_id, params=params)
+            output = data.get("output2", [])
+            
+            stocks = []
+            for item in output[:limit]:
+                # 코드 파싱 (다양한 키 대응)
+                code = (
+                    item.get("mksc_shrn_iscd") or
+                    item.get("stck_shrn_iscd") or
+                    item.get("pdno") or
+                    item.get("code") or
+                    ""
+                )
+                if not code:
+                    continue
+                code = code.zfill(6)
+                
+                # 종목명 파싱 (다양한 키 대응)
+                name = (
+                    item.get("hts_kor_isnm") or
+                    item.get("prdt_name") or
+                    item.get("kor_item_name") or
+                    item.get("itmsNm") or
+                    item.get("stck_shrn_iscd_name") or
+                    ""
+                ).strip()
+                
+                # 시장 구분 (가능한 경우)
+                market = "KOSPI"
+                market_code = item.get("mrkt_div_code") or item.get("mrkt_cls_code") or ""
+                if market_code in ("Q", "J2", "KOSDAQ"):
+                    market = "KOSDAQ"
+                
+                stocks.append(StockInfo(code=code, name=name, market=market))
+            
+            logger.info(f"조건검색 결과 조회 완료: {len(stocks)}개")
+            return stocks
+            
+        except Exception as e:
+            logger.error(f"조건검색 결과 조회 실패: {e}")
+            return []
+    
+    def get_condition_universe(
+        self,
+        condition_name: str,
+        *,
+        user_id: Optional[str] = None,
+        limit: int = 500,
+        fetch_names: bool = True,
+    ) -> List[StockInfo]:
+        """
+        조건검색 기반 유니버스 조회
+        
+        Args:
+            condition_name: 조건검색식 이름 (예: "TV200")
+            user_id: HTS 사용자 ID (None이면 설정에서 가져옴)
+            limit: 최대 조회 개수
+            fetch_names: 이름이 없는 종목의 이름 조회 여부
+            
+        Returns:
+            StockInfo 리스트
+        """
+        # 사용자 ID 결정
+        if user_id is None:
+            user_id = settings.kis.hts_id
+        
+        if not user_id:
+            logger.error("HTS 사용자 ID가 설정되지 않았습니다 (KIS_HTS_ID 또는 hts_id)")
+            return []
+        
+        logger.info(f"조건검색 유니버스 조회 시작: {condition_name} (user={user_id})")
+        
+        # 1. 조건검색식 목록에서 seq 찾기
+        conditions = self.get_condition_list(user_id)
+        if not conditions:
+            logger.warning("조건검색식 목록이 비어있습니다")
+            return []
+        
+        target_seq = None
+        for cond in conditions:
+            if cond["name"] == condition_name:
+                target_seq = cond["seq"]
+                break
+        
+        if target_seq is None:
+            logger.error(f"조건검색식 '{condition_name}'을 찾을 수 없습니다")
+            available = ", ".join(c["name"] for c in conditions[:10])
+            logger.info(f"사용 가능한 조건검색식: {available}")
+            return []
+        
+        logger.info(f"조건검색식 찾음: {condition_name} -> seq={target_seq}")
+        
+        # 2. 조건검색 결과 조회
+        stocks = self.get_condition_result(user_id, target_seq, limit)
+        
+        # 3. 이름이 없는 종목의 이름 조회 (옵션)
+        if fetch_names:
+            stocks_needing_name = [s for s in stocks if not s.name]
+            if stocks_needing_name:
+                logger.info(f"종목명 조회 필요: {len(stocks_needing_name)}개")
+                for stock in stocks_needing_name[:50]:  # 최대 50개만
+                    try:
+                        # 주식기본조회 API로 이름 조회
+                        name = self._get_stock_info_name(stock.code)
+                        if name:
+                            stock.name = name
+                    except Exception as e:
+                        logger.debug(f"종목명 조회 실패 ({stock.code}): {e}")
+        
+        logger.info(f"조건검색 유니버스 최종: {len(stocks)}개")
+        return stocks
+    
+    def _get_stock_info_name(self, stock_code: str) -> str:
+        """
+        주식기본조회 API를 통해 종목명 조회
+        
+        Args:
+            stock_code: 종목코드
+            
+        Returns:
+            종목명 (실패 시 빈 문자열)
+        """
+        endpoint = "/uapi/domestic-stock/v1/quotations/search-stock-info"
+        tr_id = "CTPF1002R"
+        
+        params = {
+            "PRDT_TYPE_CD": "300",  # 주식
+            "PDNO": stock_code.zfill(6),
+        }
+        
+        try:
+            data = self._request("GET", endpoint, tr_id, params=params)
+            output = data.get("output", {})
+            return output.get("prdt_abrv_name", "") or output.get("prdt_name", "") or ""
+        except Exception:
+            return ""
 
 
 # 싱글톤 인스턴스
