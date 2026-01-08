@@ -48,6 +48,10 @@ def calculate_cci_value_score(cci: float) -> float:
     Returns:
         점수 (0~10)
     """
+    # ★ v3.1: 300 이상 강한 감점 (이미 필터되지만 안전장치)
+    if cci > 300:
+        return 1.0  # 최저점
+
     # 극단값 처리
     if cci > CCI_EXTREME_HIGH:
         return 1.0  # 매우 과열

@@ -286,34 +286,63 @@ class ScreenerService:
         
         return stocks
     
-    def _collect_stock_data(self, stocks) -> List[StockData]:
-        """종목별 일봉 데이터 수집"""
+    def _collect_stock_data(self, stocks: List[StockData]) -> List[StockData]:
+        """종목별 일봉 데이터 수집 및 StockData 생성
+        
+        v3.1: 상한가/과열 종목 필터링 추가
+        """
+        from src.config.constants import MAX_CHANGE_RATE, MAX_CCI_FILTER
+        
         stock_data_list = []
+        filtered_count = {"상한가": 0, "CCI과열": 0, "데이터부족": 0}
         failed_count = 0
         
-        for i, stock_info in enumerate(stocks):
+        for i, stock in enumerate(stocks):
             try:
                 # 일봉 데이터 조회
-                prices = self.kis_client.get_daily_prices(
-                    stock_info.code,
-                    count=MIN_DAILY_DATA_COUNT + 5,  # 여유분
+                daily_prices = self.kis_client.get_daily_prices(
+                    stock.code,
+                    count=MIN_DAILY_DATA_COUNT + 10
                 )
                 
-                if len(prices) < MIN_DAILY_DATA_COUNT:
-                    logger.warning(f"데이터 부족: {stock_info.name} ({len(prices)}일)")
+                if len(daily_prices) < MIN_DAILY_DATA_COUNT:
+                    logger.warning(f"데이터 부족: {stock.name} ({len(daily_prices)}일)")
+                    filtered_count["데이터부족"] += 1
                     continue
                 
-                # 현재가 조회
-                current = self.kis_client.get_current_price(stock_info.code)
+                # 당일 등락률 계산
+                today = daily_prices[-1]
+                yesterday = daily_prices[-2]
+                change_rate = ((today.close - yesterday.close) / yesterday.close) * 100
                 
-                # 거래대금 (억원)
-                trading_value = current.trading_value / 100_000_000
+                # ★ 상한가 필터 (v3.1)
+                if change_rate >= MAX_CHANGE_RATE:
+                    logger.debug(f"상한가 제외: {stock.name} ({stock.code}) +{change_rate:.1f}%")
+                    filtered_count["상한가"] += 1
+                    continue
+                
+                # ★ CCI 과열 필터 (v3.1) - 선택적
+                # CCI 계산 (간단히)
+                if len(daily_prices) >= 14:
+                    # CCI 계산
+                    from src.domain.indicators import calculate_cci
+                    cci_values = calculate_cci(daily_prices, period=14)
+                    cci = cci_values[-1] if cci_values else None
+                    
+                    if cci is not None and cci > MAX_CCI_FILTER:
+                        logger.debug(f"CCI 과열 제외: {stock.name} ({stock.code}) CCI={cci:.1f}")
+                        filtered_count["CCI과열"] += 1
+                        continue
+                
+                # StockData 생성
+                # 주의: daily_prices[-1]은 오늘 데이터를 포함한다고 가정 (장중/장마감 후)
+                trading_value = today.trading_value / 100_000_000  # 억원 단위 변환
                 
                 stock_data = StockData(
-                    code=stock_info.code,
-                    name=stock_info.name,
-                    daily_prices=prices,
-                    current_price=current.price,
+                    code=stock.code,
+                    name=stock.name,
+                    daily_prices=daily_prices,
+                    current_price=today.close,
                     trading_value=trading_value,
                 )
                 stock_data_list.append(stock_data)
@@ -322,14 +351,15 @@ class ScreenerService:
                 if (i + 1) % 10 == 0:
                     logger.info(f"데이터 수집 진행: {i + 1}/{len(stocks)}")
                     
-            except ScreenerError as e:
-                logger.warning(f"종목 데이터 수집 실패: {stock_info.name} - {e}")
-                failed_count += 1
-                continue
             except Exception as e:
-                logger.warning(f"종목 데이터 수집 에러: {stock_info.name} - {e}")
+                logger.warning(f"종목 데이터 수집 실패: {stock.code} - {e}")
                 failed_count += 1
                 continue
+        
+        # 필터링 로그
+        total_filtered = sum(filtered_count.values())
+        if total_filtered > 0:
+            logger.info(f"필터링 제외: {filtered_count}")
         
         if failed_count > 0:
             logger.warning(f"데이터 수집 실패 종목: {failed_count}개")

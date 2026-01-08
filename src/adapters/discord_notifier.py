@@ -185,6 +185,26 @@ class DiscordNotifier:
         payload = {"content": content}
         return self._send(payload)
     
+    def send_learning_report(self, report) -> NotifyResult:
+        """학습 리포트 발송"""
+        # report object expected to have learning_date and message
+        title = f"📚 학습 리포트 ({report.learning_date})"
+        description = report.message
+        
+        # Split message if too long (Discord limit 4096)
+        if len(description) > 4000:
+            description = description[:4000] + "..."
+            
+        embed = {
+            "title": title,
+            "description": description,
+            "color": DISCORD_COLOR_SUCCESS,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        
+        payload = {"embeds": [embed]}
+        return self._send(payload)
+
     def _send(
         self,
         payload: dict,

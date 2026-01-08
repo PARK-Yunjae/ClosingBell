@@ -86,7 +86,7 @@ CCI_SLOPE_STRONG_UP = 15      # 강한 상승세
 CCI_SLOPE_UP = 8              # 상승세
 CCI_SLOPE_SLIGHT_UP = 3       # 약한 상승세
 CCI_SLOPE_FLAT = 0            # 횡보
-CCI_SLOPE_WARNING_LEVEL = 200 # 이 레벨 이상에서 하락 시 추가 감점
+CCI_SLOPE_WARNING_LEVEL = 240 # 이 레벨 이상에서 하락 시 추가 감점
 
 
 # ============================================================
@@ -147,7 +147,11 @@ CHANGE_NEGATIVE_PENALTY = 1.0  # 하락 시 점수
 # ============================================================
 
 # 거래대금 필터 (억원)
-MIN_TRADING_VALUE = 300
+MIN_TRADING_VALUE = 0  # 300억 필터 해제 (v3.1.1)
+
+# ★ 상한가/과열 필터 (v3.1 추가)
+MAX_CHANGE_RATE = 25.0     # 등락률 25% 이상 제외 (상한가 근접)
+MAX_CCI_FILTER = 300       # CCI 300 이상 제외 (과열)
 
 # 제외 종목 패턴 (이름 기반)
 # 참고: 더 포괄적인 필터는 src/utils/stock_filters.py의 EXCLUDE_KEYWORDS 사용

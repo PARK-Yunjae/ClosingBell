@@ -130,6 +130,31 @@ def print_result(result):
     else:
         print("\n❌ 적합한 종목이 없습니다.")
     
+    # ★ 사용자 요청: 한화오션(042660) 점수 확인
+    target_code = "042660"
+    target_name = "한화오션"
+    
+    found = None
+    if result.all_items:
+        for stock in result.all_items:
+            if stock.stock_code == target_code:
+                found = stock
+                break
+    
+    if found:
+        print(f"\n🔎 {target_name} ({target_code}) 상세 결과")
+        print("-" * 50)
+        stock = found
+        print(f"   순위: {stock.rank}위")
+        print(f"   💰 현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
+        print(f"   📊 총점: {stock.score_total:.1f}점")
+        print(f"      CCI값: {stock.score_cci_value:.1f} | CCI기울기: {stock.score_cci_slope:.1f}")
+        print(f"      MA20기울기: {stock.score_ma20_slope:.1f} | 양봉품질: {stock.score_candle:.1f}")
+        print(f"      상승률: {stock.score_change:.1f}")
+        print(f"   📈 원시값: CCI={stock.raw_cci:.1f}")
+    else:
+        print(f"\n❓ {target_name} ({target_code}) 결과 없음 (필터링되었거나 유니버스 미포함)")
+    
     if result.error_message:
         print(f"\n⚠️ 에러: {result.error_message}")
     
@@ -139,7 +164,7 @@ def print_result(result):
 def run_learning_mode():
     """학습 모드 실행 (Phase 2)"""
     from src.services.learner_service import get_learner_service
-    from src.services.notifier_service import get_notifier_service
+    from src.adapters.discord_notifier import get_discord_notifier
     
     logger = logging.getLogger(__name__)
     
@@ -159,7 +184,7 @@ def run_learning_mode():
     
     # 디스코드 알림 (선택)
     if report.sample_count > 0:
-        notifier = get_notifier_service()
+        notifier = get_discord_notifier()
         notifier.send_learning_report(report)
         logger.info("학습 리포트 디스코드 발송 완료")
     
