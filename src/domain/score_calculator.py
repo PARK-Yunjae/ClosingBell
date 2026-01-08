@@ -14,7 +14,6 @@
 
 import logging
 from typing import List, Optional
-from dataclasses import dataclass
 
 from src.domain.models import (
     DailyPrice,
@@ -25,9 +24,6 @@ from src.domain.models import (
 )
 from src.domain.indicators import (
     calculate_all_indicators,
-    IndicatorResult,
-    count_rising_days,
-    check_continuous_rise,
 )
 from src.config.constants import (
     SCORE_MAX,
@@ -35,22 +31,7 @@ from src.config.constants import (
     CCI_OPTIMAL,
     CCI_SCORE_RANGES,
     CCI_EXTREME_HIGH,
-    CCI_SLOPE_STRONG_UP,
-    CCI_SLOPE_UP,
-    CCI_SLOPE_SLIGHT_UP,
     CCI_SLOPE_WARNING_LEVEL,
-    MA20_SLOPE_STRONG_UP,
-    MA20_SLOPE_UP,
-    MA20_SLOPE_SLIGHT_UP,
-    MA20_SLOPE_FLAT,
-    MA20_SLOPE_STRONG_DOWN,
-    CANDLE_UPPER_WICK_EXCELLENT,
-    CANDLE_UPPER_WICK_GOOD,
-    CANDLE_UPPER_WICK_NORMAL,
-    CANDLE_MA20_ABOVE_OVERHEAT,
-    CHANGE_SCORE_RANGES,
-    CHANGE_EXTREME_HIGH,
-    CHANGE_NEGATIVE_PENALTY,
     TOP_N_COUNT,
     CCI_SLOPE_PERIOD,
 )

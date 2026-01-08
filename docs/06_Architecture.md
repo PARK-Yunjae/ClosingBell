@@ -1,8 +1,8 @@
-# 6. 아키텍처 설계 (Architecture Design)
+# 6. 아키텍처 설계 (Architecture Design) v3.0
 
 **프로젝트명:** 종가매매 스크리너  
-**버전:** 1.0  
-**작성일:** 2025-01-06  
+**버전:** 3.0  
+**작성일:** 2026-01-08  
 
 ---
 
@@ -39,25 +39,25 @@
                               └────────┬────────┘
                                        │
         ┌──────────────────────────────┼──────────────────────────────┐
-        │                              │                              │
-        ▼                              ▼                              ▼
-┌───────────────┐            ┌─────────────────┐            ┌─────────────────┐
-│  한투 REST API │            │ Discord Webhook │            │  (카카오 API)   │
-└───────┬───────┘            └────────┬────────┘            └────────┬────────┘
-        │                              │                              │
+        │                              │                              
+        ▼                              ▼                              
+┌───────────────┐            ┌─────────────────┐            
+│  한투 REST API │            │ Discord Webhook │            
+└───────┬───────┘            └────────┬────────┘            
+        │                              │                              
         └──────────────────────────────┼──────────────────────────────┘
                                        │
 ┌──────────────────────────────────────┴────────────────────────────────────────┐
 │                           Application Layer                                    │
 │  ┌─────────────────────────────────────────────────────────────────────────┐  │
 │  │                         External Adapters                                │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │  │
-│  │  │  KIS Client  │  │   Discord    │  │    Kakao     │                   │  │
-│  │  │   (한투 API) │  │   Notifier   │  │   Notifier   │                   │  │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                   │  │
-│  └─────────┼─────────────────┼─────────────────┼────────────────────────────┘  │
-│            │                 │                 │                               │
-│  ┌─────────┴─────────────────┴─────────────────┴────────────────────────────┐  │
+│  │  ┌──────────────┐  ┌──────────────┐                                     │  │
+│  │  │  KIS Client  │  │   Discord    │                                     │  │
+│  │  │   (한투 API) │  │   Notifier   │                                     │  │
+│  │  └──────┬───────┘  └──────┬───────┘                                     │  │
+│  └─────────┼─────────────────┼─────────────────────────────────────────────┘  │
+│            │                 │                                                │
+│  ┌─────────┴─────────────────┴──────────────────────────────────────────────┐  │
 │  │                         Core Services                                     │  │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
 │  │  │   Screener   │  │   Learner    │  │   Notifier   │  │  Dashboard   │  │  │
@@ -94,7 +94,7 @@
 
 | 레이어 | 역할 | 주요 컴포넌트 |
 |--------|------|---------------|
-| External Adapters | 외부 API 통신 추상화 | KIS Client, Discord/Kakao Notifier |
+| External Adapters | 외부 API 통신 추상화 | KIS Client, Discord Notifier |
 | Core Services | 비즈니스 로직 오케스트레이션 | Screener, Learner, Notifier, Dashboard |
 | Domain Layer | 순수 비즈니스 로직 | Indicator/Score Calculator, Optimizer |
 | Infrastructure | 인프라 관심사 | Repository, Scheduler, Logger, Config |
@@ -122,14 +122,14 @@ closing-trade-screener/
 │   ├── adapters/                   # 외부 시스템 어댑터
 │   │   ├── __init__.py
 │   │   ├── kis_client.py          # 한투 API 클라이언트
-│   │   ├── discord_notifier.py    # 디스코드 웹훅
-│   │   └── kakao_notifier.py      # 카카오 알림 (선택)
+│   │   └── discord_notifier.py    # 디스코드 웹훅
 │   │
 │   ├── services/                   # 핵심 서비스
 │   │   ├── __init__.py
 │   │   ├── screener_service.py    # 스크리닝 오케스트레이션
 │   │   ├── learner_service.py     # 학습/최적화 서비스
-│   │   └── notifier_service.py    # 알림 통합 서비스
+│   │   ├── notifier_service.py    # 알림 통합 서비스
+│   │   └── backtest_service.py    # 백테스팅 서비스
 │   │
 │   ├── domain/                     # 도메인 로직
 │   │   ├── __init__.py
@@ -174,11 +174,6 @@ closing-trade-screener/
 │   │   └── test_notifier_service.py
 │   └── fixtures/                   # 테스트 데이터
 │       └── sample_daily_prices.json
-│
-├── scripts/                        # 유틸리티 스크립트
-│   ├── init_db.py                 # DB 초기화
-│   ├── backup_db.py               # DB 백업
-│   └── manual_screening.py        # 수동 스크리닝 실행
 │
 ├── data/                           # 데이터 디렉토리
 │   ├── screener.db                # SQLite DB 파일
@@ -300,13 +295,12 @@ closing-trade-screener/
 알림 통합 서비스
 
 책임:
-- 다중 채널 알림 발송 (Discord, Kakao)
+- 다중 채널 알림 발송 (Discord)
 - 채널별 활성화 상태 관리
 - 발송 결과 집계
 
 의존성:
 - adapters.discord_notifier
-- adapters.kakao_notifier
 
 인터페이스:
 - send_alert(result: ScreeningResult, is_preview: bool) -> List[NotifyResult]
@@ -470,7 +464,7 @@ SQLite 데이터베이스 연결 관리
                     ┌───────────┼───────────┐
                     ▼           ▼           ▼
             ┌───────────┐ ┌───────────┐ ┌───────────┐
-            │ scheduler │ │ dashboard │ │  scripts  │
+            │ scheduler │ │ dashboard │ │ (scripts) │
             └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
                   │             │             │
                   └─────────────┼─────────────┘
@@ -512,10 +506,6 @@ KIS_BASE_URL=https://openapi.koreainvestment.com:9443
 
 # Discord
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
-
-# Kakao (선택)
-KAKAO_REST_API_KEY=
-KAKAO_ACCESS_TOKEN=
 
 # Gemini API (추후 AI 분석용)
 GEMINI_API_KEY=your_gemini_key
@@ -617,6 +607,7 @@ WantedBy=multi-user.target
 | 버전 | 날짜 | 변경 내용 | 작성자 |
 |------|------|----------|--------|
 | 1.0 | 2025-01-06 | 초안 작성 | Architect AI |
+| 3.0 | 2026-01-08 | Kakao 제거, 구조 단순화 | Refactoring AI |
 
 ---
 

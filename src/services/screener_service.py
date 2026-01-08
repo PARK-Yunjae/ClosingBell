@@ -20,23 +20,19 @@
 import os
 import time
 import logging
-from datetime import date, datetime
+from datetime import date
 from typing import List, Optional
 
 from src.config.settings import settings
 from src.config.constants import (
-    MIN_TRADING_VALUE,
     TOP_N_COUNT,
     MIN_DAILY_DATA_COUNT,
 )
 from src.utils.stock_filters import (
     filter_universe_stocks,
-    is_eligible_universe_stock,
-    FilterResult,
 )
 from src.domain.models import (
     StockData,
-    StockScore,
     Weights,
     ScreeningResult,
     ScreeningStatus,
@@ -45,8 +41,6 @@ from src.domain.models import (
 from src.domain.score_calculator import ScoreCalculator
 from src.adapters.kis_client import get_kis_client, KISClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
-# 카카오톡 알림 제거 (v2.2) - 토큰 자동 갱신 불가
-# from src.adapters.kakao_notifier import get_kakao_notifier, KakaoNotifier
 from src.infrastructure.repository import (
     get_screening_repository,
     get_weight_repository,
@@ -70,7 +64,6 @@ class ScreenerService:
     ):
         self.kis_client = kis_client or get_kis_client()
         self.discord_notifier = discord_notifier or get_discord_notifier()
-        # 카카오톡 알림 제거 (v2.2) - 디스코드만 사용
         self.screening_repo = screening_repo or get_screening_repository()
         self.weight_repo = weight_repo or get_weight_repository()
     
@@ -376,10 +369,7 @@ class ScreenerService:
             # 저장 실패해도 알림은 발송
     
     def _send_alert(self, result: ScreeningResult, is_preview: bool):
-        """알림 발송 (Discord만) - v2.2 업데이트
-        
-        카카오톡 알림 제거: 토큰 자동 갱신 불가능하여 비활성화
-        """
+        """알림 발송 (Discord)"""
         try:
             discord_result = self.discord_notifier.send_screening_result(
                 result,

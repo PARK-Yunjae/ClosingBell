@@ -46,20 +46,6 @@ class DiscordSettings:
 
 
 @dataclass
-class KakaoSettings:
-    """카카오톡 알림 설정"""
-    rest_api_key: str
-    redirect_uri: str
-    access_token: str = ""
-    enabled: bool = False
-    
-    def __post_init__(self):
-        # 액세스 토큰이 있으면 활성화
-        if self.access_token and self.access_token.strip():
-            self.enabled = True
-
-
-@dataclass
 class EmailSettings:
     """이메일 알림 설정"""
     enabled: bool = False
@@ -97,7 +83,6 @@ class Settings:
     """전체 설정"""
     kis: KISSettings
     discord: DiscordSettings
-    kakao: KakaoSettings
     email: EmailSettings
     database: DatabaseSettings
     screening: ScreeningSettings
@@ -132,13 +117,6 @@ def load_settings() -> Settings:
         enabled=True,
     )
     
-    # Kakao 설정
-    kakao = KakaoSettings(
-        rest_api_key=os.getenv("KAKAO_REST_API_KEY", "").strip('"'),
-        redirect_uri=os.getenv("KAKAO_REDIRECT_URI", "http://localhost:3000/oauth"),
-        access_token=os.getenv("KAKAO_ACCESS_TOKEN", "").strip('"').split('#')[0].strip(),
-    )
-    
     # Email 설정
     email = EmailSettings(
         enabled=os.getenv("EMAIL_ENABLED", "false").lower() == "true",
@@ -165,7 +143,6 @@ def load_settings() -> Settings:
     return Settings(
         kis=kis,
         discord=discord,
-        kakao=kakao,
         email=email,
         database=database,
         screening=screening,

@@ -15,9 +15,8 @@
 import json
 import time
 import logging
-import traceback
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import requests
 from requests.exceptions import (
@@ -42,7 +41,6 @@ from src.domain.models import (
     CurrentPrice,
     ScreenerError,
 )
-from src.infrastructure.logging_config import log_api_call, log_error_with_context
 
 logger = logging.getLogger(__name__)
 

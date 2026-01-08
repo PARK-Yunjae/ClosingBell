@@ -15,7 +15,7 @@ SQLite 데이터베이스 연결 관리
 import sqlite3
 import logging
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Optional, List
 from contextlib import contextmanager
 
 from src.config.settings import settings

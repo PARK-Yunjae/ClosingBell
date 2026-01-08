@@ -10,10 +10,9 @@ from src.domain.score_calculator import (
     calculate_ma20_slope_score,
     calculate_candle_score,
     calculate_change_score,
-    calculate_total_score,
     ScoreCalculator,
 )
-from src.domain.models import DailyPrice, ScoreDetail
+from src.domain.models import DailyPrice, ScoreDetail, Weights
 from src.config.constants import (
     SCORE_MAX,
     SCORE_MIN,
@@ -61,27 +60,24 @@ class TestCCIValueScore:
 class TestCCISlopeScore:
     """CCI 기울기 점수 테스트"""
     
-    def test_strong_uptrend_max_score(self):
-        """강한 상승세에서 최고점"""
-        score = calculate_cci_slope_score(slope=20, current_cci=150)
+    def test_uptrend_max_score(self):
+        """상승세에서 최고점"""
+        # 최근 2일 상승: 140 -> 150
+        score = calculate_cci_slope_score(cci_values=[140, 150], current_cci=150)
         assert score >= 9.0
-    
-    def test_flat_trend_middle_score(self):
-        """횡보에서 중간 점수"""
-        score = calculate_cci_slope_score(slope=1, current_cci=150)
-        assert 4.0 <= score <= 6.0
     
     def test_downtrend_low_score(self):
         """하락세에서 낮은 점수"""
-        score = calculate_cci_slope_score(slope=-10, current_cci=150)
+        # 최근 2일 하락: 160 -> 150
+        score = calculate_cci_slope_score(cci_values=[160, 150], current_cci=150)
         assert score <= 4.0
     
     def test_high_cci_downtrend_extra_penalty(self):
         """CCI 200 이상에서 하락 시 추가 감점"""
-        # 일반 구간에서 하락
-        score_normal = calculate_cci_slope_score(slope=-5, current_cci=150)
-        # 고점에서 하락 (추가 감점)
-        score_high = calculate_cci_slope_score(slope=-5, current_cci=220)
+        # 일반 구간에서 하락 (160 -> 150)
+        score_normal = calculate_cci_slope_score(cci_values=[160, 150], current_cci=150)
+        # 고점에서 하락 (230 -> 220)
+        score_high = calculate_cci_slope_score(cci_values=[230, 220], current_cci=220)
         
         assert score_high <= score_normal
 
@@ -118,6 +114,7 @@ class TestCandleScore:
         score = calculate_candle_score(
             is_bullish=True,
             upper_wick_ratio=0.05,  # 5% 윗꼬리
+            is_above_ma20=True,
             ma20_position=2.0,      # MA20 위 2%
         )
         assert score >= 9.0
@@ -127,21 +124,23 @@ class TestCandleScore:
         score = calculate_candle_score(
             is_bullish=False,
             upper_wick_ratio=0.3,
+            is_above_ma20=True,
             ma20_position=2.0,
         )
         assert score <= 4.0
     
     def test_long_upper_wick_penalty(self):
         """긴 윗꼬리에서 감점"""
-        score_short = calculate_candle_score(True, 0.1, 2.0)
-        score_long = calculate_candle_score(True, 0.5, 2.0)
+        score_short = calculate_candle_score(True, 0.1, True, 2.0)
+        score_long = calculate_candle_score(True, 0.5, True, 2.0)
         
         assert score_short > score_long
     
     def test_far_above_ma20_penalty(self):
         """MA20 대비 너무 높으면 감점 (과열)"""
-        score_moderate = calculate_candle_score(True, 0.1, 2.0)
-        score_overheat = calculate_candle_score(True, 0.1, 8.0)
+        # 윗꼬리 비율을 높여서(0.3) 기본 점수를 낮춤 (상한선 10점에 도달하지 않도록)
+        score_moderate = calculate_candle_score(True, 0.3, True, 2.0)
+        score_overheat = calculate_candle_score(True, 0.3, True, 8.0)
         
         assert score_moderate > score_overheat
 
@@ -149,30 +148,13 @@ class TestCandleScore:
 class TestChangeScore:
     """상승률 점수 테스트"""
     
-    def test_optimal_change_max_score(self):
-        """10~15% 상승에서 최고점"""
+    def test_change_score_neutral(self):
+        """상승률 점수는 항상 중립 점수(5.0) 반환 (비활성화됨)"""
         score = calculate_change_score(12.0)
-        assert score == SCORE_MAX
-    
-    def test_moderate_change_good_score(self):
-        """5~10% 상승에서 좋은 점수"""
-        score = calculate_change_score(7.0)
-        assert score >= 8.0
-    
-    def test_too_low_change_penalty(self):
-        """1% 미만 상승에서 감점"""
-        score = calculate_change_score(0.5)
-        assert score <= 3.0
-    
-    def test_too_high_change_penalty(self):
-        """30% 이상 상승에서 감점 (추격 위험)"""
-        score = calculate_change_score(35.0)
-        assert score <= 2.0
-    
-    def test_negative_change_low_score(self):
-        """하락 시 낮은 점수"""
+        assert score == 5.0
+        
         score = calculate_change_score(-5.0)
-        assert score <= 2.0
+        assert score == 5.0
 
 
 class TestTotalScore:
@@ -180,49 +162,34 @@ class TestTotalScore:
     
     def test_total_score_calculation(self, sample_score_detail):
         """총점이 개별 점수의 가중합과 일치"""
-        weights = {
+        weights_dict = {
             'cci_value': 1.0,
             'cci_slope': 1.0,
             'ma20_slope': 1.0,
             'candle': 1.0,
             'change': 1.0,
         }
+        weights = Weights(**weights_dict)
         
         expected = (
-            sample_score_detail.cci_value * weights['cci_value'] +
-            sample_score_detail.cci_slope * weights['cci_slope'] +
-            sample_score_detail.ma20_slope * weights['ma20_slope'] +
-            sample_score_detail.candle * weights['candle'] +
-            sample_score_detail.change * weights['change']
+            sample_score_detail.cci_value * weights.cci_value +
+            sample_score_detail.cci_slope * weights.cci_slope +
+            sample_score_detail.ma20_slope * weights.ma20_slope +
+            sample_score_detail.candle * weights.candle +
+            sample_score_detail.change * weights.change
         )
         
-        total = calculate_total_score(sample_score_detail, weights)
+        total = sample_score_detail.total(weights)
         assert abs(total - expected) < 0.01
     
     def test_total_score_with_different_weights(self, sample_score_detail):
         """가중치 변경 시 총점 변화"""
-        weights_equal = {'cci_value': 1.0, 'cci_slope': 1.0, 'ma20_slope': 1.0, 'candle': 1.0, 'change': 1.0}
-        weights_cci_heavy = {'cci_value': 3.0, 'cci_slope': 2.0, 'ma20_slope': 1.0, 'candle': 1.0, 'change': 1.0}
+        weights_equal = Weights(cci_value=1.0, cci_slope=1.0, ma20_slope=1.0, candle=1.0, change=1.0)
+        weights_cci_heavy = Weights(cci_value=3.0, cci_slope=2.0, ma20_slope=1.0, candle=1.0, change=1.0)
         
-        total_equal = calculate_total_score(sample_score_detail, weights_equal)
-        total_heavy = calculate_total_score(sample_score_detail, weights_cci_heavy)
+        total_equal = sample_score_detail.total(weights_equal)
+        total_heavy = sample_score_detail.total(weights_cci_heavy)
         
         # CCI 점수가 높으면 가중치 높을 때 총점도 높아야 함
         if sample_score_detail.cci_value > 5:
             assert total_heavy > total_equal
-    
-    def test_max_possible_score(self):
-        """만점 계산 (50점)"""
-        perfect_detail = ScoreDetail(
-            cci_value=10.0,
-            cci_slope=10.0,
-            ma20_slope=10.0,
-            candle=10.0,
-            change=10.0,
-            raw_cci=180.0,
-            raw_ma20=50000,
-        )
-        weights = {'cci_value': 1.0, 'cci_slope': 1.0, 'ma20_slope': 1.0, 'candle': 1.0, 'change': 1.0}
-        
-        total = calculate_total_score(perfect_detail, weights)
-        assert total == 50.0

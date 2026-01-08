@@ -16,7 +16,7 @@ class TestKISClientMock:
         """Mock된 KIS 클라이언트"""
         with patch.object(KISClient, '_get_token', return_value='mock_token'):
             client = KISClient()
-            return client
+            yield client
     
     @patch('requests.get')
     def test_get_daily_prices_success(self, mock_get, mock_client):

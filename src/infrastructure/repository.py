@@ -13,16 +13,14 @@
 
 import json
 import logging
-from datetime import date, datetime
-from typing import List, Optional, Dict, Any
+from datetime import date
+from typing import List, Optional, Dict
 
 from src.infrastructure.database import get_database, Database
 from src.domain.models import (
     StockScore,
-    ScoreDetail,
     Weights,
     ScreeningResult,
-    ScreeningStatus,
     NextDayResult,
 )
 

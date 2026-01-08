@@ -11,7 +11,7 @@
 import os
 import time
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
@@ -23,7 +23,6 @@ from src.domain.weight_optimizer import (
     should_optimize,
     get_default_weights,
     WeightOptimizationResult,
-    CorrelationResult,
 )
 from src.config.constants import MIN_LEARNING_SAMPLES
 

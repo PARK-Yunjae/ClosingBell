@@ -15,7 +15,7 @@
 import time
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 import requests
 
 from src.config.settings import settings
@@ -32,7 +32,6 @@ from src.domain.models import (
     ScreeningResult,
     NotifyResult,
     NotifyChannel,
-    ScreenerError,
 )
 
 logger = logging.getLogger(__name__)

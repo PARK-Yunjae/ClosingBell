@@ -13,10 +13,9 @@
     validate_settings()  # 실패 시 ConfigValidationError 발생
 """
 
-import os
 import re
 import logging
-from typing import List, Tuple, Optional
+from typing import List
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -114,22 +113,6 @@ def validate_discord_settings(result: ValidationResult):
         result.add_warning(
             f"DISCORD_WEBHOOK_URL 형식이 올바르지 않습니다: {webhook_url[:50]}..."
         )
-
-
-def validate_kakao_settings(result: ValidationResult):
-    """카카오톡 설정 검증"""
-    # 카카오는 선택 사항
-    if settings.kakao.rest_api_key:
-        if settings.kakao.rest_api_key == "your_rest_api_key":
-            result.add_warning(
-                "KAKAO_REST_API_KEY가 예시 값입니다 - 실제 API 키를 입력하세요."
-            )
-    
-    if settings.kakao.access_token:
-        if settings.kakao.access_token == "your_access_token":
-            result.add_warning(
-                "KAKAO_ACCESS_TOKEN이 예시 값입니다 - tools/kakao_token_helper.py로 발급받으세요."
-            )
 
 
 def validate_database_settings(result: ValidationResult):
@@ -231,7 +214,6 @@ def validate_settings(raise_on_error: bool = True) -> ValidationResult:
     # 각 설정 그룹 검증
     validate_kis_settings(result)
     validate_discord_settings(result)
-    validate_kakao_settings(result)
     validate_database_settings(result)
     validate_log_settings(result)
     validate_screening_settings(result)
@@ -270,12 +252,6 @@ def print_settings_summary():
     print("\n[Discord]")
     webhook = settings.discord.webhook_url
     print(f"  WEBHOOK_URL: {'설정됨' if webhook and 'your_webhook' not in webhook.lower() else '미설정'}")
-    
-    # 카카오 설정
-    print("\n[카카오톡]")
-    print(f"  REST_API_KEY: {'설정됨' if settings.kakao.rest_api_key else '미설정'}")
-    print(f"  ACCESS_TOKEN: {'설정됨' if settings.kakao.access_token else '미설정'}")
-    print(f"  활성화: {'예' if settings.kakao.enabled else '아니오'}")
     
     # 스크리닝 설정
     print("\n[스크리닝]")

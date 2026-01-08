@@ -193,10 +193,10 @@ class TestScreeningResult:
             top3=[],
             all_items=[],
             execution_time_sec=5.0,
-            status=ScreeningStatus.NO_DATA,
+            status=ScreeningStatus.SUCCESS,
         )
         
-        assert result.status == ScreeningStatus.NO_DATA
+        assert result.status == ScreeningStatus.SUCCESS
         assert result.total_count == 0
 
 

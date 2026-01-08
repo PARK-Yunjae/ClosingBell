@@ -12,10 +12,9 @@
 - final_ranking_v6.csv: Date, Code, Name, Grade, Score, Details, TradingValue_Bn, CCI, Turnover, Gap_Profit, Max_Profit, End_Profit
 """
 
-import os
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
