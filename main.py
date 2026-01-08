@@ -32,11 +32,12 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 (Closing Trade Screener) v1.0       ║
+║   🔔  종가매매 스크리너 (Closing Trade Screener) v3.1          ║
 ║                                                              ║
-║   - 거래대금 300억 이상 종목 필터링                         ║
-║   - 5가지 기술 지표 점수 산출                               ║
-║   - TOP 3 종목 선정 및 디스코드 알림                        ║
+║   - 거래대금 100억 이상 종목 필터링                              ║
+║   - 거래량 100위 이상 종목 필터링                                ║
+║   - 5가지 기술 지표 점수 산출                                    ║
+║   - TOP 3 종목 선정 및 디스코드 알림                             ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -130,30 +131,48 @@ def print_result(result):
     else:
         print("\n❌ 적합한 종목이 없습니다.")
     
-    # ★ 사용자 요청: 한화오션(042660) 점수 확인
-    target_code = "042660"
-    target_name = "한화오션"
+    # ★ 사용자 요청: 한화오션, 루미르 점수 확인
+    target_stocks = [
+        {"name": "한화오션", "code": "042660"},
+        {"name": "루미르", "code": None}  # 코드를 모를 경우 이름으로 검색
+    ]
     
-    found = None
+    print("\n🔎 관심 종목 상세 결과")
+    print("-" * 50)
+    
     if result.all_items:
-        for stock in result.all_items:
-            if stock.stock_code == target_code:
-                found = stock
-                break
-    
-    if found:
-        print(f"\n🔎 {target_name} ({target_code}) 상세 결과")
-        print("-" * 50)
-        stock = found
-        print(f"   순위: {stock.rank}위")
-        print(f"   💰 현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
-        print(f"   📊 총점: {stock.score_total:.1f}점")
-        print(f"      CCI값: {stock.score_cci_value:.1f} | CCI기울기: {stock.score_cci_slope:.1f}")
-        print(f"      MA20기울기: {stock.score_ma20_slope:.1f} | 양봉품질: {stock.score_candle:.1f}")
-        print(f"      상승률: {stock.score_change:.1f}")
-        print(f"   📈 원시값: CCI={stock.raw_cci:.1f}")
+        for target in target_stocks:
+            target_name = target["name"]
+            target_code = target["code"]
+            found = None
+            
+            for stock in result.all_items:
+                # 코드가 있으면 코드로, 없으면 이름으로 매칭
+                if target_code:
+                    if stock.stock_code == target_code:
+                        found = stock
+                        break
+                else:
+                    if stock.stock_name == target_name:
+                        found = stock
+                        break
+            
+            if found:
+                stock = found
+                print(f"\n📌 {stock.stock_name} ({stock.stock_code})")
+                print(f"   순위: {stock.rank}위 / {result.total_count}개")
+                print(f"   💰 현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
+                print(f"   📊 총점: {stock.score_total:.1f}점")
+                print(f"      CCI값: {stock.score_cci_value:.1f} | CCI기울기: {stock.score_cci_slope:.1f}")
+                print(f"      MA20기울기: {stock.score_ma20_slope:.1f} | 양봉품질: {stock.score_candle:.1f}")
+                print(f"      상승률: {stock.score_change:.1f}")
+                print(f"   📈 원시값: CCI={stock.raw_cci:.1f}")
+            else:
+                code_display = f"({target_code})" if target_code else ""
+                print(f"\n❓ {target_name} {code_display}")
+                print("   결과 없음 (거래대금 부족으로 필터링되었거나 유니버스 미포함)")
     else:
-        print(f"\n❓ {target_name} ({target_code}) 결과 없음 (필터링되었거나 유니버스 미포함)")
+        print("   분석된 종목이 없습니다.")
     
     if result.error_message:
         print(f"\n⚠️ 에러: {result.error_message}")
