@@ -612,6 +612,7 @@ class Repository:
         next_close: int,
         next_high: int,
         next_low: int,
+        high_change_rate: float = 0.0,
     ):
         """익일 결과 저장 (간소화 버전)"""
         # 해당 종목의 screening_item_id 찾기
@@ -640,14 +641,15 @@ class Repository:
             logger.debug(f"익일 결과 이미 존재: {stock_code}")
             return
         
-        # 저장
+        # 저장 (open_change_rate, high_change_rate 추가)
         next_date = screen_date
         self.db.execute(
             """
             INSERT INTO next_day_results 
             (screening_item_id, next_date, open_price, close_price, high_price, 
-             low_price, gap_rate, day_change_rate, volatility, is_open_up, is_day_up)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             low_price, open_change_rate, day_change_rate, high_change_rate,
+             gap_rate, volatility, is_open_up, is_day_up)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -656,8 +658,10 @@ class Repository:
                 next_close,
                 next_high,
                 next_low,
-                gap_rate,
-                day_return,
+                gap_rate,        # open_change_rate (시가 상승률 = gap_rate)
+                day_return,      # day_change_rate
+                high_change_rate,  # high_change_rate
+                gap_rate,        # gap_rate
                 volatility,
                 1 if gap_rate > 0 else 0,
                 1 if day_return > 0 else 0,

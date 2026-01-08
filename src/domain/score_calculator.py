@@ -94,7 +94,11 @@ def calculate_cci_slope_score(
     cci_values: List[float],
     current_cci: float,
 ) -> float:
-    """CCI 기울기 점수 계산 (5일 기준 상승세)
+    """CCI 기울기 점수 계산 (2일 기준 상승세) - v2.2.1 패치
+    
+    핵심 조건:
+    - 최근 2일 연속 상승 시 최고점 (어제→오늘)
+    - CCI가 180을 향해 가는 방향성 중요
     
     Args:
         cci_values: CCI 값 리스트
@@ -106,67 +110,61 @@ def calculate_cci_slope_score(
     if len(cci_values) < CCI_SLOPE_PERIOD:
         return 5.0  # 데이터 부족 시 중립 점수
     
-    recent = cci_values[-CCI_SLOPE_PERIOD:]
+    recent = cci_values[-CCI_SLOPE_PERIOD:]  # 최근 2일
     
-    # 기울기 계산 (일일 평균 변화량)
-    slope = (recent[-1] - recent[0]) / (CCI_SLOPE_PERIOD - 1)
+    # 과열권 하락 감점
+    if current_cci > CCI_SLOPE_WARNING_LEVEL and recent[-1] < recent[-2]:
+        return 2.0
     
-    # 200 이상에서 하락 시 추가 감점
-    if current_cci > CCI_SLOPE_WARNING_LEVEL and slope < 0:
-        return 2.0  # 고점 하락 경고
+    # ★ 2일 연속 상승 = 만점
+    is_rising = recent[-1] > recent[-2]
     
-    # 연속 상승 보너스
-    if check_continuous_rise(cci_values, CCI_SLOPE_PERIOD):
-        return 10.0
-    
-    # 상승 일수 기반 점수
-    rising_days = count_rising_days(cci_values, CCI_SLOPE_PERIOD)
-    
-    # 기울기 기반 점수
-    if slope >= CCI_SLOPE_STRONG_UP:
-        base_score = 10.0
-    elif slope >= CCI_SLOPE_UP:
-        base_score = 8.5
-    elif slope >= CCI_SLOPE_SLIGHT_UP:
-        base_score = 7.0
-    elif slope >= 0:
-        base_score = 5.5
-    elif slope >= -CCI_SLOPE_SLIGHT_UP:
-        base_score = 4.0
+    if is_rising:
+        if current_cci < 200:
+            return 10.0
+        else:
+            return 8.5  # 과열권이지만 상승 중
     else:
-        base_score = 2.5
-    
-    # 상승 일수 보정
-    if rising_days >= 4:
-        base_score = min(10.0, base_score + 1.0)
-    elif rising_days >= 3:
-        base_score = min(10.0, base_score + 0.5)
-    
-    return base_score
+        # 하락
+        return 4.0
 
 
-def calculate_ma20_slope_score(ma20_slope: float) -> float:
-    """MA20 기울기 점수 계산 (7일 기준 상승세)
+def calculate_ma20_slope_score(ma20_slope: float, ma20_values: List[float] = None) -> float:
+    """MA20 기울기 점수 계산 (3일 기준 상승세) - v2.2.1 패치
+    
+    핵심 조건:
+    - 최근 3일간 MA20이 상승 추세인지
+    - 우상향 추세가 확실해야 높은 점수
     
     Args:
         ma20_slope: MA20 기울기 (%)
+        ma20_values: MA20 값 리스트 (옵션, 연속 상승 체크용)
         
     Returns:
         점수 (0~10)
     """
-    if ma20_slope >= MA20_SLOPE_STRONG_UP:
-        return 10.0  # 강한 상승세
-    elif ma20_slope >= MA20_SLOPE_UP:
+    # 3일 연속 상승 체크 (ma20_values가 전달된 경우)
+    if ma20_values and len(ma20_values) >= 3:
+        recent = ma20_values[-3:]
+        is_3day_rising = all(recent[i] > recent[i-1] for i in range(1, len(recent)))
+        
+        if is_3day_rising:
+            return 10.0  # 3일 연속 상승 = 만점
+    
+    # 기울기 백분율 기반 점수
+    if ma20_slope >= 2.0:
+        return 9.5   # 강한 상승세
+    elif ma20_slope >= 1.0:
         return 8.5   # 상승세
-    elif ma20_slope >= MA20_SLOPE_SLIGHT_UP:
-        return 7.0   # 약한 상승세
-    elif ma20_slope >= MA20_SLOPE_FLAT:
+    elif ma20_slope >= 0.5:
+        return 7.5   # 약한 상승세
+    elif ma20_slope >= 0.2:
+        return 6.5   # 미세 상승
+    elif ma20_slope >= 0.0:
         return 5.5   # 횡보 (약간 상승)
-    elif ma20_slope >= -MA20_SLOPE_FLAT:
-        return 5.0   # 완전 횡보
-    elif ma20_slope >= -MA20_SLOPE_SLIGHT_UP:
+    elif ma20_slope >= -0.5:
         return 4.0   # 약한 하락세
-    elif ma20_slope >= MA20_SLOPE_STRONG_DOWN:
+    elif ma20_slope >= -1.0:
         return 2.5   # 하락세
     else:
         return 1.0   # 강한 하락세
@@ -178,7 +176,12 @@ def calculate_candle_score(
     is_above_ma20: bool,
     ma20_position: float,
 ) -> float:
-    """양봉 품질 점수 계산
+    """양봉 품질 점수 계산 - v2.2 업데이트
+    
+    핵심 조건:
+    - 양봉이 MA20 위에 안착했는가
+    - 윗꼬리가 짧은가 (매물대 저항 없음)
+    - MA20 대비 너무 위에 있으면 과열
     
     Args:
         is_bullish: 양봉 여부
@@ -189,65 +192,60 @@ def calculate_candle_score(
     Returns:
         점수 (0~10)
     """
-    # 음봉인 경우 감점
+    # 음봉인 경우 강한 감점
     if not is_bullish:
         return 2.0
     
-    # 양봉 품질 점수 (윗꼬리 비율)
-    if upper_wick_ratio <= CANDLE_UPPER_WICK_EXCELLENT:
-        wick_score = 10.0
-    elif upper_wick_ratio <= CANDLE_UPPER_WICK_GOOD:
-        wick_score = 8.0
-    elif upper_wick_ratio <= CANDLE_UPPER_WICK_NORMAL:
-        wick_score = 6.0
+    # ★ 윗꼬리 점수 (핵심)
+    if upper_wick_ratio <= 0.1:
+        wick_score = 10.0  # 윗꼬리 거의 없음 = 최고
+    elif upper_wick_ratio <= 0.2:
+        wick_score = 8.5   # 윗꼬리 짧음 = 양호
+    elif upper_wick_ratio <= 0.3:
+        wick_score = 6.5   # 윗꼬리 보통
+    elif upper_wick_ratio <= 0.5:
+        wick_score = 4.5   # 윗꼬리 김 = 매물대 저항
     else:
-        wick_score = 4.0
+        wick_score = 2.5   # 윗꼬리 매우 김 = 위험
     
-    # MA20 안착 보정
+    # ★ MA20 안착 보정 (핵심)
     if is_above_ma20:
         if 0 <= ma20_position <= 2.0:
-            # 최적 위치 (MA20 바로 위)
+            # 최적 위치: MA20 바로 위에 안착
             position_bonus = 2.0
-        elif ma20_position <= CANDLE_MA20_ABOVE_OVERHEAT:
-            # 적정 위치
+        elif ma20_position <= 5.0:
+            # 적정 위치: 약간 위
             position_bonus = 1.0
+        elif ma20_position <= 8.0:
+            # 주의: 조금 과열
+            position_bonus = 0.0
         else:
-            # 과열 (MA20 대비 너무 위)
-            position_bonus = -1.0
+            # 과열: MA20 대비 너무 위
+            position_bonus = -2.0
     else:
-        # MA20 아래
-        position_bonus = -2.0
+        # MA20 아래 = 추세 이탈
+        if ma20_position >= -2.0:
+            position_bonus = -1.0  # 살짝 아래
+        else:
+            position_bonus = -3.0  # 확실히 아래
     
     final_score = wick_score + position_bonus
     return max(SCORE_MIN, min(SCORE_MAX, final_score))
 
 
 def calculate_change_score(change_rate: float) -> float:
-    """당일 상승률 점수 계산 (5~20% 최적)
+    """당일 상승률 점수 - 비활성화 (가중치 0.0 권장) - v2.2 업데이트
+    
+    백테스트 결과: 등락률과 익일 수익률 역상관 (-0.040)
+    따라서 점수에서 제외하거나 가중치 0으로 설정
     
     Args:
         change_rate: 등락률 (%)
         
     Returns:
-        점수 (0~10)
+        점수 (항상 중립 점수 5.0 반환)
     """
-    # 하락인 경우
-    if change_rate < 0:
-        return CHANGE_NEGATIVE_PENALTY
-    
-    # 극단적 상승
-    if change_rate >= CHANGE_EXTREME_HIGH:
-        return 2.0  # 추격 매수 위험
-    
-    # 범위 기반 점수
-    for min_val, max_val, score in CHANGE_SCORE_RANGES:
-        if min_val <= change_rate < max_val:
-            return score
-    
-    # 범위에 없으면 기본값
-    if change_rate < 1.0:
-        return 2.0
-    return 5.0
+    return 5.0  # 항상 중립 점수 반환 (실질적 비활성화)
 
 
 class ScoreCalculator:
@@ -287,7 +285,9 @@ class ScoreCalculator:
             indicators.cci_values,
             indicators.cci,
         )
-        score_ma20_slope = calculate_ma20_slope_score(indicators.ma20_slope)
+        # MA20 기울기 점수 계산 시 ma20_values 전달 (v2.2)
+        ma20_values = getattr(indicators, 'ma20_values', None)
+        score_ma20_slope = calculate_ma20_slope_score(indicators.ma20_slope, ma20_values)
         score_candle = calculate_candle_score(
             indicators.candle.is_bullish,
             indicators.candle.upper_wick_ratio,
@@ -461,3 +461,6 @@ if __name__ == "__main__":
     print(f"\n=== TOP 3 ===")
     for s in top3:
         print(f"{s.rank}. {s.stock_name}: {s.score_total:.2f}점")
+    
+        print(f"  CCI값 점수: {score.score_cci_value:.1f} (CCI: {score.raw_cci:.1f})")
+    

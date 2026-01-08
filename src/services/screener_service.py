@@ -45,7 +45,8 @@ from src.domain.models import (
 from src.domain.score_calculator import ScoreCalculator
 from src.adapters.kis_client import get_kis_client, KISClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
-from src.adapters.kakao_notifier import get_kakao_notifier, KakaoNotifier
+# 카카오톡 알림 제거 (v2.2) - 토큰 자동 갱신 불가
+# from src.adapters.kakao_notifier import get_kakao_notifier, KakaoNotifier
 from src.infrastructure.repository import (
     get_screening_repository,
     get_weight_repository,
@@ -64,13 +65,12 @@ class ScreenerService:
         self,
         kis_client: Optional[KISClient] = None,
         discord_notifier: Optional[DiscordNotifier] = None,
-        kakao_notifier: Optional[KakaoNotifier] = None,
         screening_repo: Optional[ScreeningRepository] = None,
         weight_repo: Optional[WeightRepository] = None,
     ):
         self.kis_client = kis_client or get_kis_client()
         self.discord_notifier = discord_notifier or get_discord_notifier()
-        self.kakao_notifier = kakao_notifier or get_kakao_notifier()
+        # 카카오톡 알림 제거 (v2.2) - 디스코드만 사용
         self.screening_repo = screening_repo or get_screening_repository()
         self.weight_repo = weight_repo or get_weight_repository()
     
@@ -376,8 +376,10 @@ class ScreenerService:
             # 저장 실패해도 알림은 발송
     
     def _send_alert(self, result: ScreeningResult, is_preview: bool):
-        """알림 발송 (Discord + 카카오톡)"""
-        # 1. Discord 알림 발송
+        """알림 발송 (Discord만) - v2.2 업데이트
+        
+        카카오톡 알림 제거: 토큰 자동 갱신 불가능하여 비활성화
+        """
         try:
             discord_result = self.discord_notifier.send_screening_result(
                 result,
@@ -389,20 +391,6 @@ class ScreenerService:
                 logger.warning(f"Discord 알림 발송 실패: {discord_result.error_message}")
         except Exception as e:
             logger.error(f"Discord 알림 발송 에러: {e}")
-        
-        # 2. 카카오톡 알림 발송 (enabled인 경우만)
-        if settings.kakao.enabled:
-            try:
-                kakao_result = self.kakao_notifier.send_screening_result(
-                    result,
-                    is_preview=is_preview,
-                )
-                if kakao_result.success:
-                    logger.info("카카오톡 알림 발송 성공")
-                else:
-                    logger.warning(f"카카오톡 알림 발송 실패: {kakao_result.error_message}")
-            except Exception as e:
-                logger.error(f"카카오톡 알림 발송 에러: {e}")
 
 
 # 편의 함수

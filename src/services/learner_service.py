@@ -51,6 +51,7 @@ class NextDayResult:
     gap_rate: float  # 갭 상승률 (전일 종가 대비 익일 시가)
     day_return: float  # 당일 수익률 (익일 시가 대비 종가)
     volatility: float  # 변동성 (고가-저가)/시가
+    high_change_rate: float = 0.0  # 고가 상승률 (전일 종가 대비 익일 고가)
 
 
 @dataclass 
@@ -167,6 +168,9 @@ class LearnerService:
                 # 변동성 계산
                 volatility = ((next_day.high - next_day.low) / next_day.open) * 100 if next_day.open > 0 else 0
                 
+                # 고가 상승률 계산 (전일 종가 대비 익일 고가)
+                high_change_rate = ((next_day.high - prev_day.close) / prev_day.close) * 100 if prev_day.close > 0 else 0
+                
                 result = NextDayResult(
                     stock_code=stock_code,
                     stock_name=stock_name,
@@ -182,6 +186,7 @@ class LearnerService:
                     gap_rate=gap_rate,
                     day_return=day_return,
                     volatility=volatility,
+                    high_change_rate=high_change_rate,
                 )
                 
                 results.append(result)
@@ -215,6 +220,7 @@ class LearnerService:
                 next_close=result.next_close,
                 next_high=result.next_high,
                 next_low=result.next_low,
+                high_change_rate=result.high_change_rate,
             )
         except Exception as e:
             logger.error(f"익일 결과 저장 실패: {e}")
