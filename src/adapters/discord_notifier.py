@@ -131,7 +131,7 @@ class DiscordNotifier:
             "color": color,
             "fields": fields,
             "footer": {
-                "text": "종가매매 스크리너 v1.0",
+                "text": "종가매매 스크리너 v3.1",
             },
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }

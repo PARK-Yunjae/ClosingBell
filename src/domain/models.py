@@ -161,14 +161,36 @@ class ScoreDetail:
     raw_ma20_slope: float = 0.0 # MA20 기울기 원시값
     
     def total(self, weights: Weights) -> float:
-        """가중 합계 점수"""
-        return (
+        """가중 합계 점수 (100점 만점으로 정규화)
+        
+        공식: (가중합 / (가중치합 × 10)) × 100
+        """
+        weighted_sum = (
             self.cci_value * weights.cci_value +
             self.cci_slope * weights.cci_slope +
             self.ma20_slope * weights.ma20_slope +
             self.candle * weights.candle +
             self.change * weights.change
         )
+        
+        weight_sum = (
+            weights.cci_value +
+            weights.cci_slope +
+            weights.ma20_slope +
+            weights.candle +
+            weights.change
+        )
+        
+        # 가중치 합이 0인 경우 방지
+        if weight_sum == 0:
+            return 0.0
+        
+        # 100점 만점으로 정규화
+        # 각 지표 최대 10점 × 가중치 = 가중치합 × 10이 최대 가능 점수
+        max_possible = weight_sum * 10
+        normalized_score = (weighted_sum / max_possible) * 100
+        
+        return round(normalized_score, 1)
 
 
 @dataclass

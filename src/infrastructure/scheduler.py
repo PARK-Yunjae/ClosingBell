@@ -191,15 +191,15 @@ class ScreenerScheduler:
             minute=main_minute,
         )
         
-        # 16:30 일일 학습 (Phase 2)
-        self.add_job(
-            job_id='daily_learning',
-            func=run_daily_learning,
-            hour=16,
-            minute=30,
-        )
+        # 16:30 일일 학습 (Phase 2) - v3.1: 학습 비활성화 (가중치 고정)
+        # self.add_job(
+        #     job_id='daily_learning',
+        #     func=run_daily_learning,
+        #     hour=16,
+        #     minute=30,
+        # )
         
-        logger.info("기본 스케줄 설정 완료 (스크리닝 + 학습)")
+        logger.info("기본 스케줄 설정 완료 (스크리닝만, 학습 비활성화)")
     
     def start(self):
         """스케줄러 시작"""

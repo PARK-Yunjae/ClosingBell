@@ -219,18 +219,28 @@ def calculate_candle_score(
 
 
 def calculate_change_score(change_rate: float) -> float:
-    """당일 상승률 점수 - 비활성화 (가중치 0.0 권장) - v2.2 업데이트
+    """당일 등락률 점수 - v3.1 업데이트
     
-    백테스트 결과: 등락률과 익일 수익률 역상관 (-0.040)
-    따라서 점수에서 제외하거나 가중치 0으로 설정
+    과도한 상승은 추격 매수 위험, 하락은 모멘텀 부족 신호
     
     Args:
         change_rate: 등락률 (%)
         
     Returns:
-        점수 (항상 중립 점수 5.0 반환)
+        점수 (1.0~6.0)
     """
-    return 5.0  # 항상 중립 점수 반환 (실질적 비활성화)
+    if change_rate >= 20.0:
+        return 1.0  # +20% 이상: 강한 감점 (상한가 근접, 추격 위험)
+    elif change_rate >= 15.0:
+        return 3.0  # +15~20%: 감점 (고점 경고)
+    elif change_rate >= 10.0:
+        return 4.0  # +10~15%: 약한 감점
+    elif change_rate >= 5.0:
+        return 5.0  # +5~10%: 중립
+    elif change_rate >= 0.0:
+        return 6.0  # 0~5%: 약간 가점 (적정 상승)
+    else:
+        return 4.0  # 0% 미만: 하락은 감점 (모멘텀 부족)
 
 
 class ScoreCalculator:

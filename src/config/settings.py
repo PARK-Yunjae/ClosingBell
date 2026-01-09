@@ -69,7 +69,7 @@ class DatabaseSettings:
 @dataclass
 class ScreeningSettings:
     """스크리닝 설정"""
-    min_trading_value: float = 300.0  # 억원
+    min_trading_value: float = 100.0  # 억원 (v3.1: 100억으로 변경)
     screening_time_main: str = "15:00"
     screening_time_preview: str = "12:30"
     learning_time: str = "16:00"
@@ -133,7 +133,7 @@ def load_settings() -> Settings:
     
     # Screening 설정
     screening = ScreeningSettings(
-        min_trading_value=float(os.getenv("MIN_TRADING_VALUE", "300")),
+        min_trading_value=float(os.getenv("MIN_TRADING_VALUE", "100")),
         screening_time_main=os.getenv("SCREENING_TIME_2", "15:00"),
         screening_time_preview=os.getenv("SCREENING_TIME_1", "12:30"),
         learning_time=os.getenv("LEARNING_TIME", "16:00"),

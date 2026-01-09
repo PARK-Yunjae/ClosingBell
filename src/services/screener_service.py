@@ -338,6 +338,11 @@ class ScreenerService:
                 # 주의: daily_prices[-1]은 오늘 데이터를 포함한다고 가정 (장중/장마감 후)
                 trading_value = today.trading_value / 100_000_000  # 억원 단위 변환
                 
+                # v3.1: 프리뷰 시점에서 일봉 거래대금이 0인 경우, 
+                # 조건검색 결과의 거래대금 사용 (stock.trading_value가 있는 경우)
+                if trading_value <= 0 and hasattr(stock, 'trading_value') and stock.trading_value > 0:
+                    trading_value = stock.trading_value  # 조건검색 결과에서 가져온 값 (이미 억원 단위)
+                
                 stock_data = StockData(
                     code=stock.code,
                     name=stock.name,
