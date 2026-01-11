@@ -1,10 +1,26 @@
 """
-종가매매 스크리너 v4.0 - 그리드 서치 최적화
+종가매매 스크리너 v5.0 - 소프트 필터 방식 (점수제)
+
+🎯 핵심 변경 (v4 → v5):
+- 하드 필터 최소화 (TV200 + 하락종목만 제외)
+- 모든 조건은 점수로 반영 (100점 만점)
+- 등급(S/A/B/C/D) 및 매도전략 자동 추천
+
+📊 점수 체계:
+- 핵심 6개 지표: 각 15점 (총 90점)
+- 보너스 3개: 총 10점
+
+📈 등급별 매도전략:
+- S등급 (85+): 시초 30% + 목표 +4% (확신 높음)
+- A등급 (75-84): 시초 40% + 목표 +3%
+- B등급 (65-74): 시초 50% + 목표 +2.5%
+- C등급 (55-64): 시초 70% + 목표 +2%
+- D등급 (<55): 시초 전량매도 (확신 낮음)
 
 사용법:
-    python main.py              # 스케줄러 모드 (12:30, 15:00, 16:30 자동 실행)
+    python main.py              # 스케줄러 모드
     python main.py --run        # 즉시 스크리닝 실행
-    python main.py --run-test   # 테스트 실행 (알림 없음) ★ TOP5 + 매도추천
+    python main.py --run-test   # 테스트 실행 (알림 없음)
     python main.py --learn      # 수동 학습 실행
     python main.py --init-db    # DB 초기화만
     python main.py --validate   # 설정 검증만
@@ -20,10 +36,21 @@ from src.infrastructure.database import init_database
 from src.infrastructure.scheduler import create_scheduler, is_market_open
 from src.infrastructure.logging_config import init_logging
 from src.config.validator import validate_settings, ConfigValidationError, print_settings_summary
-from src.services.screener_service import (
-    run_screening,
-    run_main_screening,
-    run_preview_screening,
+
+# v5 서비스 임포트
+from src.services.screener_service_v5 import (
+    run_screening_v5,
+    run_main_screening_v5,
+    run_preview_screening_v5,
+    ScreenerServiceV5,
+)
+from src.domain.score_calculator_v5 import (
+    StockScoreV5,
+    StockGrade,
+    SellStrategy,
+    SELL_STRATEGIES,
+    format_score_display,
+    format_simple_display,
 )
 
 
@@ -32,12 +59,15 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v4.0 (그리드 서치 최적화)               ║
+║   🔔  종가매매 스크리너 v5.0 (소프트 필터 방식)                  ║
 ║                                                              ║
-║   📊 최적 조건 (60% 승률)                                      ║
-║      - CCI: 160~180 | 이격도: 2~8%                            ║
-║      - 등락률: 2~8% | 연속양봉: ≤4일                           ║
-║      - 거래대금: ≥200억 | CCI↑ | MA20 3일↑                    ║
+║   📊 점수 체계 (100점 만점)                                    ║
+║      - 핵심 6개 지표: 각 15점 (CCI, 등락률, 이격도 등)          ║
+║      - 보너스 3개: 총 10점 (CCI↑, MA20↑, 고가≠종가)            ║
+║                                                              ║
+║   🏆 등급별 매도전략                                           ║
+║      - S(85+): 시초30% + 목표+4% | 확신 높음                   ║
+║      - D(<55): 시초 전량매도     | 확신 낮음                   ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -49,7 +79,7 @@ def run_scheduler_mode():
     logger = logging.getLogger(__name__)
     
     print_banner()
-    logger.info("스케줄러 모드 시작")
+    logger.info("스케줄러 모드 시작 (v5.0)")
     logger.info(f"프리뷰 시간: {settings.screening.screening_time_preview}")
     logger.info(f"메인 시간: {settings.screening.screening_time_main}")
     logger.info(f"오늘 장 운영: {'예' if is_market_open() else '아니오'}")
@@ -63,12 +93,12 @@ def run_immediate(send_alert: bool = True, save_to_db: bool = True):
     logger = logging.getLogger(__name__)
     
     print_banner()
-    logger.info("즉시 실행 모드")
+    logger.info("즉시 실행 모드 (v5.0)")
     
     now = datetime.now()
     if now.hour < 13:
         logger.info("12:30 이전 - 프리뷰 모드로 실행")
-        result = run_screening(
+        result = run_screening_v5(
             screen_time="12:30",
             save_to_db=save_to_db,
             send_alert=send_alert,
@@ -76,7 +106,7 @@ def run_immediate(send_alert: bool = True, save_to_db: bool = True):
         )
     else:
         logger.info("13:00 이후 - 메인 모드로 실행")
-        result = run_screening(
+        result = run_screening_v5(
             screen_time="15:00",
             save_to_db=save_to_db,
             send_alert=send_alert,
@@ -87,13 +117,13 @@ def run_immediate(send_alert: bool = True, save_to_db: bool = True):
 
 
 def run_test_mode():
-    """테스트 모드 (알림 없음) - TOP5 + 매도추천 + 관심종목"""
+    """테스트 모드 (알림 없음) - TOP5 + 등급/매도전략"""
     logger = logging.getLogger(__name__)
     
     print_banner()
-    logger.info("테스트 모드 (알림/저장 없음)")
+    logger.info("테스트 모드 (알림/저장 없음) - v5.0")
     
-    result = run_screening(
+    result = run_screening_v5(
         screen_time="15:00",
         save_to_db=False,
         send_alert=False,
@@ -103,210 +133,175 @@ def run_test_mode():
     print_result_detailed(result)
 
 
-def get_sell_recommendation(score_total: float) -> dict:
-    """매도 추천 방식
+def print_score_detail_v5(score: StockScoreV5, rank: int = None):
+    """v5 종목 점수 상세 출력"""
+    d = score.score_detail
+    s = score.sell_strategy
     
-    점수 기반 매도 전략:
-    - 80점+: 시초가 매도 (익절)
-    - 70~80점: 2~3% 익절 또는 손절 -2%
-    - 60~70점: 1~2% 익절 또는 손절 -1.5%
-    - 60점 미만: 보수적 (손절 -1%)
-    """
-    if score_total >= 80:
-        return {
-            "strategy": "🚀 시초가 매도",
-            "target": "+1%~+3%",
-            "stop": "-2%",
-            "confidence": "★★★",
-        }
-    elif score_total >= 70:
-        return {
-            "strategy": "📈 목표가 매도",
-            "target": "+2%~+3%",
-            "stop": "-2%",
-            "confidence": "★★☆",
-        }
-    elif score_total >= 60:
-        return {
-            "strategy": "⚖️ 보수적 익절",
-            "target": "+1%~+2%",
-            "stop": "-1.5%",
-            "confidence": "★☆☆",
-        }
-    else:
-        return {
-            "strategy": "🛡️ 조기 손절",
-            "target": "+1%",
-            "stop": "-1%",
-            "confidence": "☆☆☆",
-        }
-
-
-def print_score_detail(stock, show_sell_recommendation: bool = True):
-    """종목 점수 상세 출력"""
-    print(f"\n{'─'*50}")
-    print(f"📌 {stock.stock_name} ({stock.stock_code})")
-    print(f"{'─'*50}")
-    print(f"   💰 현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
-    print(f"   📊 총점: {stock.score_total:.1f}점 (순위: {stock.rank}위)")
-    print(f"   💵 거래대금: {stock.trading_value:,.0f}억원")
+    grade_emoji = {
+        StockGrade.S: "🏆",
+        StockGrade.A: "🥇",
+        StockGrade.B: "🥈",
+        StockGrade.C: "🥉",
+        StockGrade.D: "⚠️",
+    }
+    
+    rank_str = f"#{rank} " if rank else ""
+    
+    print(f"\n{'─'*60}")
+    print(f"{rank_str}📌 {score.stock_name} ({score.stock_code})")
+    print(f"{'─'*60}")
+    print(f"   💰 현재가: {score.current_price:,}원 ({score.change_rate:+.2f}%)")
+    print(f"   📊 총점: {score.score_total:.1f}점 {grade_emoji[score.grade]} {score.grade.value}등급")
+    print(f"   💵 거래대금: {score.trading_value:,.0f}억원")
     print()
-    print(f"   [점수 상세]")
-    print(f"      CCI 점수:     {stock.score_cci_value:>5.1f}점  (CCI: {stock.raw_cci:.0f})")
-    print(f"      이격도 점수:  {stock.score_cci_slope:>5.1f}점")  # v4: 이격도
-    print(f"      MA20추세:     {stock.score_ma20_slope:>5.1f}점")
-    print(f"      캔들품질:     {stock.score_candle:>5.1f}점")
-    print(f"      등락률점수:   {stock.score_change:>5.1f}점")
     
-    if show_sell_recommendation:
-        rec = get_sell_recommendation(stock.score_total)
-        print()
-        print(f"   [매도 추천] {rec['confidence']}")
-        print(f"      전략: {rec['strategy']}")
-        print(f"      목표: {rec['target']} | 손절: {rec['stop']}")
+    # 핵심 점수 (90점)
+    print(f"   [핵심 지표] (90점 만점)")
+    print(f"      CCI({d.raw_cci:.0f}):        {d.cci_score:>5.1f}/15")
+    print(f"      등락률({d.raw_change_rate:.1f}%):   {d.change_score:>5.1f}/15")
+    print(f"      이격도({d.raw_distance:.1f}%):   {d.distance_score:>5.1f}/15")
+    print(f"      연속양봉({d.raw_consec_days}일):   {d.consec_score:>5.1f}/15")
+    print(f"      거래량비({d.raw_volume_ratio:.1f}x): {d.volume_score:>5.1f}/15")
+    print(f"      캔들품질:        {d.candle_score:>5.1f}/15")
+    
+    base_total = d.cci_score + d.change_score + d.distance_score + d.consec_score + d.volume_score + d.candle_score
+    print(f"      ────────────────────")
+    print(f"      소계:            {base_total:>5.1f}/90")
+    print()
+    
+    # 보너스 점수 (10점)
+    cci_check = "✅" if d.is_cci_rising else "❌"
+    ma20_check = "✅" if d.is_ma20_3day_up else "❌"
+    candle_check = "❌" if d.is_high_eq_close else "✅"
+    
+    print(f"   [보너스] (10점 만점)")
+    print(f"      CCI 상승중 {cci_check}:    {d.cci_rising_bonus:>5.1f}/4")
+    print(f"      MA20 3일↑ {ma20_check}:   {d.ma20_3day_bonus:>5.1f}/3")
+    print(f"      고가≠종가 {candle_check}:  {d.not_high_eq_close_bonus:>5.1f}/3")
+    
+    bonus_total = d.cci_rising_bonus + d.ma20_3day_bonus + d.not_high_eq_close_bonus
+    print(f"      ────────────────────")
+    print(f"      소계:            {bonus_total:>5.1f}/10")
+    print()
+    
+    # 매도 전략
+    print(f"   [매도 전략] 신뢰도: {s.confidence}")
+    print(f"      📈 시초가 {s.open_sell_ratio}% 매도")
+    if s.target_sell_ratio > 0:
+        print(f"      🎯 나머지 {s.target_sell_ratio}%: 목표가 +{s.target_profit}%")
+    print(f"      🛡️ 손절가: {s.stop_loss}%")
 
 
-def print_result(result):
+def print_result(result: dict):
     """기본 결과 출력"""
     print(f"\n{'='*60}")
-    print(f"📊 스크리닝 결과")
+    print(f"📊 스크리닝 결과 (v5.0)")
     print(f"{'='*60}")
-    print(f"📅 날짜: {result.screen_date}")
-    print(f"⏰ 시간: {result.screen_time}")
-    print(f"📈 상태: {result.status.value}")
-    print(f"📋 분석 종목: {result.total_count}개")
-    print(f"⏱️ 실행 시간: {result.execution_time_sec:.1f}초")
+    print(f"📅 날짜: {result['screen_date']}")
+    print(f"⏰ 시간: {result['screen_time']}")
+    print(f"📈 상태: {result['status']}")
+    print(f"📋 분석 종목: {result['total_count']}개")
+    print(f"⏱️ 실행 시간: {result['execution_time_sec']:.1f}초")
     
-    if result.top3:
-        print(f"\n🏆 TOP {len(result.top3)}")
+    top_n = result.get('top_n', [])
+    if top_n:
+        print(f"\n🏆 TOP {len(top_n)}")
         print("-" * 50)
-        for stock in result.top3:
-            print(f"\n{stock.rank}위: {stock.stock_name} ({stock.stock_code})")
-            print(f"   💰 현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
-            print(f"   📊 총점: {stock.score_total:.1f}점")
-            print(f"   📈 원시값: CCI={stock.raw_cci:.1f}")
+        for score in top_n:
+            print_score_detail_v5(score, score.rank)
     else:
         print("\n❌ 적합한 종목이 없습니다.")
 
 
-def print_result_detailed(result):
-    """상세 결과 출력 (TOP5 + 매도추천 + 관심종목)"""
+def print_result_detailed(result: dict):
+    """상세 결과 출력 (TOP5 + 등급/매도전략)"""
     print(f"\n{'='*60}")
-    print(f"📊 스크리닝 결과 (상세)")
+    print(f"📊 스크리닝 결과 - v5.0 (소프트 필터)")
     print(f"{'='*60}")
-    print(f"📅 날짜: {result.screen_date}")
-    print(f"⏰ 시간: {result.screen_time}")
-    print(f"📈 상태: {result.status.value}")
-    print(f"📋 분석 종목: {result.total_count}개")
-    print(f"⏱️ 실행 시간: {result.execution_time_sec:.1f}초")
+    print(f"📅 날짜: {result['screen_date']}")
+    print(f"⏰ 시간: {result['screen_time']}")
+    print(f"📈 상태: {result['status']}")
+    print(f"📋 분석 종목: {result['total_count']}개")
+    print(f"⏱️ 실행 시간: {result['execution_time_sec']:.1f}초")
     
-    # ============================================================
-    # TOP 5 출력
-    # ============================================================
-    if result.all_items:
-        top5 = result.all_items[:5]
-        
-        print(f"\n{'='*60}")
-        print(f"🏆 TOP 5 종목 (매도 추천 포함)")
-        print(f"{'='*60}")
-        
-        for stock in top5:
-            print_score_detail(stock, show_sell_recommendation=True)
-        
-        # ============================================================
-        # TOP 5 요약 테이블
-        # ============================================================
-        print(f"\n{'='*60}")
-        print(f"📋 TOP 5 요약")
-        print(f"{'='*60}")
-        print(f"{'순위':<4} {'종목명':<12} {'총점':>6} {'등락률':>8} {'CCI':>6} {'매도전략':<15}")
-        print(f"{'-'*60}")
-        
-        for stock in top5:
-            rec = get_sell_recommendation(stock.score_total)
-            print(f"{stock.rank:<4} {stock.stock_name:<12} {stock.score_total:>5.1f}점 {stock.change_rate:>+7.2f}% {stock.raw_cci:>6.0f} {rec['strategy']}")
-        
-        # ============================================================
-        # 관심 종목 검색 (한화오션 등)
-        # ============================================================
-        target_stocks = [
-            {"name": "한화오션", "code": "042660"},
-            {"name": "루미르", "code": None},
-        ]
-        
-        print(f"\n{'='*60}")
-        print(f"🔎 관심 종목 점수")
-        print(f"{'='*60}")
-        
-        for target in target_stocks:
-            target_name = target["name"]
-            target_code = target["code"]
-            found = None
-            
-            for stock in result.all_items:
-                if target_code:
-                    if stock.stock_code == target_code:
-                        found = stock
-                        break
-                else:
-                    if target_name in stock.stock_name:
-                        found = stock
-                        break
-            
-            if found:
-                print_score_detail(found, show_sell_recommendation=True)
-            else:
-                code_display = f"({target_code})" if target_code else ""
-                print(f"\n❓ {target_name} {code_display}")
-                print(f"   결과 없음 (필터링됨 또는 유니버스 미포함)")
-        
-        # ============================================================
-        # TOP 5 의견
-        # ============================================================
-        print(f"\n{'='*60}")
-        print(f"💡 TOP 5 분석 의견")
-        print(f"{'='*60}")
-        
-        avg_score = sum(s.score_total for s in top5) / len(top5)
-        high_score_count = sum(1 for s in top5 if s.score_total >= 70)
-        
-        print(f"\n   평균 점수: {avg_score:.1f}점")
-        print(f"   70점+ 종목: {high_score_count}개")
-        
-        if avg_score >= 75:
-            print(f"\n   📈 오늘 TOP5 품질: 우수")
-            print(f"   👉 적극 매수 고려, 시초가 매도 전략 유효")
-        elif avg_score >= 65:
-            print(f"\n   📊 오늘 TOP5 품질: 양호")
-            print(f"   👉 선별 매수, 목표가 도달 시 익절")
-        elif avg_score >= 55:
-            print(f"\n   ⚠️ 오늘 TOP5 품질: 보통")
-            print(f"   👉 신중한 접근, 보수적 익절 권장")
-        else:
-            print(f"\n   🚨 오늘 TOP5 품질: 미흡")
-            print(f"   👉 매수 자제, 관망 권장")
-        
-        # 위험 신호 체크
-        warnings = []
-        for stock in top5:
-            if stock.raw_cci > 180:
-                warnings.append(f"   ⚠️ {stock.stock_name}: CCI {stock.raw_cci:.0f} (과열)")
-            if stock.change_rate > 10:
-                warnings.append(f"   ⚠️ {stock.stock_name}: 등락률 {stock.change_rate:.1f}% (추격 위험)")
-        
-        if warnings:
-            print(f"\n   [위험 신호]")
-            for w in warnings:
-                print(w)
+    all_scores = result.get('all_scores', [])
+    top_n = result.get('top_n', [])
     
-    else:
+    if not top_n:
         print("\n❌ 분석된 종목이 없습니다.")
+        return
     
+    # TOP 5 출력
     print(f"\n{'='*60}")
+    print(f"🏆 TOP 5 종목 (등급 + 매도전략)")
+    print(f"{'='*60}")
+    
+    for score in top_n:
+        print_score_detail_v5(score, score.rank)
+    
+    # TOP 5 요약 테이블
+    print(f"\n{'='*60}")
+    print(f"📋 TOP 5 요약")
+    print(f"{'='*60}")
+    
+    grade_emoji = {"S": "🏆", "A": "🥇", "B": "🥈", "C": "🥉", "D": "⚠️"}
+    
+    print(f"{'순위':<4} {'종목명':<12} {'총점':>6} {'등급':>6} {'등락률':>8} {'시초매도':>8} {'목표':>8}")
+    print(f"{'-'*60}")
+    
+    for score in top_n:
+        s = score.sell_strategy
+        g = score.grade.value
+        emoji = grade_emoji[g]
+        target_str = f"+{s.target_profit}%" if s.target_sell_ratio > 0 else "-"
+        print(f"{score.rank:<4} {score.stock_name:<12} {score.score_total:>5.1f}점 {emoji}{g:>4} {score.change_rate:>+7.1f}% {s.open_sell_ratio:>6}% {target_str:>8}")
+    
+    # 분석 의견
+    print(f"\n{'='*60}")
+    print(f"💡 TOP 5 분석 의견")
+    print(f"{'='*60}")
+    
+    avg_score = sum(s.score_total for s in top_n) / len(top_n)
+    grade_counts = {"S": 0, "A": 0, "B": 0, "C": 0, "D": 0}
+    for s in top_n:
+        grade_counts[s.grade.value] += 1
+    
+    print(f"\n   평균 점수: {avg_score:.1f}점")
+    print(f"   등급 분포: S({grade_counts['S']}) A({grade_counts['A']}) B({grade_counts['B']}) C({grade_counts['C']}) D({grade_counts['D']})")
+    
+    if avg_score >= 85:
+        print(f"\n   🏆 오늘 TOP5 품질: 매우 우수")
+        print(f"   👉 대부분 시초 30%만 매도, 나머지 +4% 홀딩 추천")
+    elif avg_score >= 75:
+        print(f"\n   📈 오늘 TOP5 품질: 우수")
+        print(f"   👉 시초 30~40% 익절, 나머지 목표가 홀딩")
+    elif avg_score >= 65:
+        print(f"\n   📊 오늘 TOP5 품질: 양호")
+        print(f"   👉 시초 50% 익절, 나머지 목표가 홀딩")
+    elif avg_score >= 55:
+        print(f"\n   ⚠️ 오늘 TOP5 품질: 보통")
+        print(f"   👉 보수적 접근, 시초 70% 익절 권장")
+    else:
+        print(f"\n   🚨 오늘 TOP5 품질: 미흡")
+        print(f"   👉 매수 자제, 시초 전량 매도 권장")
+    
+    # 등급별 매도전략 안내
+    print(f"\n{'='*60}")
+    print(f"📋 등급별 매도전략")
+    print(f"{'='*60}")
+    print("""
+   🏆 S등급 (85점+): 시초 30% + 목표 +4% | 손절 -3%
+   🥇 A등급 (75-84): 시초 40% + 목표 +3% | 손절 -2.5%
+   🥈 B등급 (65-74): 시초 50% + 목표 +2.5% | 손절 -2%
+   🥉 C등급 (55-64): 시초 70% + 목표 +2% | 손절 -1.5%
+   ⚠️ D등급 (<55):   시초 전량매도 | 손절 -1%
+    """)
+    print(f"{'='*60}")
 
 
 def run_learning_mode():
-    """학습 모드 실행 (Phase 2)"""
+    """학습 모드 실행"""
     from src.services.learner_service import get_learner_service
     from src.adapters.discord_notifier import get_discord_notifier
     
@@ -335,53 +330,25 @@ def run_learning_mode():
 def main():
     """메인 함수"""
     parser = argparse.ArgumentParser(
-        description='종가매매 스크리너 v4.0',
+        description='종가매매 스크리너 v5.0 (소프트 필터)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 예시:
-    python main.py              스케줄러 모드 (12:30, 15:00, 16:30 자동 실행)
-    python main.py --run        즉시 스크리닝 실행 (알림 발송)
-    python main.py --run-test   테스트 실행 (TOP5 + 매도추천 + 관심종목)
+    python main.py              스케줄러 모드
+    python main.py --run        즉시 스크리닝 실행
+    python main.py --run-test   테스트 실행 (TOP5 + 등급/매도전략)
     python main.py --learn      수동 학습 실행
     python main.py --init-db    DB 초기화
         """,
     )
     
-    parser.add_argument(
-        '--run',
-        action='store_true',
-        help='즉시 스크리닝 실행',
-    )
-    parser.add_argument(
-        '--run-test',
-        action='store_true',
-        help='테스트 모드 (TOP5 + 매도추천 + 관심종목)',
-    )
-    parser.add_argument(
-        '--learn',
-        action='store_true',
-        help='수동 학습 실행',
-    )
-    parser.add_argument(
-        '--init-db',
-        action='store_true',
-        help='DB 초기화만 실행',
-    )
-    parser.add_argument(
-        '--no-alert',
-        action='store_true',
-        help='알림 발송 안함',
-    )
-    parser.add_argument(
-        '--validate',
-        action='store_true',
-        help='설정 검증만 실행',
-    )
-    parser.add_argument(
-        '--show-config',
-        action='store_true',
-        help='현재 설정 요약 출력',
-    )
+    parser.add_argument('--run', action='store_true', help='즉시 스크리닝 실행')
+    parser.add_argument('--run-test', action='store_true', help='테스트 모드')
+    parser.add_argument('--learn', action='store_true', help='수동 학습 실행')
+    parser.add_argument('--init-db', action='store_true', help='DB 초기화만 실행')
+    parser.add_argument('--no-alert', action='store_true', help='알림 발송 안함')
+    parser.add_argument('--validate', action='store_true', help='설정 검증만 실행')
+    parser.add_argument('--show-config', action='store_true', help='현재 설정 요약 출력')
     
     args = parser.parse_args()
     
@@ -389,7 +356,6 @@ def main():
     init_logging()
     logger = logging.getLogger(__name__)
     
-    # 설정 요약만 출력
     if args.show_config:
         print_settings_summary()
         return
@@ -403,7 +369,7 @@ def main():
                 if result.valid:
                     print("\n✅ 모든 필수 설정이 올바르게 구성되었습니다.")
                 else:
-                    print("\n❌ 설정 검증 실패. 위 에러를 확인하세요.")
+                    print("\n❌ 설정 검증 실패.")
                     sys.exit(1)
                 return
         else:
@@ -424,10 +390,7 @@ def main():
     if args.run_test:
         run_test_mode()
     elif args.run:
-        run_immediate(
-            send_alert=not args.no_alert,
-            save_to_db=True,
-        )
+        run_immediate(send_alert=not args.no_alert, save_to_db=True)
     elif args.learn:
         run_learning_mode()
     else:

@@ -164,12 +164,16 @@ class ScreenerScheduler:
             logger.info(f"작업 제거: {job_id}")
     
     def setup_default_schedules(self):
-        """기본 스케줄 설정"""
-        from src.services.screener_service import (
-            run_main_screening,
-            run_preview_screening,
+        """기본 스케줄 설정 - v5"""
+        from src.services.screener_service_v5 import (
+            run_main_screening_v5,
+            run_preview_screening_v5,
         )
         from src.services.learner_service import run_daily_learning
+        
+        # v5 별칭
+        run_main_screening = run_main_screening_v5
+        run_preview_screening = run_preview_screening_v5
         
         # 12:30 프리뷰 스크리닝
         preview_time = settings.screening.screening_time_preview

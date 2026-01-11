@@ -203,6 +203,23 @@ class DiscordNotifier:
         payload = {"content": content}
         return self._send(payload)
     
+    def send_message(self, content: str) -> NotifyResult:
+        """텍스트 메시지 발송 (v5 호환용 별칭)"""
+        return self.send_simple_message(content)
+    
+    def send_embed(self, embed: dict) -> bool:
+        """Embed 메시지 발송 (v5용)
+        
+        Args:
+            embed: Discord Embed 딕셔너리
+            
+        Returns:
+            발송 성공 여부
+        """
+        payload = {"embeds": [embed]}
+        result = self._send(payload)
+        return result.success
+    
     def send_learning_report(self, report) -> NotifyResult:
         """학습 리포트 발송"""
         # report object expected to have learning_date and message
