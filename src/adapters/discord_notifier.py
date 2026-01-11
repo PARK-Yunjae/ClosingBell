@@ -60,12 +60,20 @@ class DiscordNotifier:
     
     def _get_rank_emoji(self, rank: int) -> str:
         """순위 이모지"""
-        emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
+        emojis = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4️⃣", 5: "5️⃣"}
         return emojis.get(rank, f"{rank}위")
     
-    def _build_stock_field(self, stock: StockScore) -> dict:
-        """종목 필드 생성"""
+    def _build_stock_field(self, stock: StockScore, is_recommended: bool = False) -> dict:
+        """종목 필드 생성
+        
+        Args:
+            stock: 종목 점수 정보
+            is_recommended: CCI 기준 추천 종목 여부 (⭐ 표시)
+        """
         emoji = self._get_rank_emoji(stock.rank)
+        recommend_mark = " ⭐추천" if is_recommended else ""
+        
+        name = f"{emoji} {stock.rank}위: {stock.stock_name} ({stock.stock_code}){recommend_mark}"
         
         name = f"{emoji} {stock.rank}위: {stock.stock_name} ({stock.stock_code})"
         
@@ -89,15 +97,16 @@ class DiscordNotifier:
         result: ScreeningResult,
         is_preview: bool = False,
     ) -> dict:
-        """Embed 메시지 빌드"""
+        """Embed 메시지 빌드 (v3.2: TOP5 + CCI 추천)"""
         # 타이틀
         label = MSG_PREVIEW_LABEL if is_preview else MSG_MAIN_LABEL
-        title = f"🎯 종가매매 TOP 3 {label} ({result.screen_time})"
+        title = f"🎯 종가매매 TOP 5 {label} ({result.screen_time})"
         
         # 설명
         description = f"📅 {result.screen_date.strftime('%Y-%m-%d')} 스크리닝 결과"
         if result.total_count > 0:
             description += f"\n📊 분석 종목: {result.total_count}개"
+        description += "\n💡 ⭐추천: CCI가 가장 낮은 종목 (백테스트 최적)"
         
         # 색상
         if not result.top3:
@@ -105,17 +114,28 @@ class DiscordNotifier:
         else:
             color = DISCORD_COLOR_SUCCESS
         
-        # 필드
+        # 필드 - CCI 가장 낮은 종목 찾기
         fields = []
         if result.top3:
+            # CCI 가장 낮은 종목 찾기
+            min_cci_stock = min(result.top3, key=lambda s: s.raw_cci)
+            
             for stock in result.top3:
-                fields.append(self._build_stock_field(stock))
+                is_recommended = (stock.stock_code == min_cci_stock.stock_code)
+                fields.append(self._build_stock_field(stock, is_recommended))
         else:
             fields.append({
                 "name": "❌ 결과",
                 "value": MSG_NO_CANDIDATES,
                 "inline": False,
             })
+        
+        # 매도 전략 안내 (v3.2)
+        fields.append({
+            "name": "📌 매도 전략 (백테스트 최적)",
+            "value": "손절 -1% / 익절 +2% / 미도달시 종가매도",
+            "inline": False,
+        })
         
         # 실행 시간 필드
         if result.execution_time_sec:
@@ -131,7 +151,7 @@ class DiscordNotifier:
             "color": color,
             "fields": fields,
             "footer": {
-                "text": "종가매매 스크리너 v3.1",
+                "text": "종가매매 스크리너 v3.2 (백테스트 최적화)",
             },
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }

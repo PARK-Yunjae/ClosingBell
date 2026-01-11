@@ -289,12 +289,23 @@ class ScreenerService:
     def _collect_stock_data(self, stocks: List[StockData]) -> List[StockData]:
         """종목별 일봉 데이터 수집 및 StockData 생성
         
-        v3.1: 상한가/과열 종목 필터링 추가
+        v3.2: 백테스트 최적화 필터 적용
+        - 등락률 4~15%
+        - CCI 190 이하
+        - MA20 이격도 8% 이하
+        - 연속상승 4일 이하
         """
-        from src.config.constants import MAX_CHANGE_RATE, MAX_CCI_FILTER
+        from src.config.constants import (
+            MAX_CHANGE_RATE, MIN_CHANGE_RATE, MAX_CCI_FILTER,
+            MAX_MA20_DISTANCE, MAX_CONSECUTIVE_UP
+        )
+        from src.domain.indicators import calculate_cci, calculate_ma
         
         stock_data_list = []
-        filtered_count = {"상한가": 0, "CCI과열": 0, "데이터부족": 0}
+        filtered_count = {
+            "등락률상한": 0, "등락률하한": 0, "CCI과열": 0, 
+            "MA20이격": 0, "연속상승": 0, "데이터부족": 0
+        }
         failed_count = 0
         
         for i, stock in enumerate(stocks):
@@ -315,33 +326,58 @@ class ScreenerService:
                 yesterday = daily_prices[-2]
                 change_rate = ((today.close - yesterday.close) / yesterday.close) * 100
                 
-                # ★ 상한가 필터 (v3.1)
+                # ★ 등락률 상한 필터 (v3.2: 15% 이상 제외)
                 if change_rate >= MAX_CHANGE_RATE:
-                    logger.debug(f"상한가 제외: {stock.name} ({stock.code}) +{change_rate:.1f}%")
-                    filtered_count["상한가"] += 1
+                    logger.debug(f"등락률 상한 제외: {stock.name} +{change_rate:.1f}%")
+                    filtered_count["등락률상한"] += 1
                     continue
                 
-                # ★ CCI 과열 필터 (v3.1) - 선택적
-                # CCI 계산 (간단히)
+                # ★ 등락률 하한 필터 (v3.2: 4% 미만 제외)
+                if change_rate < MIN_CHANGE_RATE:
+                    logger.debug(f"등락률 하한 제외: {stock.name} +{change_rate:.1f}%")
+                    filtered_count["등락률하한"] += 1
+                    continue
+                
+                # ★ CCI 과열 필터 (v3.2: 190 이상 제외)
                 if len(daily_prices) >= 14:
-                    # CCI 계산
-                    from src.domain.indicators import calculate_cci
                     cci_values = calculate_cci(daily_prices, period=14)
                     cci = cci_values[-1] if cci_values else None
                     
                     if cci is not None and cci > MAX_CCI_FILTER:
-                        logger.debug(f"CCI 과열 제외: {stock.name} ({stock.code}) CCI={cci:.1f}")
+                        logger.debug(f"CCI 과열 제외: {stock.name} CCI={cci:.1f}")
                         filtered_count["CCI과열"] += 1
                         continue
                 
-                # StockData 생성
-                # 주의: daily_prices[-1]은 오늘 데이터를 포함한다고 가정 (장중/장마감 후)
-                trading_value = today.trading_value / 100_000_000  # 억원 단위 변환
+                # ★ MA20 이격도 필터 (v3.2: 8% 초과 제외)
+                if len(daily_prices) >= 20:
+                    ma20_values = calculate_ma(daily_prices, period=20)
+                    ma20 = ma20_values[-1] if ma20_values else None
+                    
+                    if ma20 is not None and ma20 > 0:
+                        ma20_distance = ((today.close - ma20) / ma20) * 100
+                        if ma20_distance > MAX_MA20_DISTANCE:
+                            logger.debug(f"MA20 이격 제외: {stock.name} 이격={ma20_distance:.1f}%")
+                            filtered_count["MA20이격"] += 1
+                            continue
                 
-                # v3.1: 프리뷰 시점에서 일봉 거래대금이 0인 경우, 
-                # 조건검색 결과의 거래대금 사용 (stock.trading_value가 있는 경우)
+                # ★ 연속상승 필터 (v3.2: 4일 초과 제외)
+                consecutive_up = 0
+                for j in range(len(daily_prices) - 1, 0, -1):
+                    if daily_prices[j].close > daily_prices[j-1].close:
+                        consecutive_up += 1
+                    else:
+                        break
+                
+                if consecutive_up > MAX_CONSECUTIVE_UP:
+                    logger.debug(f"연속상승 제외: {stock.name} {consecutive_up}일 연속")
+                    filtered_count["연속상승"] += 1
+                    continue
+                
+                # StockData 생성
+                trading_value = today.trading_value / 100_000_000  # 억원 단위
+                
                 if trading_value <= 0 and hasattr(stock, 'trading_value') and stock.trading_value > 0:
-                    trading_value = stock.trading_value  # 조건검색 결과에서 가져온 값 (이미 억원 단위)
+                    trading_value = stock.trading_value
                 
                 stock_data = StockData(
                     code=stock.code,
