@@ -374,8 +374,18 @@ class ScreenerService:
                     continue
                 
                 # StockData 생성
-                trading_value = today.trading_value / 100_000_000  # 억원 단위
+                # 일봉 API의 거래대금 (원 단위 -> 억원 단위)
+                trading_value = today.trading_value / 100_000_000
                 
+                # 거래대금이 0이면 현재가 API로 조회
+                if trading_value <= 0:
+                    try:
+                        current_price_data = self.kis_client.get_current_price(stock.code)
+                        trading_value = current_price_data.trading_value / 100_000_000
+                    except Exception:
+                        pass
+                
+                # 여전히 0이면 StockInfo에서 가져오기 시도
                 if trading_value <= 0 and hasattr(stock, 'trading_value') and stock.trading_value > 0:
                     trading_value = stock.trading_value
                 

@@ -75,8 +75,6 @@ class DiscordNotifier:
         
         name = f"{emoji} {stock.rank}위: {stock.stock_name} ({stock.stock_code}){recommend_mark}"
         
-        name = f"{emoji} {stock.rank}위: {stock.stock_name} ({stock.stock_code})"
-        
         value_lines = [
             f"💰 현재가: {self._format_price(stock.current_price)} ({self._format_change_rate(stock.change_rate)})",
             f"📊 총점: **{self._format_score(stock.score_total)}**",
@@ -97,7 +95,7 @@ class DiscordNotifier:
         result: ScreeningResult,
         is_preview: bool = False,
     ) -> dict:
-        """Embed 메시지 빌드 (v3.2: TOP5 + CCI 추천)"""
+        """Embed 메시지 빌드 (v4.0: TOP5 + CCI 추천 + 점수별 매도전략)"""
         # 타이틀
         label = MSG_PREVIEW_LABEL if is_preview else MSG_MAIN_LABEL
         title = f"🎯 종가매매 TOP 5 {label} ({result.screen_time})"
@@ -130,10 +128,10 @@ class DiscordNotifier:
                 "inline": False,
             })
         
-        # 매도 전략 안내 (v3.2)
+        # 매도 전략 안내 (v4.0)
         fields.append({
-            "name": "📌 매도 전략 (백테스트 최적)",
-            "value": "손절 -1% / 익절 +2% / 미도달시 종가매도",
+            "name": "📌 매도 전략 (그리드 서치 최적)",
+            "value": "• 80점+: 시초가 매도 (+1%~+3%)\n• 70점+: 목표가 +2%~+3% / 손절 -2%\n• 60점+: 익절 +1%~+2% / 손절 -1.5%\n• 60점-: 손절 -1% 우선",
             "inline": False,
         })
         
@@ -151,7 +149,7 @@ class DiscordNotifier:
             "color": color,
             "fields": fields,
             "footer": {
-                "text": "종가매매 스크리너 v3.2 (백테스트 최적화)",
+                "text": "종가매매 스크리너 v4.0 (그리드 서치 최적화)",
             },
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
