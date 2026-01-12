@@ -12,12 +12,16 @@
 """
 
 import logging
+import time
+import traceback
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from src.config.settings import settings
 
@@ -100,8 +104,29 @@ def market_day_wrapper(func: Callable) -> Callable:
     return wrapper
 
 
+def _job_listener(event):
+    """APScheduler 작업 이벤트 리스너"""
+    if hasattr(event, 'job_id'):
+        job_id = event.job_id
+    else:
+        job_id = "unknown"
+    
+    if event.code == EVENT_JOB_EXECUTED:
+        logger.info(f"✅ 작업 실행 완료: {job_id}")
+    elif event.code == EVENT_JOB_ERROR:
+        logger.error(f"❌ 작업 실행 오류: {job_id}")
+        if hasattr(event, 'exception') and event.exception:
+            logger.error(f"   예외: {event.exception}")
+            logger.error(f"   트레이스백: {traceback.format_exc()}")
+    elif event.code == EVENT_JOB_MISSED:
+        logger.warning(f"⚠️ 작업 놓침 (missed): {job_id}")
+
+
 class ScreenerScheduler:
     """스크리너 스케줄러"""
+    
+    # Heartbeat 간격 (분)
+    HEARTBEAT_INTERVAL_MINUTES = 5
     
     def __init__(self, blocking: bool = True):
         """
@@ -114,6 +139,13 @@ class ScreenerScheduler:
             self.scheduler = BackgroundScheduler(timezone='Asia/Seoul')
         
         self._jobs = {}
+        self._start_time = None
+        
+        # 이벤트 리스너 등록
+        self.scheduler.add_listener(
+            _job_listener,
+            EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED
+        )
     
     def add_job(
         self,
@@ -163,6 +195,39 @@ class ScreenerScheduler:
             del self._jobs[job_id]
             logger.info(f"작업 제거: {job_id}")
     
+    def _heartbeat(self):
+        """Heartbeat 로그 출력 - 스케줄러가 살아있는지 확인"""
+        now = datetime.now()
+        uptime = now - self._start_time if self._start_time else timedelta(0)
+        uptime_str = str(uptime).split('.')[0]  # 마이크로초 제거
+        
+        # 다음 작업 시간 계산
+        next_jobs = []
+        for job in self.scheduler.get_jobs():
+            if job.id == 'heartbeat':
+                continue
+            next_time = getattr(job, 'next_run_time', None)
+            if next_time:
+                next_jobs.append(f"{job.id}({next_time.strftime('%H:%M')})")
+        
+        next_jobs_str = ', '.join(next_jobs) if next_jobs else '없음'
+        logger.info(f"💓 Heartbeat: 가동시간 {uptime_str}, 대기 작업: {next_jobs_str}")
+    
+    def _add_heartbeat_job(self):
+        """Heartbeat 작업 추가"""
+        trigger = IntervalTrigger(
+            minutes=self.HEARTBEAT_INTERVAL_MINUTES,
+            timezone='Asia/Seoul',
+        )
+        
+        self.scheduler.add_job(
+            self._heartbeat,
+            trigger=trigger,
+            id='heartbeat',
+            replace_existing=True,
+        )
+        logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
+    
     def setup_default_schedules(self):
         """기본 스케줄 설정 - v5"""
         from src.services.screener_service_v5 import (
@@ -195,6 +260,9 @@ class ScreenerScheduler:
             minute=main_minute,
         )
         
+        # Heartbeat 작업 추가 (5분마다)
+        self._add_heartbeat_job()
+        
         # 16:30 일일 학습 (Phase 2) - v3.1: 학습 비활성화 (가중치 고정)
         # self.add_job(
         #     job_id='daily_learning',
@@ -207,7 +275,11 @@ class ScreenerScheduler:
     
     def start(self):
         """스케줄러 시작"""
-        logger.info("스케줄러 시작")
+        self._start_time = datetime.now()
+        logger.info("=" * 50)
+        logger.info("🚀 스케줄러 시작")
+        logger.info(f"   시작 시간: {self._start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 50)
         
         # 등록된 작업 출력
         jobs = self.scheduler.get_jobs()
@@ -226,6 +298,11 @@ class ScreenerScheduler:
         except KeyboardInterrupt:
             logger.info("스케줄러 중지 (Ctrl+C)")
             self.shutdown()
+        except Exception as e:
+            logger.error(f"❌ 스케줄러 비정상 종료: {e}")
+            logger.error(traceback.format_exc())
+            self.shutdown()
+            raise
     
     def shutdown(self):
         """스케줄러 종료"""
