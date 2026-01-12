@@ -1,51 +1,33 @@
 """
-스크리닝 오케스트레이션 서비스
+스크리닝 서비스 v5.1
 
 책임:
 - 스크리닝 플로우 제어
-- 필터링 → 분석 → 점수 산출 → 저장 → 알림 순서 관리
-- 에러 처리 및 부분 실패 핸들링
-- 실행 시간 측정
-- 조건검색 기반 유니버스 지원 (2차 필터 적용)
-- fallback 정책 (조건검색 실패/부족 시 자동 대체)
-
-의존성:
-- adapters.kis_client
-- domain.score_calculator
-- infrastructure.repository
-- adapters.discord_notifier
-- utils.stock_filters
+- 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
+- 최소한의 하드필터 (데이터부족, 하락종목만 제외)
+- 나머지 조건은 모두 점수로 반영 (소프트 필터)
 """
 
 import os
 import time
 import logging
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from src.config.settings import settings
-from src.config.constants import (
-    TOP_N_COUNT,
-    MIN_DAILY_DATA_COUNT,
+from src.config.constants import TOP_N_COUNT, MIN_DAILY_DATA_COUNT
+from src.utils.stock_filters import filter_universe_stocks
+from src.domain.models import StockData, ScreeningResult, ScreeningStatus
+from src.domain.score_calculator import (
+    ScoreCalculatorV5,
+    StockScoreV5,
+    format_discord_embed,
 )
-from src.utils.stock_filters import (
-    filter_universe_stocks,
-)
-from src.domain.models import (
-    StockData,
-    Weights,
-    ScreeningResult,
-    ScreeningStatus,
-    ScreenerError,
-)
-from src.domain.score_calculator import ScoreCalculator
 from src.adapters.kis_client import get_kis_client, KISClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
 from src.infrastructure.repository import (
     get_screening_repository,
-    get_weight_repository,
     ScreeningRepository,
-    WeightRepository,
 )
 from src.infrastructure.database import init_database
 
@@ -53,19 +35,20 @@ logger = logging.getLogger(__name__)
 
 
 class ScreenerService:
-    """스크리닝 서비스"""
+    """스크리닝 서비스 v5.1"""
     
     def __init__(
         self,
         kis_client: Optional[KISClient] = None,
         discord_notifier: Optional[DiscordNotifier] = None,
         screening_repo: Optional[ScreeningRepository] = None,
-        weight_repo: Optional[WeightRepository] = None,
     ):
         self.kis_client = kis_client or get_kis_client()
         self.discord_notifier = discord_notifier or get_discord_notifier()
         self.screening_repo = screening_repo or get_screening_repository()
-        self.weight_repo = weight_repo or get_weight_repository()
+        self.calculator = ScoreCalculatorV5()
+        
+        logger.info("ScreenerService v5.1 초기화")
     
     def run_screening(
         self,
@@ -73,321 +56,161 @@ class ScreenerService:
         save_to_db: bool = True,
         send_alert: bool = True,
         is_preview: bool = False,
-    ) -> ScreeningResult:
-        """스크리닝 실행
-        
-        Args:
-            screen_time: 스크리닝 시각 ("15:00" or "12:30")
-            save_to_db: DB 저장 여부 (12:30 프리뷰는 False)
-            send_alert: 알림 발송 여부
-            is_preview: 프리뷰 모드 여부
-            
-        Returns:
-            스크리닝 결과
-        """
+    ) -> Dict:
+        """스크리닝 실행"""
         start_time = time.time()
         screen_date = date.today()
         
-        logger.info(f"스크리닝 시작: {screen_date} {screen_time} (프리뷰: {is_preview})")
+        logger.info(f"스크리닝 시작: {screen_date} {screen_time}")
         
         try:
-            # 1. 현재 가중치 로드
-            weights = self._load_weights()
-            logger.info(f"가중치 로드 완료: {weights.to_dict()}")
-            
-            # 2. 거래대금 300억+ 종목 조회
-            stocks = self._get_filtered_stocks()
+            # 1. 유니버스 조회
+            stocks = self._get_universe()
             if not stocks:
-                return self._create_empty_result(
-                    screen_date, screen_time, start_time, weights, is_preview
-                )
+                return self._empty_result(screen_date, screen_time, start_time, 
+                                         is_preview, "유니버스 비어있음")
             
-            # 3. 각 종목 일봉 데이터 수집 및 StockData 생성
-            stock_data_list = self._collect_stock_data(stocks)
-            logger.info(f"일봉 데이터 수집 완료: {len(stock_data_list)}개 종목")
+            logger.info(f"유니버스: {len(stocks)}개")
             
+            # 2. 데이터 수집 (최소 하드필터만)
+            stock_data_list = self._collect_data(stocks)
             if not stock_data_list:
-                return self._create_empty_result(
-                    screen_date, screen_time, start_time, weights, is_preview
-                )
+                return self._empty_result(screen_date, screen_time, start_time,
+                                         is_preview, "수집된 종목 없음")
             
-            # 4. 점수 산출
-            calculator = ScoreCalculator(weights)
-            scores = calculator.calculate_scores(stock_data_list)
+            logger.info(f"데이터 수집: {len(stock_data_list)}개")
             
-            # 5. TOP 3 선정
-            top3 = calculator.select_top_n(scores, TOP_N_COUNT)
-            logger.info(f"TOP {TOP_N_COUNT} 선정 완료")
+            # 3. 점수 계산
+            scores = self.calculator.calculate_scores(stock_data_list)
+            top_n = self.calculator.select_top_n(scores, TOP_N_COUNT)
             
-            # 결과 생성
             execution_time = time.time() - start_time
-            result = ScreeningResult(
-                screen_date=screen_date,
-                screen_time=screen_time,
-                total_count=len(scores),
-                top3=top3,
-                all_items=scores,
-                execution_time_sec=execution_time,
-                status=ScreeningStatus.SUCCESS,
-                weights_used=weights,
-                is_preview=is_preview,
-            )
             
-            # 6. DB 저장 (프리뷰는 저장 안 함)
+            result = {
+                "screen_date": screen_date,
+                "screen_time": screen_time,
+                "total_count": len(scores),
+                "top_n": top_n,
+                "all_scores": scores,
+                "execution_time_sec": execution_time,
+                "status": "SUCCESS",
+                "is_preview": is_preview,
+                "error_message": None,
+            }
+            
+            # 4. DB 저장
             if save_to_db and not is_preview:
                 self._save_result(result)
             
-            # 7. 알림 발송
+            # 5. 알림 발송
             if send_alert:
                 self._send_alert(result, is_preview)
             
-            logger.info(f"스크리닝 완료: {execution_time:.1f}초 소요")
+            # 6. 콘솔 출력
+            self._print_results(top_n)
+            
+            logger.info(f"스크리닝 완료: {execution_time:.1f}초")
             return result
             
         except Exception as e:
             logger.error(f"스크리닝 에러: {e}")
+            import traceback
+            traceback.print_exc()
             
-            execution_time = time.time() - start_time
-            result = ScreeningResult(
-                screen_date=screen_date,
-                screen_time=screen_time,
-                total_count=0,
-                top3=[],
-                all_items=[],
-                execution_time_sec=execution_time,
-                status=ScreeningStatus.FAILED,
-                error_message=str(e),
-                is_preview=is_preview,
-            )
-            
-            # 에러 알림
             if send_alert:
-                self.discord_notifier.send_error_alert(e, "스크리닝 실행 중 에러")
+                try:
+                    self.discord_notifier.send_error_alert(e, "스크리닝 에러")
+                except:
+                    pass
             
-            return result
+            return self._empty_result(screen_date, screen_time, start_time,
+                                     is_preview, str(e))
     
-    def run_preview_screening(self) -> ScreeningResult:
-        """12:30 프리뷰 스크리닝 실행"""
-        return self.run_screening(
-            screen_time="12:30",
-            save_to_db=False,
-            send_alert=True,
-            is_preview=True,
-        )
-    
-    def run_main_screening(self) -> ScreeningResult:
-        """15:00 메인 스크리닝 실행"""
-        return self.run_screening(
-            screen_time="15:00",
-            save_to_db=True,
-            send_alert=True,
-            is_preview=False,
-        )
-    
-    def _load_weights(self) -> Weights:
-        """가중치 로드"""
-        try:
-            return self.weight_repo.get_weights()
-        except Exception as e:
-            logger.warning(f"가중치 로드 실패, 기본값 사용: {e}")
-            return Weights()
-    
-    def _get_filtered_stocks(self) -> List:
-        """
-        유니버스 종목 조회 (조건검색 우선 + fallback 정책)
-        
-        우선순위:
-        1. 조건검색(psearch) 기반 유니버스 -> 2차 필터 적용
-        2. fallback: volume_rank API
-        3. fallback: 주요 종목 리스트 스캔
-        """
-        # 환경변수에서 설정 읽기
-        universe_source = os.getenv("UNIVERSE_SOURCE", "condition_search")
+    def _get_universe(self) -> List:
+        """유니버스 조회"""
         condition_name = os.getenv("CONDITION_NAME", "TV200")
         min_candidates = int(os.getenv("MIN_CANDIDATES", "30"))
-        fallback_enabled = os.getenv("FALLBACK_ENABLED", "true").lower() == "true"
         
-        min_value = settings.screening.min_trading_value
         stocks = []
-        filter_result = None
         
-        # ============================================================
-        # 1. 조건검색 기반 유니버스 (우선)
-        # ============================================================
-        if universe_source == "condition_search":
-            logger.info(f"조건검색 유니버스 조회: {condition_name}")
-            
-            try:
-                stocks_raw = self.kis_client.get_condition_universe(
-                    condition_name=condition_name,
-                    limit=500,
-                )
-                
-                if stocks_raw:
-                    logger.info(f"조건검색 raw 결과: {len(stocks_raw)}개")
-                    
-                    # 2차 필터 적용
-                    stocks, filter_result = filter_universe_stocks(
-                        stocks_raw,
-                        log_details=True,
-                    )
-                    
-                    logger.info(f"2차 필터 후: {len(stocks)}개")
-                else:
-                    logger.warning("조건검색 결과가 비어있습니다")
-                    
-            except Exception as e:
-                logger.error(f"조건검색 조회 실패: {e}")
-        
-        # ============================================================
-        # 2. Fallback 정책
-        # ============================================================
-        if fallback_enabled and len(stocks) < min_candidates:
-            logger.warning(
-                f"유니버스 부족 ({len(stocks)}개 < {min_candidates}개), "
-                f"fallback 실행..."
+        try:
+            # 조건검색
+            stocks_raw = self.kis_client.get_condition_universe(
+                condition_name=condition_name,
+                limit=500,
             )
             
-            # 2-1. volume_rank API fallback
-            if len(stocks) < min_candidates:
-                logger.info("Fallback 1: volume_rank API 조회")
-                try:
-                    fallback_stocks = self.kis_client.get_top_trading_value_stocks(
-                        min_trading_value=min_value,
-                        limit=200,
-                    )
-                    
-                    if fallback_stocks:
-                        # 2차 필터 적용
-                        filtered_fallback, fb_result = filter_universe_stocks(
-                            fallback_stocks,
-                            log_details=True,
-                        )
-                        
-                        # 기존 종목과 병합 (중복 제거)
-                        existing_codes = {s.code for s in stocks}
-                        for stock in filtered_fallback:
-                            if stock.code not in existing_codes:
-                                stocks.append(stock)
-                                existing_codes.add(stock.code)
-                        
-                        logger.info(f"Fallback 후 총: {len(stocks)}개")
-                        
-                except Exception as e:
-                    logger.error(f"volume_rank fallback 실패: {e}")
+            if stocks_raw:
+                stocks, _ = filter_universe_stocks(stocks_raw, log_details=True)
+                logger.info(f"조건검색 결과: {len(stocks)}개")
+        except Exception as e:
+            logger.error(f"조건검색 실패: {e}")
         
-        # 최종 결과 로깅
-        if stocks:
-            logger.info(f"최종 유니버스: {len(stocks)}개 종목")
-            if filter_result:
-                logger.info(str(filter_result))
-        else:
-            logger.warning("유니버스가 비어있습니다!")
+        # Fallback
+        if len(stocks) < min_candidates:
+            logger.warning(f"종목 부족 ({len(stocks)}개), fallback 실행")
+            try:
+                fallback = self.kis_client.get_top_trading_value_stocks(
+                    min_trading_value=settings.screening.min_trading_value,
+                    limit=200,
+                )
+                if fallback:
+                    filtered, _ = filter_universe_stocks(fallback, log_details=True)
+                    existing = {s.code for s in stocks}
+                    for s in filtered:
+                        if s.code not in existing:
+                            stocks.append(s)
+                    logger.info(f"Fallback 후: {len(stocks)}개")
+            except Exception as e:
+                logger.error(f"Fallback 실패: {e}")
         
         return stocks
     
-    def _collect_stock_data(self, stocks: List[StockData]) -> List[StockData]:
-        """종목별 일봉 데이터 수집 및 StockData 생성
-        
-        v3.2: 백테스트 최적화 필터 적용
-        - 등락률 4~15%
-        - CCI 190 이하
-        - MA20 이격도 8% 이하
-        - 연속상승 4일 이하
-        """
-        from src.config.constants import (
-            MAX_CHANGE_RATE, MIN_CHANGE_RATE, MAX_CCI_FILTER,
-            MAX_MA20_DISTANCE, MAX_CONSECUTIVE_UP
-        )
-        from src.domain.indicators import calculate_cci, calculate_ma
-        
+    def _collect_data(self, stocks: List) -> List[StockData]:
+        """데이터 수집 (최소 하드필터)"""
         stock_data_list = []
-        filtered_count = {
-            "등락률상한": 0, "등락률하한": 0, "CCI과열": 0, 
-            "MA20이격": 0, "연속상승": 0, "데이터부족": 0
-        }
-        failed_count = 0
         
         for i, stock in enumerate(stocks):
             try:
-                # 일봉 데이터 조회
                 daily_prices = self.kis_client.get_daily_prices(
                     stock.code,
-                    count=MIN_DAILY_DATA_COUNT + 10
+                    count=MIN_DAILY_DATA_COUNT + 10,
                 )
                 
                 if len(daily_prices) < MIN_DAILY_DATA_COUNT:
-                    logger.warning(f"데이터 부족: {stock.name} ({len(daily_prices)}일)")
-                    filtered_count["데이터부족"] += 1
                     continue
                 
-                # 당일 등락률 계산
                 today = daily_prices[-1]
                 yesterday = daily_prices[-2]
                 change_rate = ((today.close - yesterday.close) / yesterday.close) * 100
                 
-                # ★ 등락률 상한 필터 (v3.2: 15% 이상 제외)
-                if change_rate >= MAX_CHANGE_RATE:
-                    logger.debug(f"등락률 상한 제외: {stock.name} +{change_rate:.1f}%")
-                    filtered_count["등락률상한"] += 1
+                # 하락종목 제외 (종가매매는 상승종목 대상)
+                if change_rate < 0:
                     continue
                 
-                # ★ 등락률 하한 필터 (v3.2: 4% 미만 제외)
-                if change_rate < MIN_CHANGE_RATE:
-                    logger.debug(f"등락률 하한 제외: {stock.name} +{change_rate:.1f}%")
-                    filtered_count["등락률하한"] += 1
-                    continue
+                # 거래대금 계산 (여러 소스에서 시도)
+                trading_value = 0.0
                 
-                # ★ CCI 과열 필터 (v3.2: 190 이상 제외)
-                if len(daily_prices) >= 14:
-                    cci_values = calculate_cci(daily_prices, period=14)
-                    cci = cci_values[-1] if cci_values else None
-                    
-                    if cci is not None and cci > MAX_CCI_FILTER:
-                        logger.debug(f"CCI 과열 제외: {stock.name} CCI={cci:.1f}")
-                        filtered_count["CCI과열"] += 1
-                        continue
+                # 1차: 일봉 데이터에서
+                if today.trading_value > 0:
+                    trading_value = today.trading_value / 100_000_000
                 
-                # ★ MA20 이격도 필터 (v3.2: 8% 초과 제외)
-                if len(daily_prices) >= 20:
-                    ma20_values = calculate_ma(daily_prices, period=20)
-                    ma20 = ma20_values[-1] if ma20_values else None
-                    
-                    if ma20 is not None and ma20 > 0:
-                        ma20_distance = ((today.close - ma20) / ma20) * 100
-                        if ma20_distance > MAX_MA20_DISTANCE:
-                            logger.debug(f"MA20 이격 제외: {stock.name} 이격={ma20_distance:.1f}%")
-                            filtered_count["MA20이격"] += 1
-                            continue
-                
-                # ★ 연속상승 필터 (v3.2: 4일 초과 제외)
-                consecutive_up = 0
-                for j in range(len(daily_prices) - 1, 0, -1):
-                    if daily_prices[j].close > daily_prices[j-1].close:
-                        consecutive_up += 1
-                    else:
-                        break
-                
-                if consecutive_up > MAX_CONSECUTIVE_UP:
-                    logger.debug(f"연속상승 제외: {stock.name} {consecutive_up}일 연속")
-                    filtered_count["연속상승"] += 1
-                    continue
-                
-                # StockData 생성
-                # 일봉 API의 거래대금 (원 단위 -> 억원 단위)
-                trading_value = today.trading_value / 100_000_000
-                
-                # 거래대금이 0이면 현재가 API로 조회
+                # 2차: 현재가 API에서
                 if trading_value <= 0:
                     try:
-                        current_price_data = self.kis_client.get_current_price(stock.code)
-                        trading_value = current_price_data.trading_value / 100_000_000
-                    except Exception:
-                        pass
+                        current_data = self.kis_client.get_current_price(stock.code)
+                        if current_data and current_data.trading_value > 0:
+                            trading_value = current_data.trading_value / 100_000_000
+                    except Exception as e:
+                        logger.debug(f"현재가 조회 실패: {stock.code} - {e}")
                 
-                # 여전히 0이면 StockInfo에서 가져오기 시도
+                # 3차: 조건검색 결과에서
                 if trading_value <= 0 and hasattr(stock, 'trading_value') and stock.trading_value > 0:
                     trading_value = stock.trading_value
+                
+                # 4차: 거래량 × 종가로 추정
+                if trading_value <= 0 and today.volume > 0:
+                    trading_value = (today.volume * today.close) / 100_000_000
                 
                 stock_data = StockData(
                     code=stock.code,
@@ -398,70 +221,116 @@ class ScreenerService:
                 )
                 stock_data_list.append(stock_data)
                 
-                # 진행률 로깅 (10개마다)
-                if (i + 1) % 10 == 0:
-                    logger.info(f"데이터 수집 진행: {i + 1}/{len(stocks)}")
+                if (i + 1) % 20 == 0:
+                    logger.info(f"진행: {i + 1}/{len(stocks)}")
                     
             except Exception as e:
-                logger.warning(f"종목 데이터 수집 실패: {stock.code} - {e}")
-                failed_count += 1
-                continue
-        
-        # 필터링 로그
-        total_filtered = sum(filtered_count.values())
-        if total_filtered > 0:
-            logger.info(f"필터링 제외: {filtered_count}")
-        
-        if failed_count > 0:
-            logger.warning(f"데이터 수집 실패 종목: {failed_count}개")
+                logger.debug(f"수집 실패: {stock.code} - {e}")
         
         return stock_data_list
     
-    def _create_empty_result(
-        self,
-        screen_date: date,
-        screen_time: str,
-        start_time: float,
-        weights: Weights,
-        is_preview: bool,
-    ) -> ScreeningResult:
-        """빈 결과 생성"""
-        execution_time = time.time() - start_time
-        return ScreeningResult(
-            screen_date=screen_date,
-            screen_time=screen_time,
-            total_count=0,
-            top3=[],
-            all_items=[],
-            execution_time_sec=execution_time,
-            status=ScreeningStatus.SUCCESS,
-            error_message="필터링된 종목이 없습니다",
-            weights_used=weights,
-            is_preview=is_preview,
-        )
+    def _empty_result(self, screen_date, screen_time, start_time, 
+                      is_preview, error_msg) -> Dict:
+        """빈 결과"""
+        return {
+            "screen_date": screen_date,
+            "screen_time": screen_time,
+            "total_count": 0,
+            "top_n": [],
+            "all_scores": [],
+            "execution_time_sec": time.time() - start_time,
+            "status": "FAILED",
+            "is_preview": is_preview,
+            "error_message": error_msg,
+        }
     
-    def _save_result(self, result: ScreeningResult):
-        """결과 DB 저장"""
+    def _save_result(self, result: Dict):
+        """DB 저장"""
         try:
-            screening_id = self.screening_repo.save_screening(result)
-            logger.info(f"스크리닝 결과 저장 완료: ID={screening_id}")
+            from src.domain.models import StockScore, ScoreDetail
+            
+            # v5 → 레거시 변환
+            legacy_scores = []
+            for s in result["all_scores"]:
+                d = s.score_detail
+                legacy = StockScore(
+                    stock_code=s.stock_code,
+                    stock_name=s.stock_name,
+                    current_price=s.current_price,
+                    change_rate=s.change_rate,
+                    trading_value=s.trading_value,
+                    score_detail=ScoreDetail(
+                        cci_value=d.cci_score / 1.5,
+                        cci_slope=d.distance_score / 1.5,
+                        ma20_slope=d.ma20_3day_bonus * 3.33,
+                        candle=d.candle_score / 1.5,
+                        change=d.change_score / 1.5,
+                        raw_cci=d.raw_cci,
+                        raw_ma20=d.raw_ma20,
+                    ),
+                    score_total=s.score_total,
+                    rank=s.rank,
+                )
+                legacy_scores.append(legacy)
+            
+            legacy_result = ScreeningResult(
+                screen_date=result["screen_date"],
+                screen_time=result["screen_time"],
+                total_count=result["total_count"],
+                top3=legacy_scores[:5],
+                all_items=legacy_scores,
+                execution_time_sec=result["execution_time_sec"],
+                status=ScreeningStatus.SUCCESS,
+            )
+            
+            screening_id = self.screening_repo.save_screening(legacy_result)
+            logger.info(f"DB 저장: ID={screening_id}")
         except Exception as e:
             logger.error(f"DB 저장 실패: {e}")
-            # 저장 실패해도 알림은 발송
     
-    def _send_alert(self, result: ScreeningResult, is_preview: bool):
-        """알림 발송 (Discord)"""
+    def _send_alert(self, result: Dict, is_preview: bool):
+        """알림 발송"""
         try:
-            discord_result = self.discord_notifier.send_screening_result(
-                result,
-                is_preview=is_preview,
-            )
-            if discord_result.success:
-                logger.info("Discord 알림 발송 성공")
+            top_n = result["top_n"]
+            
+            if not top_n:
+                self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
+                return
+            
+            title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
+            embed = format_discord_embed(top_n, title=title)
+            
+            success = self.discord_notifier.send_embed(embed)
+            if success:
+                logger.info("Discord 발송 완료")
             else:
-                logger.warning(f"Discord 알림 발송 실패: {discord_result.error_message}")
+                logger.warning("Discord 발송 실패")
         except Exception as e:
-            logger.error(f"Discord 알림 발송 에러: {e}")
+            logger.error(f"알림 에러: {e}")
+    
+    def _print_results(self, top_n: List[StockScoreV5]):
+        """콘솔 출력"""
+        print("\n" + "=" * 60)
+        print("🔔 종가매매 TOP5 (v5.1)")
+        print("=" * 60)
+        
+        if not top_n:
+            print("적합한 종목 없음")
+            return
+        
+        for s in top_n:
+            d = s.score_detail
+            st = s.sell_strategy
+            grade_emoji = {"S": "🏆", "A": "🥇", "B": "🥈", "C": "🥉", "D": "⚠️"}
+            
+            print(f"\n#{s.rank} {s.stock_name} ({s.stock_code})")
+            print(f"   {s.score_total:.1f}점 {grade_emoji[s.grade.value]}{s.grade.value}")
+            print(f"   현재가: {s.current_price:,}원 ({s.change_rate:+.1f}%)")
+            print(f"   CCI: {d.raw_cci:.0f} | 이격도: {d.raw_distance:.1f}%")
+            print(f"   거래량: {d.raw_volume_ratio:.1f}배 | 연속: {d.raw_consec_days}일")
+            print(f"   매도: 시초 {st.open_sell_ratio}% / 목표 +{st.target_profit}%")
+        
+        print("\n" + "=" * 60)
 
 
 # 편의 함수
@@ -470,26 +339,33 @@ def run_screening(
     save_to_db: bool = True,
     send_alert: bool = True,
     is_preview: bool = False,
-) -> ScreeningResult:
-    """스크리닝 실행 유틸리티 함수"""
+) -> Dict:
+    """스크리닝 실행"""
     service = ScreenerService()
     return service.run_screening(screen_time, save_to_db, send_alert, is_preview)
 
 
-def run_main_screening() -> ScreeningResult:
+def run_main_screening() -> Dict:
     """15:00 메인 스크리닝"""
-    service = ScreenerService()
-    return service.run_main_screening()
+    return run_screening(
+        screen_time="15:00",
+        save_to_db=True,
+        send_alert=True,
+        is_preview=False,
+    )
 
 
-def run_preview_screening() -> ScreeningResult:
+def run_preview_screening() -> Dict:
     """12:30 프리뷰 스크리닝"""
-    service = ScreenerService()
-    return service.run_preview_screening()
+    return run_screening(
+        screen_time="12:30",
+        save_to_db=False,
+        send_alert=True,
+        is_preview=True,
+    )
 
 
 if __name__ == "__main__":
-    # 테스트 실행
     import sys
     
     logging.basicConfig(
@@ -497,40 +373,20 @@ if __name__ == "__main__":
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     )
     
-    # DB 초기화
-    init_database()
+    try:
+        init_database()
+    except:
+        pass
     
-    # 인자로 모드 선택
     mode = sys.argv[1] if len(sys.argv) > 1 else "test"
     
     if mode == "main":
-        print("=== 메인 스크리닝 (15:00) ===")
         result = run_main_screening()
     elif mode == "preview":
-        print("=== 프리뷰 스크리닝 (12:30) ===")
         result = run_preview_screening()
     else:
-        print("=== 테스트 스크리닝 (알림 없음) ===")
-        result = run_screening(
-            screen_time="15:00",
-            save_to_db=False,
-            send_alert=False,
-            is_preview=False,
-        )
+        result = run_screening(save_to_db=False, send_alert=False)
     
-    print(f"\n=== 결과 ===")
-    print(f"상태: {result.status.value}")
-    print(f"분석 종목: {result.total_count}개")
-    print(f"실행 시간: {result.execution_time_sec:.1f}초")
-    
-    if result.top3:
-        print(f"\n=== TOP {len(result.top3)} ===")
-        for stock in result.top3:
-            print(f"{stock.rank}. {stock.stock_name} ({stock.stock_code})")
-            print(f"   현재가: {stock.current_price:,}원 ({stock.change_rate:+.2f}%)")
-            print(f"   점수: {stock.score_total:.1f}점")
-    else:
-        print("\n적합한 종목이 없습니다.")
-    
-    if result.error_message:
-        print(f"\n에러: {result.error_message}")
+    print(f"\n상태: {result['status']}")
+    print(f"분석: {result['total_count']}개")
+    print(f"시간: {result['execution_time_sec']:.1f}초")
