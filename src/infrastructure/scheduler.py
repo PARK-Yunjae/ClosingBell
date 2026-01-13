@@ -24,6 +24,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from src.config.settings import settings
+from src.services.data_updater import run_data_update
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,14 @@ class ScreenerScheduler:
         #     hour=16,
         #     minute=30,
         # )
+
+        # 16:30 데이터 갱신 (OHLCV 자동 업데이트)
+        self.add_job(
+            job_id='daily_data_update',
+            func=run_data_update,
+            hour=16,
+            minute=30,
+        )
         
         logger.info("기본 스케줄 설정 완료 (스크리닝만, 학습 비활성화)")
     
