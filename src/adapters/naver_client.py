@@ -138,7 +138,7 @@ class NaverClient:
                 pub_date_str = item.get("pubDate", "")
                 pub_date = self._parse_date(pub_date_str)
                 
-                if pub_date and pub_date >= cutoff_date:
+                if pub_date and pub_date.replace(tzinfo=None) >= cutoff_date:
                     article = NewsArticle(
                         title=item.get("title", ""),
                         link=item.get("originallink") or item.get("link", ""),
