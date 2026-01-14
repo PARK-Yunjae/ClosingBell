@@ -20,7 +20,7 @@ DATA_DIR = Path(r"C:\Coding\data\adjusted")
 MAPPING_FILE = Path(r"C:\Coding\data\stock_mapping.csv")
 
 API_DELAY = 0.3
-MAX_STOCKS_PER_RUN = 100
+MAX_STOCKS_PER_RUN = 3000  # v5.2: API 제한 여유있으므로 전체 갱신
 
 # 공휴일
 HOLIDAYS_2025_2026 = {

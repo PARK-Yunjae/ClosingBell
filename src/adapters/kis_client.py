@@ -857,6 +857,159 @@ class KISClient:
         except Exception:
             return ""
 
+    def get_account_balance(self) -> Dict[str, Any]:
+        """계좌 잔고 조회
+        
+        Returns:
+            {
+                'total_eval': 총평가금액,
+                'total_profit': 총수익금액,
+                'total_profit_rate': 총수익률,
+                'cash': 예수금,
+                'stocks': [{
+                    'code': 종목코드,
+                    'name': 종목명,
+                    'qty': 보유수량,
+                    'avg_price': 평균단가,
+                    'current_price': 현재가,
+                    'eval_amount': 평가금액,
+                    'profit': 손익금액,
+                    'profit_rate': 수익률
+                }, ...]
+            }
+        """
+        endpoint = "/uapi/domestic-stock/v1/trading/inquire-balance"
+        tr_id = "TTTC8434R"  # 실전: TTTC8434R, 모의: VTTC8434R
+        
+        # 모의투자 여부 확인
+        if "virtual" in self.base_url or "-01" in self.account_no:
+            tr_id = "VTTC8434R"
+        
+        account_prefix = self.account_no.split("-")[0]
+        account_suffix = self.account_no.split("-")[1] if "-" in self.account_no else "01"
+        
+        params = {
+            "CANO": account_prefix,
+            "ACNT_PRDT_CD": account_suffix,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        
+        result = {
+            'total_eval': 0,
+            'total_profit': 0,
+            'total_profit_rate': 0.0,
+            'cash': 0,
+            'stocks': [],
+        }
+        
+        try:
+            data = self._request("GET", endpoint, tr_id, params=params)
+            
+            # 보유종목 리스트
+            output1 = data.get("output1", [])
+            for item in output1:
+                stock = {
+                    'code': item.get("pdno", ""),
+                    'name': item.get("prdt_name", ""),
+                    'qty': int(item.get("hldg_qty", 0)),
+                    'avg_price': int(float(item.get("pchs_avg_pric", 0))),
+                    'current_price': int(item.get("prpr", 0)),
+                    'eval_amount': int(item.get("evlu_amt", 0)),
+                    'profit': int(item.get("evlu_pfls_amt", 0)),
+                    'profit_rate': float(item.get("evlu_pfls_rt", 0)),
+                }
+                if stock['qty'] > 0:
+                    result['stocks'].append(stock)
+            
+            # 계좌 요약
+            output2 = data.get("output2", [{}])
+            if output2:
+                summary = output2[0] if isinstance(output2, list) else output2
+                result['total_eval'] = int(summary.get("tot_evlu_amt", 0))
+                result['total_profit'] = int(summary.get("evlu_pfls_smtl_amt", 0))
+                result['cash'] = int(summary.get("dnca_tot_amt", 0))
+                
+                # 수익률 계산
+                purchase_total = int(summary.get("pchs_amt_smtl_amt", 0))
+                if purchase_total > 0:
+                    result['total_profit_rate'] = (result['total_profit'] / purchase_total) * 100
+            
+            logger.info(f"잔고 조회 완료: {len(result['stocks'])}종목, 평가금액 {result['total_eval']:,}원")
+            return result
+            
+        except Exception as e:
+            logger.error(f"잔고 조회 실패: {e}")
+            return result
+
+    def get_daily_profit_loss(self, start_date: str = None, end_date: str = None) -> List[Dict]:
+        """일별 손익 조회
+        
+        Args:
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD)
+            
+        Returns:
+            일별 손익 리스트
+        """
+        from datetime import datetime, timedelta
+        
+        if not end_date:
+            end_date = datetime.now().strftime("%Y%m%d")
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
+        
+        endpoint = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        tr_id = "TTTC8001R"
+        
+        account_prefix = self.account_no.split("-")[0]
+        account_suffix = self.account_no.split("-")[1] if "-" in self.account_no else "01"
+        
+        params = {
+            "CANO": account_prefix,
+            "ACNT_PRDT_CD": account_suffix,
+            "INQR_STRT_DT": start_date,
+            "INQR_END_DT": end_date,
+            "SLL_BUY_DVSN_CD": "00",
+            "INQR_DVSN": "00",
+            "PDNO": "",
+            "CCLD_DVSN": "00",
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        
+        try:
+            data = self._request("GET", endpoint, tr_id, params=params)
+            
+            results = []
+            for item in data.get("output1", []):
+                results.append({
+                    'date': item.get("ord_dt", ""),
+                    'code': item.get("pdno", ""),
+                    'name': item.get("prdt_name", ""),
+                    'side': "매수" if item.get("sll_buy_dvsn_cd") == "02" else "매도",
+                    'qty': int(item.get("ord_qty", 0)),
+                    'price': int(item.get("avg_prvs", 0)),
+                    'amount': int(item.get("tot_ccld_amt", 0)),
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"일별 손익 조회 실패: {e}")
+            return []
+
 
 # 싱글톤 인스턴스
 _kis_client: Optional[KISClient] = None

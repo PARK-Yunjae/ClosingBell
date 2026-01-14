@@ -1,9 +1,9 @@
 """
-종가매매 스크리너 v5.1
+종가매매 스크리너 v5.2
 
 📊 점수 체계 (100점 만점):
-- 핵심 6개 지표: 각 15점 (총 90점)
-- 보너스 3개: 총 10점
+- 거래량비 25점 / 등락률 20점 / 연속양봉·CCI·이격도 각 15점 / 캔들 10점
+- 보너스: CCI상승 +4 / MA20↑ +3 / 고가≠종가 +3 / 대형주 +2~5
 
 📈 등급별 매도전략:
 - S등급 (85+): 시초 30% + 목표 +4%
@@ -14,7 +14,8 @@
 
 사용법:
     python main.py              # 스케줄러 모드
-    python main.py --run        # 즉시 실행
+    python main.py --run        # 스크리닝 즉시 실행
+    python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
     python main.py --run-test   # 테스트 (알림X)
     python main.py --validate   # 설정 검증
 """
@@ -44,10 +45,10 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v5.1                                   ║
+║   🔔  종가매매 스크리너 v5.2                                   ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
-║      핵심 6지표 × 15점 + 보너스 10점                           ║
+║      거래량 25 / 등락률 20 / CCI·연속·이격 15 / 캔들 10        ║
 ║                                                              ║
 ║   🏆 등급별 매도전략                                           ║
 ║      S(85+) → 시초30% + 목표+4%                               ║
@@ -193,9 +194,93 @@ def run_test_mode():
     print_result(result)
 
 
+def run_all_services():
+    """모든 서비스 순차 실행 (테스트용)
+    
+    실행 순서:
+    1. 스크리닝 (15:00)
+    2. 데이터 갱신
+    3. 학습
+    4. 유목민 공부
+    5. Git 커밋
+    """
+    logger = logging.getLogger(__name__)
+    
+    print_banner()
+    print("\n🔄 모든 서비스 순차 실행 시작...")
+    print("=" * 60)
+    
+    results = {}
+    
+    # 1. 스크리닝
+    print("\n[1/5] 📊 스크리닝 실행...")
+    try:
+        result = run_screening(
+            screen_time="15:00",
+            save_to_db=True,
+            send_alert=False,
+            is_preview=False,
+        )
+        results['screening'] = '✅ 성공'
+        print(f"      → {result['status']}, {result['total_count']}개 종목 분석")
+    except Exception as e:
+        results['screening'] = f'❌ 실패: {e}'
+        logger.error(f"스크리닝 실패: {e}")
+    
+    # 2. 데이터 갱신
+    print("\n[2/5] 📈 데이터 갱신...")
+    try:
+        from src.services.data_updater import run_data_update
+        run_data_update()
+        results['data_update'] = '✅ 성공'
+    except Exception as e:
+        results['data_update'] = f'❌ 실패: {e}'
+        logger.error(f"데이터 갱신 실패: {e}")
+    
+    # 3. 학습
+    print("\n[3/5] 🧠 학습 서비스...")
+    try:
+        from src.services.learner_service import run_daily_learning
+        learn_result = run_daily_learning()
+        results['learning'] = f"✅ 성공 ({learn_result.get('collected', 0)}건 수집)"
+    except Exception as e:
+        results['learning'] = f'❌ 실패: {e}'
+        logger.error(f"학습 실패: {e}")
+    
+    # 4. 유목민 공부
+    print("\n[4/5] 📚 유목민 공부...")
+    try:
+        from src.services.nomad_study import run_nomad_study
+        study_result = run_nomad_study()
+        results['nomad_study'] = f"✅ 성공 ({study_result.get('studied', 0)}건 분석)"
+    except Exception as e:
+        results['nomad_study'] = f'❌ 실패: {e}'
+        logger.error(f"유목민 공부 실패: {e}")
+    
+    # 5. Git 커밋
+    print("\n[5/5] 📤 Git 커밋...")
+    try:
+        from src.infrastructure.scheduler import git_auto_commit
+        git_result = git_auto_commit()
+        results['git_commit'] = '✅ 성공' if git_result else '⚠️ 변경사항 없음'
+    except Exception as e:
+        results['git_commit'] = f'❌ 실패: {e}'
+        logger.error(f"Git 커밋 실패: {e}")
+    
+    # 결과 요약
+    print("\n" + "=" * 60)
+    print("📋 실행 결과 요약")
+    print("=" * 60)
+    for service, status in results.items():
+        print(f"   {service}: {status}")
+    
+    return results
+
+
 def main():
-    parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.1')
-    parser.add_argument('--run', action='store_true', help='즉시 실행')
+    parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.2')
+    parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
+    parser.add_argument('--run-all', action='store_true', help='모든 서비스 순차 실행')
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
     parser.add_argument('--no-alert', action='store_true', help='알림 없음')
     parser.add_argument('--validate', action='store_true', help='설정 검증')
@@ -236,6 +321,8 @@ def main():
     # 실행
     if args.run_test:
         run_test_mode()
+    elif args.run_all:
+        run_all_services()
     elif args.run:
         run_immediate(send_alert=not args.no_alert)
     else:

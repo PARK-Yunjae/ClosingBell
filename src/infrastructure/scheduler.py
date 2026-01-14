@@ -25,6 +25,8 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MI
 
 from src.config.settings import settings
 from src.services.data_updater import run_data_update
+from src.services.learner_service import run_daily_learning
+from src.services.nomad_study import run_nomad_study
 
 logger = logging.getLogger(__name__)
 
@@ -259,14 +261,6 @@ class ScreenerScheduler:
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
-        # 16:30 일일 학습 (Phase 2) - v3.1: 학습 비활성화 (가중치 고정)
-        # self.add_job(
-        #     job_id='daily_learning',
-        #     func=run_daily_learning,
-        #     hour=16,
-        #     minute=30,
-        # )
-
         # 16:30 데이터 갱신 (OHLCV 자동 업데이트)
         self.add_job(
             job_id='daily_data_update',
@@ -275,7 +269,31 @@ class ScreenerScheduler:
             minute=30,
         )
         
-        logger.info("기본 스케줄 설정 완료 (스크리닝만, 학습 비활성화)")
+        # v5.2: 17:00 일일 학습 (익일 결과 수집 + 상관관계 분석)
+        self.add_job(
+            job_id='daily_learning',
+            func=run_daily_learning,
+            hour=17,
+            minute=0,
+        )
+        
+        # v5.2: 17:30 유목민 공부 (TOP5 기업 분석)
+        self.add_job(
+            job_id='nomad_study',
+            func=run_nomad_study,
+            hour=17,
+            minute=30,
+        )
+        
+        # v5.2: 17:35 Git 자동 커밋
+        self.add_job(
+            job_id='git_commit',
+            func=run_git_commit,
+            hour=17,
+            minute=35,
+        )
+        
+        logger.info("기본 스케줄 설정 완료 (v5.2: 스크리닝 + 학습 + 공부 + Git)")
     
     def start(self):
         """스케줄러 시작"""
@@ -361,3 +379,91 @@ if __name__ == "__main__":
     
     # 실제 스케줄러 시작은 하지 않음
     print("\n스케줄러 테스트 완료 (실행하지 않음)")
+
+
+# ============================================================
+# Git 자동 커밋 기능
+# ============================================================
+
+def git_auto_commit() -> bool:
+    """Git 자동 커밋 및 푸시
+    
+    Returns:
+        성공 여부
+    """
+    import subprocess
+    import os
+    
+    logger = logging.getLogger(__name__)
+    
+    # 프로젝트 루트 경로
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    try:
+        os.chdir(project_root)
+        
+        # 변경사항 확인
+        status = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, timeout=30
+        )
+        
+        if not status.stdout.strip():
+            logger.info("Git: 변경사항 없음")
+            return False
+        
+        # 커밋 메시지 생성
+        today = date.today().strftime('%Y-%m-%d')
+        commit_msg = f"📊 Daily update {today}"
+        
+        # git add
+        subprocess.run(['git', 'add', '.'], check=True, timeout=30)
+        logger.info("Git: 스테이징 완료")
+        
+        # git commit
+        result = subprocess.run(
+            ['git', 'commit', '-m', commit_msg],
+            capture_output=True, text=True, timeout=30
+        )
+        
+        if result.returncode != 0:
+            logger.warning(f"Git commit 실패: {result.stderr}")
+            return False
+        
+        logger.info(f"Git: 커밋 완료 - {commit_msg}")
+        
+        # git push
+        push_result = subprocess.run(
+            ['git', 'push'],
+            capture_output=True, text=True, timeout=60
+        )
+        
+        if push_result.returncode == 0:
+            logger.info("Git: 푸시 완료")
+            return True
+        else:
+            logger.warning(f"Git push 실패: {push_result.stderr}")
+            # 커밋은 됐으니 True 반환
+            return True
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Git: 타임아웃")
+        return False
+    except Exception as e:
+        logger.error(f"Git 자동 커밋 실패: {e}")
+        return False
+
+
+def run_git_commit():
+    """스케줄러용 Git 커밋 래퍼"""
+    logger = logging.getLogger(__name__)
+    logger.info("=" * 40)
+    logger.info("📤 Git 자동 커밋 시작")
+    logger.info("=" * 40)
+    
+    result = git_auto_commit()
+    
+    if result:
+        logger.info("✅ Git 커밋/푸시 완료")
+    else:
+        logger.info("ℹ️ Git 커밋 스킵 (변경사항 없음 또는 실패)")

@@ -105,3 +105,30 @@ DISCORD_COLOR_ERROR = 15158332
 MSG_NO_CANDIDATES = "적합한 종목이 없습니다."
 MSG_PREVIEW_LABEL = "[프리뷰]"
 MSG_MAIN_LABEL = "[최종]"
+
+# ============================================
+# v5.2 가중치 (그리드서치 결과)
+# ============================================
+# 거래량 > 등락률 > 연속양봉 = CCI = 이격도 > 캔들
+WEIGHT_VOLUME_V52 = 25      # 🔥 최고 중요!
+WEIGHT_CHANGE_V52 = 20      
+WEIGHT_CONSEC_V52 = 15      
+WEIGHT_CCI_V52 = 15         
+WEIGHT_DISTANCE_V52 = 15    
+WEIGHT_CANDLE_V52 = 10      
+WEIGHT_TOTAL_V52 = 100      # 정규화 기준
+
+# v5.2 거래량비 필터
+VOLUME_RATIO_SOFT_MAX = 5.0    # 소프트 감점 시작
+VOLUME_RATIO_HARD_MAX = 10.0   # 하드 필터 (제외)
+
+# v5.2 CCI 페널티
+CCI_PENALTY_START_V52 = 230    # 230+ 페널티 시작 (기존 250)
+
+# v5.2 대형주 보너스
+LARGE_CAP_1T = 10000           # 1조 (억 단위)
+LARGE_CAP_5000 = 5000          
+LARGE_CAP_1000 = 1000          
+LARGE_CAP_BONUS_1T = 5.0       # +5점
+LARGE_CAP_BONUS_5000 = 4.0     # +4점
+LARGE_CAP_BONUS_1000 = 2.0     # +2점

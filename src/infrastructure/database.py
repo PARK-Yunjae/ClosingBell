@@ -144,6 +144,48 @@ CREATE TABLE IF NOT EXISTS trade_journal (
 CREATE INDEX IF NOT EXISTS idx_journal_date ON trade_journal(trade_date);
 CREATE INDEX IF NOT EXISTS idx_journal_stock ON trade_journal(stock_code);
 CREATE INDEX IF NOT EXISTS idx_journal_screening ON trade_journal(screening_item_id);
+
+-- nomad_studies (유목민 공부 기록) v5.2
+CREATE TABLE IF NOT EXISTS nomad_studies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    study_date DATE NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    screen_rank INTEGER NOT NULL,
+    
+    -- 기업 정보
+    market_cap REAL,
+    industry TEXT,
+    main_business TEXT,
+    major_shareholder TEXT,
+    shareholder_ratio REAL,
+    
+    -- 재무 지표
+    per REAL,
+    pbr REAL,
+    roe REAL,
+    debt_ratio REAL,
+    
+    -- 종가매매 지표
+    score_total REAL,
+    volume_ratio REAL,
+    cci REAL,
+    change_rate REAL,
+    
+    -- AI 분석
+    news_summary TEXT,
+    investment_points TEXT,
+    risk_factors TEXT,
+    selection_reason TEXT,
+    
+    -- 메타
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(study_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nomad_date ON nomad_studies(study_date);
+CREATE INDEX IF NOT EXISTS idx_nomad_stock ON nomad_studies(stock_code);
 """
 
 # 초기 가중치 데이터
