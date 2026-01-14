@@ -405,7 +405,7 @@ def git_auto_commit() -> bool:
         # 변경사항 확인
         status = subprocess.run(
             ['git', 'status', '--porcelain'],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding='utf-8', timeout=30 # 👈 수정
         )
         
         if not status.stdout.strip():
@@ -423,7 +423,7 @@ def git_auto_commit() -> bool:
         # git commit
         result = subprocess.run(
             ['git', 'commit', '-m', commit_msg],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding='utf-8', timeout=30 # 👈 수정
         )
         
         if result.returncode != 0:
@@ -435,7 +435,7 @@ def git_auto_commit() -> bool:
         # git push
         push_result = subprocess.run(
             ['git', 'push'],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, encoding='utf-8', timeout=60 # 👈 수정
         )
         
         if push_result.returncode == 0:
