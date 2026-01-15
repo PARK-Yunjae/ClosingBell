@@ -216,6 +216,24 @@ class ScreenerScheduler:
         next_jobs_str = ', '.join(next_jobs) if next_jobs else '없음'
         logger.info(f"💓 Heartbeat: 가동시간 {uptime_str}, 대기 작업: {next_jobs_str}")
     
+    def _auto_shutdown(self):
+        """자동 종료 - 모든 일일 작업 완료 후"""
+        import sys
+        
+        now = datetime.now()
+        uptime = now - self._start_time if self._start_time else timedelta(0)
+        uptime_str = str(uptime).split('.')[0]
+        
+        logger.info("=" * 50)
+        logger.info("🔴 자동 종료 시작")
+        logger.info(f"   종료 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   총 가동시간: {uptime_str}")
+        logger.info("=" * 50)
+        logger.info("✅ 오늘의 모든 작업 완료. 프로그램을 종료합니다.")
+        
+        self.scheduler.shutdown(wait=False)
+        sys.exit(0)
+    
     def _add_heartbeat_job(self):
         """Heartbeat 작업 추가"""
         trigger = IntervalTrigger(
@@ -293,7 +311,16 @@ class ScreenerScheduler:
             minute=35,
         )
         
-        logger.info("기본 스케줄 설정 완료 (v5.2: 스크리닝 + 학습 + 공부 + Git)")
+        # v5.2: 17:40 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        self.add_job(
+            job_id='auto_shutdown',
+            func=self._auto_shutdown,
+            hour=17,
+            minute=40,
+            check_market_day=False,  # 휴장일에도 종료
+        )
+        
+        logger.info("기본 스케줄 설정 완료 (v5.2: 스크리닝 + 학습 + 공부 + Git + 자동종료)")
     
     def start(self):
         """스케줄러 시작"""
