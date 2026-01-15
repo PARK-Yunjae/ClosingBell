@@ -13,11 +13,11 @@
 - D등급 (<55): 시초 전량매도
 
 사용법:
-    .\venv\Scripts\activate
-    python main.py              # 스케줄러 모드
+    python main.py              # 스케줄러 모드 (17:40 자동종료)
     python main.py --run        # 스크리닝 즉시 실행
     python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
     python main.py --run-test   # 테스트 (알림X)
+    python main.py --check 종목코드  # 특정 종목 점수 확인 (예: --check 005930)
     python main.py --validate   # 설정 검증
 """
 
@@ -278,6 +278,93 @@ def run_all_services():
     return results
 
 
+def check_stock(stock_code: str):
+    """특정 종목 점수 확인
+    
+    Args:
+        stock_code: 종목코드 (6자리)
+    """
+    logger = logging.getLogger(__name__)
+    
+    print_banner()
+    print(f"\n🔍 종목 점수 확인: {stock_code}")
+    print("=" * 60)
+    
+    from src.adapters.kis_client import get_kis_client
+    from src.domain.models import StockData
+    from src.domain.score_calculator import ScoreCalculatorV5
+    from src.config.constants import MIN_DAILY_DATA_COUNT
+    
+    kis_client = get_kis_client()
+    calculator = ScoreCalculatorV5()
+    
+    try:
+        # 1. 종목명 조회
+        current_data = kis_client.get_current_price(stock_code)
+        if not current_data:
+            print(f"❌ 종목을 찾을 수 없습니다: {stock_code}")
+            return
+        
+        stock_name = current_data.name if hasattr(current_data, 'name') else stock_code
+        print(f"📌 {stock_name} ({stock_code})")
+        
+        # 2. 일봉 데이터 조회
+        daily_prices = kis_client.get_daily_prices(stock_code, count=MIN_DAILY_DATA_COUNT + 10)
+        
+        if len(daily_prices) < MIN_DAILY_DATA_COUNT:
+            print(f"❌ 데이터 부족: {len(daily_prices)}일치 (최소 {MIN_DAILY_DATA_COUNT}일 필요)")
+            return
+        
+        today = daily_prices[-1]
+        yesterday = daily_prices[-2]
+        change_rate = ((today.close - yesterday.close) / yesterday.close) * 100
+        
+        # 3. 거래대금 계산
+        trading_value = 0.0
+        if today.trading_value > 0:
+            trading_value = today.trading_value / 100_000_000
+        elif current_data and hasattr(current_data, 'trading_value') and current_data.trading_value > 0:
+            trading_value = current_data.trading_value / 100_000_000
+        elif today.volume > 0:
+            trading_value = (today.volume * today.close) / 100_000_000
+        
+        # 4. StockData 생성
+        stock_data = StockData(
+            code=stock_code,
+            name=stock_name,
+            daily_prices=daily_prices,
+            current_price=today.close,
+            trading_value=trading_value,
+        )
+        
+        # 5. 점수 계산
+        scores = calculator.calculate_scores([stock_data])
+        
+        if not scores:
+            print(f"❌ 점수 계산 실패 (하락 종목이거나 조건 미달)")
+            print(f"   현재가: {today.close:,}원 ({change_rate:+.2f}%)")
+            return
+        
+        score = scores[0]
+        score.rank = 1  # 단일 종목이므로 1등
+        
+        # 6. 상세 출력
+        print_score_detail(score, rank=None)
+        
+        # 추가 정보
+        print(f"\n{'─'*60}")
+        print(f"ℹ️ 참고")
+        print(f"   데이터 기간: {daily_prices[0].date} ~ {daily_prices[-1].date}")
+        print(f"   거래대금: {trading_value:,.1f}억원")
+        if change_rate < 0:
+            print(f"   ⚠️ 하락 종목은 종가매매 대상이 아닙니다")
+        
+    except Exception as e:
+        logger.error(f"점수 확인 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.2')
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
@@ -286,6 +373,7 @@ def main():
     parser.add_argument('--no-alert', action='store_true', help='알림 없음')
     parser.add_argument('--validate', action='store_true', help='설정 검증')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
+    parser.add_argument('--check', type=str, metavar='CODE', help='특정 종목 점수 확인 (예: --check 074610)')
     
     args = parser.parse_args()
     
@@ -320,7 +408,9 @@ def main():
         return
     
     # 실행
-    if args.run_test:
+    if args.check:
+        check_stock(args.check)
+    elif args.run_test:
         run_test_mode()
     elif args.run_all:
         run_all_services()
