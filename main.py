@@ -13,6 +13,7 @@
 - D등급 (<55): 시초 전량매도
 
 사용법:
+    .\venv\Scripts\activate
     python main.py              # 스케줄러 모드
     python main.py --run        # 스크리닝 즉시 실행
     python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
