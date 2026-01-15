@@ -1009,6 +1009,127 @@ class KISClient:
         except Exception as e:
             logger.error(f"일별 손익 조회 실패: {e}")
             return []
+    
+    # ========== 지수 조회 API (v5.2 추가) ==========
+    
+    def get_index_price(self, index_code: str) -> Optional[Dict[str, Any]]:
+        """업종 지수 현재가 조회
+        
+        Args:
+            index_code: 지수 코드 (0001: 코스피, 1001: 코스닥)
+            
+        Returns:
+            지수 데이터 dict 또는 None
+        """
+        try:
+            token = self._get_token()
+            
+            # API 엔드포인트: 업종현재지수
+            url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-index-price"
+            
+            headers = {
+                "Content-Type": "application/json; charset=utf-8",
+                "authorization": f"Bearer {token}",
+                "appkey": self.app_key,
+                "appsecret": self.app_secret,
+                "tr_id": "FHPUP02100000",  # 업종현재지수
+                "custtype": "P",
+            }
+            
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "U",  # 업종
+                "FID_INPUT_ISCD": index_code,
+            }
+            
+            self._wait_for_rate_limit()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("rt_cd") != "0":
+                logger.error(f"지수 조회 실패: {data.get('msg1')}")
+                return None
+            
+            output = data.get("output", {})
+            return output
+            
+        except Exception as e:
+            logger.error(f"지수 현재가 조회 실패: {e}")
+            return None
+    
+    def get_index_daily_price(self, index_code: str, count: int = 30) -> List[Dict[str, Any]]:
+        """업종 지수 일봉 조회
+        
+        Args:
+            index_code: 지수 코드 (0001: 코스피, 1001: 코스닥)
+            count: 조회 일수
+            
+        Returns:
+            일봉 데이터 리스트
+        """
+        try:
+            token = self._get_token()
+            
+            # API 엔드포인트: 업종일별지수
+            url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice"
+            
+            headers = {
+                "Content-Type": "application/json; charset=utf-8",
+                "authorization": f"Bearer {token}",
+                "appkey": self.app_key,
+                "appsecret": self.app_secret,
+                "tr_id": "FHKUP03500100",  # 업종일별지수
+                "custtype": "P",
+            }
+            
+            # 날짜 계산
+            from datetime import datetime, timedelta
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=count + 10)).strftime("%Y%m%d")
+            
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "U",
+                "FID_INPUT_ISCD": index_code,
+                "FID_INPUT_DATE_1": start_date,
+                "FID_INPUT_DATE_2": end_date,
+                "FID_PERIOD_DIV_CODE": "D",  # 일봉
+            }
+            
+            self._wait_for_rate_limit()
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("rt_cd") != "0":
+                logger.error(f"지수 일봉 조회 실패: {data.get('msg1')}")
+                return []
+            
+            output2 = data.get("output2", [])
+            
+            result = []
+            for item in output2[:count]:
+                try:
+                    result.append({
+                        "date": item.get("stck_bsop_date", ""),
+                        "close": float(item.get("bstp_nmix_prpr", 0)),
+                        "open": float(item.get("bstp_nmix_oprc", 0)),
+                        "high": float(item.get("bstp_nmix_hgpr", 0)),
+                        "low": float(item.get("bstp_nmix_lwpr", 0)),
+                        "volume": int(item.get("acml_vol", 0)),
+                    })
+                except (ValueError, TypeError) as e:
+                    continue
+            
+            # 날짜순 정렬 (오래된 것 → 최신)
+            result.sort(key=lambda x: x["date"])
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"지수 일봉 조회 실패: {e}")
+            return []
 
 
 # 싱글톤 인스턴스

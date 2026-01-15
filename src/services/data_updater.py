@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # ============================================
 # 설정
 # ============================================
-DATA_DIR = Path(r"C:\Coding\data\adjusted")
+DATA_DIR = Path(r"C:\Coding\data\ohlcv")
 MAPPING_FILE = Path(r"C:\Coding\data\stock_mapping.csv")
 
 API_DELAY = 0.3

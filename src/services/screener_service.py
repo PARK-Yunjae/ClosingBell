@@ -1,8 +1,9 @@
 """
-스크리닝 서비스 v5.1
+스크리닝 서비스 v5.2
 
 책임:
 - 스크리닝 플로우 제어
+- 시장 상태 체크 (지수 MA20, 급락 감지) ← v5.2 추가
 - 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
 - 최소한의 하드필터 (데이터부족, 하락종목만 제외)
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
@@ -31,24 +32,34 @@ from src.infrastructure.repository import (
 )
 from src.infrastructure.database import init_database
 
+# v5.2: 지수 모니터링
+from src.data.index_monitor import (
+    get_index_monitor,
+    IndexMonitor,
+    MarketStatus,
+    MarketMode,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class ScreenerService:
-    """스크리닝 서비스 v5.1"""
+    """스크리닝 서비스 v5.2"""
     
     def __init__(
         self,
         kis_client: Optional[KISClient] = None,
         discord_notifier: Optional[DiscordNotifier] = None,
         screening_repo: Optional[ScreeningRepository] = None,
+        index_monitor: Optional[IndexMonitor] = None,
     ):
         self.kis_client = kis_client or get_kis_client()
         self.discord_notifier = discord_notifier or get_discord_notifier()
         self.screening_repo = screening_repo or get_screening_repository()
+        self.index_monitor = index_monitor or get_index_monitor(self.kis_client)
         self.calculator = ScoreCalculatorV5()
         
-        logger.info("ScreenerService v5.1 초기화")
+        logger.info("ScreenerService v5.2 초기화 (지수 모니터링 포함)")
     
     def run_screening(
         self,
@@ -64,11 +75,20 @@ class ScreenerService:
         logger.info(f"스크리닝 시작: {screen_date} {screen_time}")
         
         try:
+            # 0. 시장 상태 체크 (v5.2)
+            market_status = self._check_market_status()
+            logger.info(f"시장 모드: {market_status.mode.value}")
+            
+            # 매매 중지 상태여도 스크리닝은 계속 (참고용)
+            if market_status.mode == MarketMode.HALT:
+                logger.warning(f"⚠️ 매매 중지 상태이나 스크리닝은 계속: {market_status.halt_reason}")
+            
             # 1. 유니버스 조회
             stocks = self._get_universe()
             if not stocks:
                 return self._empty_result(screen_date, screen_time, start_time, 
-                                         is_preview, "유니버스 비어있음")
+                                         is_preview, "유니버스 비어있음",
+                                         market_status=market_status)
             
             logger.info(f"유니버스: {len(stocks)}개")
             
@@ -76,7 +96,8 @@ class ScreenerService:
             stock_data_list = self._collect_data(stocks)
             if not stock_data_list:
                 return self._empty_result(screen_date, screen_time, start_time,
-                                         is_preview, "수집된 종목 없음")
+                                         is_preview, "수집된 종목 없음",
+                                         market_status=market_status)
             
             logger.info(f"데이터 수집: {len(stock_data_list)}개")
             
@@ -96,10 +117,11 @@ class ScreenerService:
                 "status": "SUCCESS",
                 "is_preview": is_preview,
                 "error_message": None,
+                "market_status": market_status,  # v5.2
             }
             
-            # 4. DB 저장
-            if save_to_db and not is_preview:
+            # 4. DB 저장 (매매 중지 상태가 아닐 때만)
+            if save_to_db and not is_preview and market_status.mode != MarketMode.HALT:
                 self._save_result(result)
             
             # 5. 알림 발송
@@ -107,7 +129,7 @@ class ScreenerService:
                 self._send_alert(result, is_preview)
             
             # 6. 콘솔 출력
-            self._print_results(top_n)
+            self._print_results(top_n, market_status)
             
             logger.info(f"스크리닝 완료: {execution_time:.1f}초")
             return result
@@ -125,6 +147,47 @@ class ScreenerService:
             
             return self._empty_result(screen_date, screen_time, start_time,
                                      is_preview, str(e))
+    
+    def _check_market_status(self) -> MarketStatus:
+        """시장 상태 체크 (v5.2)"""
+        try:
+            status = self.index_monitor.get_market_status()
+            
+            # 로그 출력
+            if status.kospi:
+                k = status.kospi
+                logger.info(
+                    f"코스피: {k.current:,.2f} (MA20 대비 {k.distance_from_ma20:+.2f}%, "
+                    f"{'위' if k.is_above_ma20 else '아래'})"
+                )
+            
+            if status.mode == MarketMode.CONSERVATIVE:
+                logger.warning("보수적 모드: 매매 기준 상향")
+            
+            return status
+            
+        except Exception as e:
+            logger.error(f"시장 상태 체크 실패: {e}")
+            # 실패 시 보수적으로 처리
+            return MarketStatus(
+                mode=MarketMode.CONSERVATIVE,
+                kospi=None,
+                kosdaq=None,
+                halt_reason=f"시장 상태 체크 실패: {e}",
+            )
+    
+    def _send_halt_alert(self, market_status: MarketStatus):
+        """매매 중지 알림 발송"""
+        try:
+            embed = {
+                "title": "🔴 종가매매 매매중지",
+                "description": self.index_monitor.format_market_status(market_status),
+                "color": 15158332,  # 빨간색
+                "footer": {"text": f"⏱️ {date.today().strftime('%Y-%m-%d')}"},
+            }
+            self.discord_notifier.send_embed(embed)
+        except Exception as e:
+            logger.error(f"매매중지 알림 실패: {e}")
     
     def _get_universe(self) -> List:
         """유니버스 조회"""
@@ -230,7 +293,7 @@ class ScreenerService:
         return stock_data_list
     
     def _empty_result(self, screen_date, screen_time, start_time, 
-                      is_preview, error_msg) -> Dict:
+                      is_preview, error_msg, market_status=None) -> Dict:
         """빈 결과"""
         return {
             "screen_date": screen_date,
@@ -242,6 +305,7 @@ class ScreenerService:
             "status": "FAILED",
             "is_preview": is_preview,
             "error_message": error_msg,
+            "market_status": market_status,  # v5.2
         }
     
     def _save_result(self, result: Dict):
@@ -289,16 +353,52 @@ class ScreenerService:
             logger.error(f"DB 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
-        """알림 발송"""
+        """알림 발송 (v5.2: 시장 상황 포함)"""
         try:
             top_n = result["top_n"]
+            market_status = result.get("market_status")
             
             if not top_n:
                 self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
                 return
             
-            title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
+            # v5.2: 매매 중지 시 타이틀 변경
+            if market_status and market_status.mode == MarketMode.HALT:
+                title = "🔴 [매매중지] 종가매매 TOP5 (참고용)"
+            elif is_preview:
+                title = "[프리뷰] 종가매매 TOP5"
+            else:
+                title = "🔔 종가매매 TOP5"
+            
             embed = format_discord_embed(top_n, title=title)
+            
+            # v5.2: 시장 상황 추가
+            if market_status:
+                market_info = self.index_monitor.format_market_status(market_status)
+                
+                # embed에 시장 상황 필드 추가 (맨 앞에)
+                market_field = {
+                    "name": "🌏 시장 상황",
+                    "value": market_info,
+                    "inline": False,
+                }
+                
+                if "fields" in embed:
+                    embed["fields"].insert(0, market_field)
+                else:
+                    embed["fields"] = [market_field]
+                
+                # 모드별 설명 추가
+                if market_status.mode == MarketMode.HALT:
+                    if "description" in embed:
+                        embed["description"] += "\n\n🚨 **매매 중지**: 아래 종목들은 참고용입니다. 실제 매수는 권장하지 않습니다."
+                    # 색상을 빨간색으로 변경
+                    embed["color"] = 15158332  # 빨간색
+                elif market_status.mode == MarketMode.CONSERVATIVE:
+                    if "description" in embed:
+                        embed["description"] += "\n⚠️ **보수적 모드**: 매매 기준 상향 (점수≥75, 신뢰도≥85%)"
+                    # 색상을 노란색으로 변경
+                    embed["color"] = 16776960  # 노란색
             
             success = self.discord_notifier.send_embed(embed)
             if success:
@@ -308,11 +408,18 @@ class ScreenerService:
         except Exception as e:
             logger.error(f"알림 에러: {e}")
     
-    def _print_results(self, top_n: List[StockScoreV5]):
-        """콘솔 출력"""
+    def _print_results(self, top_n: List[StockScoreV5], market_status: Optional[MarketStatus] = None):
+        """콘솔 출력 (v5.2: 시장 상황 포함)"""
         print("\n" + "=" * 60)
-        print("🔔 종가매매 TOP5 (v5.1)")
+        print("🔔 종가매매 TOP5 (v5.2)")
         print("=" * 60)
+        
+        # v5.2: 시장 상황 출력
+        if market_status:
+            print("\n🌏 시장 상황")
+            print("-" * 40)
+            print(self.index_monitor.format_market_status(market_status))
+            print("-" * 40)
         
         if not top_n:
             print("적합한 종목 없음")
