@@ -12,11 +12,15 @@ ClosingBell 대시보드 v5.3
 
 import streamlit as st
 import sys
+import os
 from pathlib import Path
 from datetime import date, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# Streamlit Cloud 모드 (API 키 불필요)
+os.environ["DASHBOARD_ONLY"] = "true"
 
 # 프로젝트 루트 추가
 project_root = Path(__file__).parent.parent

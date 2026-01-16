@@ -30,6 +30,9 @@ class KISSettings:
     hts_id: Optional[str] = None
     
     def __post_init__(self):
+        # Streamlit Cloud 등 대시보드 전용 모드에서는 API 키 불필요
+        if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
+            return
         if not self.app_key or not self.app_secret:
             raise ValueError("KIS_APP_KEY와 KIS_APP_SECRET은 필수입니다.")
 
