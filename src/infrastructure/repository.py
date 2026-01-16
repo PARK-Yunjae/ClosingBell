@@ -241,6 +241,35 @@ class ScreeningRepository:
         if not screening:
             return []
         return self.get_screening_items(screening['id'])
+    
+    def get_screening_items_with_results(self, screening_id: int) -> List[Dict]:
+        """스크리닝 종목 + 익일 결과 조인 조회
+        
+        Args:
+            screening_id: 스크리닝 ID
+            
+        Returns:
+            종목 리스트 (익일 결과 포함)
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT 
+                si.*,
+                ndr.gap_rate,
+                ndr.day_change_rate,
+                ndr.high_change_rate,
+                ndr.next_open,
+                ndr.next_high,
+                ndr.next_low,
+                ndr.next_close
+            FROM screening_items si
+            LEFT JOIN next_day_results ndr ON si.id = ndr.screening_item_id
+            WHERE si.screening_id = ? AND si.is_top3 = 1
+            ORDER BY si.rank
+            """,
+            (screening_id,)
+        )
+        return [dict(row) for row in rows]
 
 
 class NextDayResultRepository:
@@ -667,25 +696,55 @@ class Repository:
         )
         logger.debug(f"익일 결과 저장: {stock_code}")
     
-    def get_next_day_results(self, days: int = 30) -> List[Dict]:
-        """최근 N일간 익일 결과 조회"""
-        rows = self.db.fetch_all(
-            """
-            SELECT 
-                ndr.*,
-                si.stock_code,
-                si.stock_name,
-                si.rank as screen_rank,
-                si.score_total,
-                s.screen_date
-            FROM next_day_results ndr
-            JOIN screening_items si ON ndr.screening_item_id = si.id
-            JOIN screenings s ON si.screening_id = s.id
-            WHERE s.screen_date >= DATE('now', ?)
-            ORDER BY s.screen_date DESC
-            """,
-            (f'-{days} days',)
-        )
+    def get_next_day_results(
+        self, 
+        start_date: date = None, 
+        end_date: date = None,
+        days: int = 30
+    ) -> List[Dict]:
+        """익일 결과 조회
+        
+        Args:
+            start_date: 시작일 (None이면 days 사용)
+            end_date: 종료일 (None이면 오늘)
+            days: 조회 기간 (start_date가 없을 때 사용)
+        """
+        if start_date and end_date:
+            rows = self.db.fetch_all(
+                """
+                SELECT 
+                    ndr.*,
+                    si.stock_code,
+                    si.stock_name,
+                    si.rank as screen_rank,
+                    si.score_total,
+                    s.screen_date
+                FROM next_day_results ndr
+                JOIN screening_items si ON ndr.screening_item_id = si.id
+                JOIN screenings s ON si.screening_id = s.id
+                WHERE s.screen_date >= ? AND s.screen_date <= ?
+                ORDER BY s.screen_date DESC
+                """,
+                (start_date.isoformat(), end_date.isoformat())
+            )
+        else:
+            rows = self.db.fetch_all(
+                """
+                SELECT 
+                    ndr.*,
+                    si.stock_code,
+                    si.stock_name,
+                    si.rank as screen_rank,
+                    si.score_total,
+                    s.screen_date
+                FROM next_day_results ndr
+                JOIN screening_items si ON ndr.screening_item_id = si.id
+                JOIN screenings s ON si.screening_id = s.id
+                WHERE s.screen_date >= DATE('now', ?)
+                ORDER BY s.screen_date DESC
+                """,
+                (f'-{days} days',)
+            )
         return [dict(row) for row in rows]
     
     def get_screening_with_next_day(self, days: int = 30) -> List[Dict]:
@@ -725,6 +784,81 @@ class Repository:
             return None
         
         return {row['indicator']: row['weight'] for row in rows}
+    
+    def get_k_signal_results(self, days: int = 30) -> List[Dict]:
+        """K값 시그널 익일 결과 조회
+        
+        Args:
+            days: 조회 기간
+            
+        Returns:
+            시그널 + 익일 결과 리스트
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT 
+                ks.*,
+                kr.next_open,
+                kr.next_high,
+                kr.next_low,
+                kr.next_close,
+                kr.profit_pct,
+                kr.is_win,
+                kr.max_profit_pct,
+                kr.max_loss_pct,
+                (kr.next_open - ks.current_price) * 100.0 / ks.current_price as gap_rate,
+                (kr.next_high - ks.current_price) * 100.0 / ks.current_price as high_change_rate
+            FROM k_signals ks
+            JOIN k_signal_results kr ON ks.id = kr.k_signal_id
+            WHERE ks.signal_date >= DATE('now', ?)
+            ORDER BY ks.signal_date DESC
+            """,
+            (f'-{days} days',)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_k_strategy_config(self) -> Dict[str, float]:
+        """K값 전략 파라미터 조회"""
+        rows = self.db.fetch_all(
+            "SELECT param_name, param_value FROM k_strategy_config WHERE is_active = 1"
+        )
+        return {row['param_name']: row['param_value'] for row in rows}
+    
+    def update_k_strategy_param(
+        self, 
+        param_name: str, 
+        new_value: float, 
+        reason: str = ""
+    ):
+        """K값 전략 파라미터 업데이트"""
+        # 현재 값 조회
+        current = self.db.fetch_one(
+            "SELECT param_value FROM k_strategy_config WHERE param_name = ?",
+            (param_name,)
+        )
+        
+        if not current:
+            logger.warning(f"알 수 없는 파라미터: {param_name}")
+            return
+        
+        old_value = current['param_value']
+        
+        # 업데이트
+        self.db.execute(
+            "UPDATE k_strategy_config SET param_value = ?, updated_at = CURRENT_TIMESTAMP WHERE param_name = ?",
+            (new_value, param_name)
+        )
+        
+        # 이력 저장
+        self.db.execute(
+            """
+            INSERT INTO k_strategy_history (param_name, old_value, new_value, change_reason)
+            VALUES (?, ?, ?, ?)
+            """,
+            (param_name, old_value, new_value, reason)
+        )
+        
+        logger.info(f"K값 파라미터 업데이트: {param_name} {old_value} → {new_value}")
     
     def update_weights(self, weights: Dict[str, float]):
         """전체 가중치 업데이트"""
@@ -766,6 +900,357 @@ class Repository:
         logger.info(f"가중치 이력 저장 완료")
 
 
+# ============================================================
+# K값 시그널 Repository
+# ============================================================
+
+class KSignalRepository:
+    """K값 돌파 시그널 저장소"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def save_signal(self, signal: dict) -> int:
+        """K값 시그널 저장
+        
+        Args:
+            signal: 시그널 딕셔너리
+            
+        Returns:
+            생성된 signal ID
+        """
+        signal_date = signal.get('signal_date', date.today().isoformat())
+        if isinstance(signal_date, date):
+            signal_date = signal_date.isoformat()
+        
+        # 기존 데이터 확인 (같은 날짜 + 종목)
+        existing = self.db.fetch_one(
+            "SELECT id FROM k_signals WHERE signal_date = ? AND stock_code = ?",
+            (signal_date, signal['stock_code'])
+        )
+        
+        if existing:
+            # 업데이트
+            signal_id = existing['id']
+            self.db.execute(
+                """
+                UPDATE k_signals SET
+                    signal_time = ?,
+                    stock_name = ?,
+                    current_price = ?,
+                    open_price = ?,
+                    breakout_price = ?,
+                    prev_high = ?,
+                    prev_low = ?,
+                    prev_close = ?,
+                    k_value = ?,
+                    range_value = ?,
+                    prev_change_pct = ?,
+                    volume_ratio = ?,
+                    trading_value = ?,
+                    stop_loss_pct = ?,
+                    take_profit_pct = ?,
+                    stop_loss_price = ?,
+                    take_profit_price = ?,
+                    index_change = ?,
+                    index_above_ma5 = ?,
+                    score = ?,
+                    confidence = ?,
+                    rank = ?
+                WHERE id = ?
+                """,
+                (
+                    signal.get('signal_time', '15:00'),
+                    signal.get('stock_name', ''),
+                    signal.get('current_price', 0),
+                    signal.get('open_price', 0),
+                    signal.get('breakout_price', 0),
+                    signal.get('prev_high', 0),
+                    signal.get('prev_low', 0),
+                    signal.get('prev_close', 0),
+                    signal.get('k_value', 0.3),
+                    signal.get('range_value', 0),
+                    signal.get('prev_change_pct', 0),
+                    signal.get('volume_ratio', 0),
+                    signal.get('trading_value', 0),
+                    signal.get('stop_loss_pct', -2.0),
+                    signal.get('take_profit_pct', 5.0),
+                    signal.get('stop_loss_price', 0),
+                    signal.get('take_profit_price', 0),
+                    signal.get('index_change', 0),
+                    1 if signal.get('index_above_ma5', True) else 0,
+                    signal.get('score', 0),
+                    signal.get('confidence', 0),
+                    signal.get('rank', 0),
+                    signal_id,
+                )
+            )
+        else:
+            # 새로 생성
+            cursor = self.db.execute(
+                """
+                INSERT INTO k_signals
+                (signal_date, signal_time, stock_code, stock_name,
+                 current_price, open_price, breakout_price, prev_high, prev_low, prev_close,
+                 k_value, range_value, prev_change_pct, volume_ratio, trading_value,
+                 stop_loss_pct, take_profit_pct, stop_loss_price, take_profit_price,
+                 index_change, index_above_ma5, score, confidence, rank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_date,
+                    signal.get('signal_time', '15:00'),
+                    signal['stock_code'],
+                    signal.get('stock_name', ''),
+                    signal.get('current_price', 0),
+                    signal.get('open_price', 0),
+                    signal.get('breakout_price', 0),
+                    signal.get('prev_high', 0),
+                    signal.get('prev_low', 0),
+                    signal.get('prev_close', 0),
+                    signal.get('k_value', 0.3),
+                    signal.get('range_value', 0),
+                    signal.get('prev_change_pct', 0),
+                    signal.get('volume_ratio', 0),
+                    signal.get('trading_value', 0),
+                    signal.get('stop_loss_pct', -2.0),
+                    signal.get('take_profit_pct', 5.0),
+                    signal.get('stop_loss_price', 0),
+                    signal.get('take_profit_price', 0),
+                    signal.get('index_change', 0),
+                    1 if signal.get('index_above_ma5', True) else 0,
+                    signal.get('score', 0),
+                    signal.get('confidence', 0),
+                    signal.get('rank', 0),
+                )
+            )
+            signal_id = cursor.lastrowid
+        
+        return signal_id
+    
+    def save_signals(self, signals: List[dict]) -> int:
+        """여러 시그널 저장
+        
+        Args:
+            signals: 시그널 리스트
+            
+        Returns:
+            저장된 개수
+        """
+        saved = 0
+        for i, sig in enumerate(signals):
+            try:
+                sig['rank'] = i + 1
+                self.save_signal(sig)
+                saved += 1
+            except Exception as e:
+                logger.error(f"K시그널 저장 실패 {sig.get('stock_code', '?')}: {e}")
+        
+        logger.info(f"K값 시그널 {saved}개 저장")
+        return saved
+    
+    def get_signals_without_result(self, signal_date: date = None) -> List[dict]:
+        """익일 결과 없는 시그널 조회
+        
+        Args:
+            signal_date: 시그널 날짜 (기본: 어제)
+            
+        Returns:
+            시그널 리스트
+        """
+        if signal_date is None:
+            from datetime import timedelta
+            signal_date = date.today() - timedelta(days=1)
+        
+        rows = self.db.fetch_all(
+            """
+            SELECT s.* FROM k_signals s
+            LEFT JOIN k_signal_results r ON s.id = r.k_signal_id
+            WHERE s.signal_date = ? AND r.id IS NULL
+            ORDER BY s.rank
+            """,
+            (signal_date.isoformat(),)
+        )
+        
+        return [dict(row) for row in rows]
+    
+    def get_signals_by_date(self, signal_date: date) -> List[dict]:
+        """날짜별 시그널 조회"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM k_signals WHERE signal_date = ? ORDER BY rank",
+            (signal_date.isoformat(),)
+        )
+        return [dict(row) for row in rows]
+    
+    def save_result(self, k_signal_id: int, result: dict) -> int:
+        """익일 결과 저장
+        
+        Args:
+            k_signal_id: 시그널 ID
+            result: 결과 딕셔너리
+            
+        Returns:
+            결과 ID
+        """
+        # 기존 결과 확인
+        existing = self.db.fetch_one(
+            "SELECT id FROM k_signal_results WHERE k_signal_id = ?",
+            (k_signal_id,)
+        )
+        
+        if existing:
+            return existing['id']
+        
+        cursor = self.db.execute(
+            """
+            INSERT INTO k_signal_results
+            (k_signal_id, next_date, next_open, next_high, next_low, next_close,
+             entry_price, exit_price, profit_pct, hit_stop_loss, hit_take_profit,
+             is_win, max_profit_pct, max_loss_pct)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                k_signal_id,
+                result['next_date'],
+                result['next_open'],
+                result['next_high'],
+                result['next_low'],
+                result['next_close'],
+                result['entry_price'],
+                result['exit_price'],
+                result['profit_pct'],
+                1 if result.get('hit_stop_loss') else 0,
+                1 if result.get('hit_take_profit') else 0,
+                1 if result['profit_pct'] > 0 else 0,
+                result.get('max_profit_pct', 0),
+                result.get('max_loss_pct', 0),
+            )
+        )
+        return cursor.lastrowid
+    
+    def get_results_with_signals(self, days: int = 30) -> List[dict]:
+        """시그널 + 결과 조인 조회 (분석용)
+        
+        Args:
+            days: 조회 기간
+            
+        Returns:
+            시그널+결과 리스트
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT s.*, r.next_date, r.next_open, r.next_high, r.next_low, r.next_close,
+                   r.entry_price, r.exit_price, r.profit_pct, r.hit_stop_loss, 
+                   r.hit_take_profit, r.is_win, r.max_profit_pct, r.max_loss_pct
+            FROM k_signals s
+            JOIN k_signal_results r ON s.id = r.k_signal_id
+            WHERE s.signal_date >= date('now', ?)
+            ORDER BY s.signal_date DESC, s.rank
+            """,
+            (f'-{days} days',)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_performance_summary(self, days: int = 30) -> dict:
+        """K값 전략 성과 요약
+        
+        Args:
+            days: 분석 기간
+            
+        Returns:
+            성과 통계
+        """
+        data = self.get_results_with_signals(days)
+        
+        if not data:
+            return {}
+        
+        wins = sum(1 for d in data if d['is_win'])
+        profits = [d['profit_pct'] for d in data]
+        
+        return {
+            'total_signals': len(data),
+            'wins': wins,
+            'losses': len(data) - wins,
+            'win_rate': (wins / len(data)) * 100 if data else 0,
+            'avg_profit': sum(profits) / len(profits) if profits else 0,
+            'max_profit': max(profits) if profits else 0,
+            'max_loss': min(profits) if profits else 0,
+            'total_profit': sum(profits),
+        }
+
+
+class KStrategyConfigRepository:
+    """K값 전략 설정 저장소"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def get_config(self) -> dict:
+        """현재 설정 조회"""
+        rows = self.db.fetch_all(
+            "SELECT param_name, param_value FROM k_strategy_config WHERE is_active = 1"
+        )
+        return {row['param_name']: row['param_value'] for row in rows}
+    
+    def update_config(self, param_name: str, new_value: float, reason: str = None,
+                     win_rate_before: float = None, win_rate_after: float = None,
+                     sample_size: int = None):
+        """설정 업데이트
+        
+        Args:
+            param_name: 파라미터 이름
+            new_value: 새 값
+            reason: 변경 사유
+        """
+        # 현재 값 조회
+        current = self.db.fetch_one(
+            "SELECT param_value, min_value, max_value FROM k_strategy_config WHERE param_name = ?",
+            (param_name,)
+        )
+        
+        if not current:
+            logger.warning(f"존재하지 않는 파라미터: {param_name}")
+            return
+        
+        old_value = current['param_value']
+        min_val = current['min_value'] or float('-inf')
+        max_val = current['max_value'] or float('inf')
+        
+        # 범위 제한
+        new_value = max(min_val, min(max_val, new_value))
+        
+        # 업데이트
+        self.db.execute(
+            "UPDATE k_strategy_config SET param_value = ?, updated_at = CURRENT_TIMESTAMP WHERE param_name = ?",
+            (new_value, param_name)
+        )
+        
+        # 이력 저장
+        self.db.execute(
+            """
+            INSERT INTO k_strategy_history
+            (param_name, old_value, new_value, change_reason, win_rate_before, win_rate_after, sample_size)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (param_name, old_value, new_value, reason, win_rate_before, win_rate_after, sample_size)
+        )
+        
+        logger.info(f"K전략 설정 업데이트: {param_name} {old_value} → {new_value}")
+    
+    def get_history(self, days: int = 30) -> List[dict]:
+        """설정 변경 이력 조회"""
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM k_strategy_history
+            WHERE changed_at >= date('now', ?)
+            ORDER BY changed_at DESC
+            """,
+            (f'-{days} days',)
+        )
+        return [dict(row) for row in rows]
+
+
 # 싱글톤 인스턴스
 _repository: Optional[Repository] = None
 
@@ -790,6 +1275,12 @@ def get_next_day_repository() -> NextDayResultRepository:
 
 def get_trade_journal_repository() -> TradeJournalRepository:
     return TradeJournalRepository()
+
+def get_k_signal_repository() -> KSignalRepository:
+    return KSignalRepository()
+
+def get_k_strategy_config_repository() -> KStrategyConfigRepository:
+    return KStrategyConfigRepository()
 
 
 if __name__ == "__main__":

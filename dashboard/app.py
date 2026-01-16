@@ -1,261 +1,269 @@
 """
-종가매매 스크리너 대시보드
+ClosingBell 대시보드 v5.3
+==========================
 
-Streamlit 멀티페이지 앱
+📊 종가매매 TOP5 & K값 TOP3 성과 추적
 
-실행:
-    streamlit run dashboard/app.py
+기능:
+- 전체 승률 요약
+- 누적 수익률 그래프
+- 종가매매 vs K값 비교
 """
 
 import streamlit as st
 import sys
 from pathlib import Path
 from datetime import date, timedelta
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-# 프로젝트 루트를 path에 추가
+# 프로젝트 루트 추가
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-
-# 페이지 설정
 st.set_page_config(
-    page_title="ClosingBell 대시보드",
+    page_title="ClosingBell Dashboard",
     page_icon="🔔",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-
-# CSS 스타일
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] {
-        background-color: #1e1e2f;
-    }
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: white;
-    }
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        text-align: center;
-        padding: 1rem;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        text-align: center;
-    }
-    .top3-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 10px;
-        padding: 15px;
-        color: white;
-        margin-bottom: 10px;
-    }
-    .positive {
-        color: #e74c3c;
-    }
-    .negative {
-        color: #3498db;
-    }
-</style>
-""", unsafe_allow_html=True)
+# ==================== 헤더 ====================
+st.title("🔔 ClosingBell 대시보드")
+st.markdown("**종가매매 TOP5 & K값 TOP3 성과 추적** | _차트가 모든 것을 반영한다_ 📈")
+st.markdown("---")
 
 
-def main():
-    """메인 페이지"""
-    
-    # 헤더
-    st.markdown('<h1 class="main-header">🔔 ClosingBell 대시보드</h1>', unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # 데이터 로드
+# ==================== 데이터 로드 ====================
+@st.cache_data(ttl=300)
+def load_all_results(days=60):
+    """익일 결과 데이터 로드"""
     try:
-        from dashboard.utils.data_loader import (
-            load_today_screening,
-            load_screening_items,
-            load_hit_rate,
-            load_recent_screenings,
-            load_weights,
-            load_daily_performance,
-        )
-        from dashboard.utils.calculations import format_percent, get_result_emoji
+        from src.infrastructure.repository import get_repository
+        repo = get_repository()
         
-        # 오늘의 스크리닝 결과
-        today_screening = load_today_screening()
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
         
-        # ==================== 오늘의 요약 ====================
-        st.subheader("📊 오늘의 요약")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if today_screening:
-                st.metric(
-                    label="스크리닝 상태",
-                    value="✅ 완료",
-                    delta=f"{today_screening['total_count']}개 분석"
-                )
-            else:
-                st.metric(
-                    label="스크리닝 상태",
-                    value="⏳ 대기",
-                    delta="아직 실행 전"
-                )
-        
-        with col2:
-            hit_rate = load_hit_rate(days=30, top3_only=True)
-            st.metric(
-                label="30일 승률 (TOP3)",
-                value=f"{hit_rate['hit_rate']:.1f}%",
-                delta=f"{hit_rate['hit_count']}/{hit_rate['total_count']}"
-            )
-        
-        with col3:
-            st.metric(
-                label="평균 갭 수익률",
-                value=format_percent(hit_rate.get('avg_gap_rate', 0)),
-            )
-        
-        with col4:
-            recent = load_recent_screenings(days=30)
-            st.metric(
-                label="최근 30일 스크리닝",
-                value=f"{len(recent)}회",
-            )
-        
-        st.markdown("---")
-        
-        # ==================== 오늘의 TOP3 ====================
-        col_left, col_right = st.columns([2, 1])
-        
-        with col_left:
-            st.subheader("🏆 오늘의 TOP3")
-            
-            if today_screening:
-                top3_items = load_screening_items(today_screening['id'], top3_only=True)
-                
-                if top3_items:
-                    for i, item in enumerate(top3_items, 1):
-                        medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
-                        
-                        with st.container():
-                            cols = st.columns([0.5, 2, 1.5, 1, 1])
-                            cols[0].markdown(f"### {medal}")
-                            cols[1].markdown(f"**{item['stock_name']}** ({item['stock_code']})")
-                            cols[2].markdown(f"점수: **{item['score_total']:.1f}**점")
-                            
-                            change_class = "positive" if item['change_rate'] > 0 else "negative"
-                            cols[3].markdown(f"<span class='{change_class}'>{format_percent(item['change_rate'])}</span>", unsafe_allow_html=True)
-                            cols[4].markdown(f"CCI: {item['raw_cci']:.0f}" if item['raw_cci'] else "")
-                else:
-                    st.info("선정된 종목이 없습니다.")
-            else:
-                st.info("오늘 스크리닝이 아직 실행되지 않았습니다. (15:00 예정)")
-        
-        with col_right:
-            st.subheader("📅 스케줄")
-            st.markdown("""
-            | 시간 | 작업 |
-            |------|------|
-            | 12:30 | 프리뷰 알림 |
-            | 15:00 | 최종 TOP3 |
-            | 16:30 | 익일 결과 수집 |
-            """)
-            
-            st.subheader("⚖️ 현재 가중치")
-            weights = load_weights()
-            for name, weight in weights.items():
-                bar_length = int(weight * 20)
-                st.markdown(f"`{name}`: {'█' * bar_length}{'░' * (50 - bar_length)} **{weight:.2f}**")
-        
-        st.markdown("---")
-        
-        # ==================== 전일 TOP3 성과 ====================
-        st.subheader("📈 전일 TOP3 성과")
-        
-        yesterday = date.today() - timedelta(days=1)
-        from dashboard.utils.data_loader import load_screening_items_by_date
-        
-        # DB에서 전일 스크리닝 데이터와 익일 결과 조회
-        from src.infrastructure.database import get_database
-        db = get_database()
-        
-        yesterday_results = db.fetch_all(
-            """
-            SELECT 
-                si.stock_name, si.stock_code, si.rank, si.score_total,
-                ndr.gap_rate, ndr.is_open_up
-            FROM screenings s
-            JOIN screening_items si ON s.id = si.screening_id AND si.is_top3 = 1
-            LEFT JOIN next_day_results ndr ON si.id = ndr.screening_item_id
-            WHERE s.screen_date = ?
-            ORDER BY si.rank
-            """,
-            (yesterday.isoformat(),)
-        )
-        
-        if yesterday_results:
-            cols = st.columns(3)
-            for i, row in enumerate(yesterday_results[:3]):
-                with cols[i]:
-                    gap = row['gap_rate'] if row['gap_rate'] else None
-                    emoji = get_result_emoji(row['is_open_up']) if row['is_open_up'] is not None else "⏳"
-                    
-                    st.markdown(f"""
-                    <div class="metric-card">
-                        <h4>{["🥇", "🥈", "🥉"][i]} {row['stock_name']}</h4>
-                        <p style="font-size: 24px; font-weight: bold;">
-                            {format_percent(gap) if gap else "대기중"}
-                        </p>
-                        <p>{emoji}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            st.info("전일 스크리닝 결과가 없습니다.")
-        
-        st.markdown("---")
-        
-        # ==================== 빠른 링크 ====================
-        st.subheader("🔗 빠른 링크")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("📋 스크리닝 기록", use_container_width=True):
-                st.switch_page("pages/01_📊_Overview.py")
-        
-        with col2:
-            if st.button("📈 성과 분석", use_container_width=True):
-                st.switch_page("pages/03_📈_Analysis.py")
-        
-        with col3:
-            if st.button("⚖️ 가중치 관리", use_container_width=True):
-                st.switch_page("pages/02_🔍_Screening.py")
-        
-        with col4:
-            if st.button("🔍 종목 검색", use_container_width=True):
-                st.switch_page("pages/04_📝_Journal.py")
-        
+        results = repo.get_next_day_results(start_date=start_date, end_date=end_date)
+        return results
     except Exception as e:
-        st.error(f"데이터 로드 오류: {e}")
-        st.info("DB가 초기화되지 않았을 수 있습니다. 스크리닝을 먼저 실행해주세요.")
+        st.error(f"데이터 로드 실패: {e}")
+        return []
+
+
+# ==================== 통계 함수 ====================
+def calc_stats(results):
+    """승률 통계 계산"""
+    if not results:
+        return {'total': 0, 'wins': 0, 'win_rate': 0, 'avg_gap': 0, 'avg_high': 0}
     
-    # 푸터
+    total = len(results)
+    wins = sum(1 for r in results if (r.get('gap_rate') or 0) > 0)
+    avg_gap = sum(r.get('gap_rate') or 0 for r in results) / total
+    avg_high = sum(r.get('high_change_rate') or 0 for r in results) / total
+    
+    return {
+        'total': total,
+        'wins': wins,
+        'win_rate': (wins / total * 100) if total > 0 else 0,
+        'avg_gap': avg_gap,
+        'avg_high': avg_high,
+    }
+
+
+def create_cumulative_chart(results, title):
+    """누적 수익률 차트"""
+    if not results:
+        return None
+    
+    df = pd.DataFrame(results)
+    df['screen_date'] = pd.to_datetime(df['screen_date'])
+    
+    # 날짜별 평균 수익률
+    daily = df.groupby('screen_date')['gap_rate'].mean().reset_index()
+    daily = daily.sort_values('screen_date')
+    daily['gap_rate'] = daily['gap_rate'].fillna(0)
+    
+    # 누적 수익률
+    daily['cumulative'] = (1 + daily['gap_rate'] / 100).cumprod() - 1
+    daily['cumulative_pct'] = daily['cumulative'] * 100
+    
+    # 승패 색상
+    colors = ['#4CAF50' if x > 0 else '#F44336' for x in daily['gap_rate']]
+    
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+    )
+    
+    # 누적 수익률 라인
+    fig.add_trace(
+        go.Scatter(
+            x=daily['screen_date'],
+            y=daily['cumulative_pct'],
+            mode='lines+markers',
+            name='누적 수익률',
+            line=dict(color='#2196F3', width=2),
+            marker=dict(size=5),
+            fill='tozeroy',
+            fillcolor='rgba(33, 150, 243, 0.1)',
+        ),
+        row=1, col=1
+    )
+    
+    # 일별 수익률 바
+    fig.add_trace(
+        go.Bar(
+            x=daily['screen_date'],
+            y=daily['gap_rate'],
+            name='일별 갭수익률',
+            marker_color=colors,
+        ),
+        row=2, col=1
+    )
+    
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=1, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=2, col=1)
+    
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=16)),
+        height=400,
+        margin=dict(l=10, r=10, t=40, b=10),
+        showlegend=False,
+        xaxis2_title="날짜",
+        yaxis_title="누적 수익률 (%)",
+        yaxis2_title="일별 (%)",
+    )
+    
+    return fig
+
+
+def create_gauge(value, title):
+    """승률 게이지"""
+    color = "#4CAF50" if value >= 60 else "#FFC107" if value >= 50 else "#F44336"
+    
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value,
+        number={'suffix': '%', 'font': {'size': 36}},
+        gauge={
+            'axis': {'range': [0, 100], 'tickwidth': 1},
+            'bar': {'color': color},
+            'steps': [
+                {'range': [0, 50], 'color': 'rgba(244, 67, 54, 0.1)'},
+                {'range': [50, 60], 'color': 'rgba(255, 193, 7, 0.1)'},
+                {'range': [60, 100], 'color': 'rgba(76, 175, 80, 0.1)'},
+            ],
+        },
+        title={'text': title, 'font': {'size': 14}},
+    ))
+    
+    fig.update_layout(height=180, margin=dict(l=20, r=20, t=40, b=10))
+    return fig
+
+
+# ==================== 메인 컨텐츠 ====================
+results = load_all_results(60)
+
+if results:
+    stats = calc_stats(results)
+    
+    # 상단: 요약 카드
+    st.subheader("📊 최근 60일 성과 요약")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("📈 총 거래", f"{stats['total']}건")
+    col2.metric("✅ 승리", f"{stats['wins']}건")
+    col3.metric("📊 승률", f"{stats['win_rate']:.1f}%", 
+                delta="Good" if stats['win_rate'] >= 60 else None)
+    col4.metric("💰 평균 갭", f"{stats['avg_gap']:+.2f}%")
+    col5.metric("📈 평균 고가", f"{stats['avg_high']:+.2f}%")
+    
     st.markdown("---")
+    
+    # 중단: 승률 게이지 + 누적 수익률
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.plotly_chart(create_gauge(stats['win_rate'], "전체 승률"), use_container_width=True)
+        
+        # 추가 통계
+        st.markdown("##### 📋 상세 통계")
+        st.write(f"• 승리: {stats['wins']}건 / {stats['total']}건")
+        st.write(f"• 평균 갭수익률: {stats['avg_gap']:+.2f}%")
+        st.write(f"• 평균 고가수익률: {stats['avg_high']:+.2f}%")
+        
+        if stats['win_rate'] >= 60:
+            st.success("✅ 승률이 60% 이상입니다!")
+        elif stats['win_rate'] >= 50:
+            st.warning("⚠️ 승률 50~60% 구간입니다.")
+        else:
+            st.error("❌ 승률이 50% 미만입니다.")
+    
+    with col2:
+        fig = create_cumulative_chart(results, "📈 누적 수익률 & 일별 갭수익률")
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # 하단: 최근 결과 테이블
+    st.subheader("📋 최근 결과 (10건)")
+    
+    df = pd.DataFrame(results)
+    df['screen_date'] = pd.to_datetime(df['screen_date'])
+    df = df.sort_values('screen_date', ascending=False)
+    
+    # 보기 좋게 포맷
+    display_df = df[['screen_date', 'stock_code', 'stock_name', 'gap_rate', 'high_change_rate']].head(10)
+    display_df.columns = ['날짜', '종목코드', '종목명', '갭수익률(%)', '고가수익률(%)']
+    display_df['날짜'] = display_df['날짜'].dt.strftime('%m/%d')
+    display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
+    display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
+    
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+else:
+    st.info("📭 아직 수집된 데이터가 없습니다.")
+    
     st.markdown("""
-    <div style='text-align: center; color: #888;'>
-        ClosingBell v1.1 | Made with ❤️ using Streamlit
-    </div>
-    """, unsafe_allow_html=True)
+    ### 🚀 시작하기
+    
+    ```bash
+    # 1. 스크리닝 실행
+    python main.py --run
+    
+    # 2. 익일 결과 수집 (다음 날)
+    python main.py --run-all
+    
+    # 3. 대시보드 확인
+    streamlit run dashboard/app.py
+    ```
+    
+    ---
+    
+    👈 **좌측 메뉴 "📅 날짜별 결과"에서 달력 형태로 상세 확인 가능합니다.**
+    """)
 
 
-if __name__ == "__main__":
-    main()
+# ==================== 사이드바 ====================
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔔 ClosingBell v5.3")
+st.sidebar.markdown("_차트가 모든 것을 반영한다_ 📈")
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+**전략:**
+- 종가매매 TOP5 (점수제)
+- K값 돌파 TOP3 (k=0.3)
+
+**매도:**
+- 익일 시가 매도
+""")
+
+
+# ==================== 푸터 ====================
+st.markdown("---")
+st.caption("ClosingBell v5.3 | 종가매매 + K값 돌파 전략")

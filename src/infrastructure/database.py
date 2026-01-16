@@ -186,6 +186,121 @@ CREATE TABLE IF NOT EXISTS nomad_studies (
 
 CREATE INDEX IF NOT EXISTS idx_nomad_date ON nomad_studies(study_date);
 CREATE INDEX IF NOT EXISTS idx_nomad_stock ON nomad_studies(stock_code);
+
+-- k_signals (K값 돌파 시그널) v5.3
+CREATE TABLE IF NOT EXISTS k_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_date DATE NOT NULL,
+    signal_time TEXT NOT NULL DEFAULT '15:00',
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    
+    -- 가격 정보
+    current_price INTEGER NOT NULL,
+    open_price INTEGER NOT NULL,
+    breakout_price INTEGER NOT NULL,
+    prev_high INTEGER,
+    prev_low INTEGER,
+    prev_close INTEGER,
+    
+    -- K값 전략 파라미터
+    k_value REAL NOT NULL DEFAULT 0.3,
+    range_value INTEGER,
+    
+    -- 지표
+    prev_change_pct REAL,
+    volume_ratio REAL,
+    trading_value REAL,
+    
+    -- 손익가
+    stop_loss_pct REAL DEFAULT -2.0,
+    take_profit_pct REAL DEFAULT 5.0,
+    stop_loss_price INTEGER,
+    take_profit_price INTEGER,
+    
+    -- 지수 상태
+    index_change REAL,
+    index_above_ma5 INTEGER DEFAULT 1,
+    
+    -- 점수
+    score REAL,
+    confidence REAL,
+    rank INTEGER,
+    
+    -- 메타
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    UNIQUE(signal_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_k_signals_date ON k_signals(signal_date);
+CREATE INDEX IF NOT EXISTS idx_k_signals_stock ON k_signals(stock_code);
+CREATE INDEX IF NOT EXISTS idx_k_signals_rank ON k_signals(signal_date, rank);
+
+-- k_signal_results (K값 시그널 익일 결과) v5.3
+CREATE TABLE IF NOT EXISTS k_signal_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    k_signal_id INTEGER NOT NULL UNIQUE,
+    
+    -- 익일 가격
+    next_date DATE NOT NULL,
+    next_open INTEGER NOT NULL,
+    next_high INTEGER NOT NULL,
+    next_low INTEGER NOT NULL,
+    next_close INTEGER NOT NULL,
+    
+    -- 수익률 (익일 시가 매도 기준)
+    entry_price INTEGER NOT NULL,
+    exit_price INTEGER NOT NULL,
+    profit_pct REAL NOT NULL,
+    
+    -- 손익 상태
+    hit_stop_loss INTEGER DEFAULT 0,
+    hit_take_profit INTEGER DEFAULT 0,
+    is_win INTEGER NOT NULL DEFAULT 0,
+    
+    -- 최대 수익/손실
+    max_profit_pct REAL,
+    max_loss_pct REAL,
+    
+    -- 메타
+    collected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (k_signal_id) REFERENCES k_signals(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_k_results_signal ON k_signal_results(k_signal_id);
+CREATE INDEX IF NOT EXISTS idx_k_results_date ON k_signal_results(next_date);
+CREATE INDEX IF NOT EXISTS idx_k_results_win ON k_signal_results(is_win);
+
+-- k_strategy_config (K값 전략 설정) v5.3
+CREATE TABLE IF NOT EXISTS k_strategy_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    param_name TEXT NOT NULL UNIQUE,
+    param_value REAL NOT NULL,
+    min_value REAL,
+    max_value REAL,
+    is_active INTEGER DEFAULT 1,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_k_config_param ON k_strategy_config(param_name);
+
+-- k_strategy_history (K값 전략 파라미터 변경 이력) v5.3
+CREATE TABLE IF NOT EXISTS k_strategy_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    param_name TEXT NOT NULL,
+    old_value REAL NOT NULL,
+    new_value REAL NOT NULL,
+    change_reason TEXT,
+    win_rate_before REAL,
+    win_rate_after REAL,
+    sample_size INTEGER,
+    changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_k_history_param ON k_strategy_history(param_name);
+CREATE INDEX IF NOT EXISTS idx_k_history_date ON k_strategy_history(changed_at);
 """
 
 # 초기 가중치 데이터
@@ -196,6 +311,18 @@ INSERT OR IGNORE INTO weight_config (indicator, weight) VALUES
     ('ma20_slope', 1.0),
     ('candle', 1.0),
     ('change', 1.0);
+"""
+
+# 초기 K값 전략 설정 (백테스트 최적값)
+INITIAL_K_CONFIG = """
+INSERT OR IGNORE INTO k_strategy_config (param_name, param_value, min_value, max_value) VALUES
+    ('k_value', 0.3, 0.1, 0.9),
+    ('stop_loss_pct', -2.0, -5.0, -1.0),
+    ('take_profit_pct', 5.0, 2.0, 10.0),
+    ('min_trading_value', 200.0, 50.0, 500.0),
+    ('min_volume_ratio', 2.0, 1.0, 5.0),
+    ('prev_change_min', 0.0, -5.0, 5.0),
+    ('prev_change_max', 10.0, 5.0, 20.0);
 """
 
 # 마이그레이션 스크립트 (버전별)
@@ -331,6 +458,7 @@ class Database:
         
         # 초기 데이터 삽입
         self.execute_script(INITIAL_WEIGHTS)
+        self.execute_script(INITIAL_K_CONFIG)
         
         # 마이그레이션 실행
         self.run_migrations()

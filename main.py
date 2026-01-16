@@ -1,9 +1,9 @@
 """
-종가매매 스크리너 v5.2
+종가매매 스크리너 v5.3
 
-📊 점수 체계 (100점 만점):
-- 거래량비 25점 / 등락률 20점 / 연속양봉·CCI·이격도 각 15점 / 캔들 10점
-- 보너스: CCI상승 +4 / MA20↑ +3 / 고가≠종가 +3 / 대형주 +2~5
+📊 이중 전략 시스템:
+1. 종가매매 (100점 만점): 거래량비·등락률·연속양봉·CCI·이격도·캔들
+2. K값 돌파 (승률 76~84%): 시가+레인지×0.3 돌파 → 익일 시가 매도
 
 📈 등급별 매도전략:
 - S등급 (85+): 시초 30% + 목표 +4%
@@ -15,6 +15,7 @@
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
     python main.py --run        # 스크리닝 즉시 실행
+    python main.py --run-k      # K값 스크리닝 실행
     python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
     python main.py --run-test   # 테스트 (알림X)
     python main.py --check 종목코드  # 특정 종목 점수 확인 (예: --check 005930)
@@ -46,7 +47,7 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v5.2                                   ║
+║   🔔  종가매매 스크리너 v5.3                                   ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
 ║      거래량 25 / 등락률 20 / CCI·연속·이격 15 / 캔들 10        ║
@@ -201,8 +202,8 @@ def run_all_services():
     실행 순서:
     1. 스크리닝 (15:00)
     2. 데이터 갱신
-    3. 학습
-    4. 유목민 공부
+    3. 익일 결과 수집
+    4. 학습 (가중치 최적화)
     5. Git 커밋
     """
     logger = logging.getLogger(__name__)
@@ -238,25 +239,25 @@ def run_all_services():
         results['data_update'] = f'❌ 실패: {e}'
         logger.error(f"데이터 갱신 실패: {e}")
     
-    # 3. 학습
-    print("\n[3/5] 🧠 학습 서비스...")
+    # 3. 익일 결과 수집
+    print("\n[3/5] 📊 익일 결과 수집...")
+    try:
+        from src.services.result_collector import run_result_collection
+        collect_result = run_result_collection()
+        results['result_collection'] = f"✅ 성공 ({collect_result.get('collected', 0)}건 수집)"
+    except Exception as e:
+        results['result_collection'] = f'❌ 실패: {e}'
+        logger.error(f"결과 수집 실패: {e}")
+    
+    # 4. 학습 (가중치 최적화)
+    print("\n[4/5] 🧠 학습 실행...")
     try:
         from src.services.learner_service import run_daily_learning
         learn_result = run_daily_learning()
-        results['learning'] = f"✅ 성공 ({learn_result.get('collected', 0)}건 수집)"
+        results['learning'] = '✅ 성공'
     except Exception as e:
         results['learning'] = f'❌ 실패: {e}'
         logger.error(f"학습 실패: {e}")
-    
-    # 4. 유목민 공부
-    print("\n[4/5] 📚 유목민 공부...")
-    try:
-        from src.services.nomad_study import run_nomad_study
-        study_result = run_nomad_study()
-        results['nomad_study'] = f"✅ 성공 ({study_result.get('studied', 0)}건 분석)"
-    except Exception as e:
-        results['nomad_study'] = f'❌ 실패: {e}'
-        logger.error(f"유목민 공부 실패: {e}")
     
     # 5. Git 커밋
     print("\n[5/5] 📤 Git 커밋...")
@@ -365,11 +366,45 @@ def check_stock(stock_code: str):
         traceback.print_exc()
 
 
+def run_k_breakout(send_alert: bool = True):
+    """K값 변동성 돌파 스크리닝"""
+    logger = logging.getLogger(__name__)
+    
+    print("""
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║   🚀  K값 변동성 돌파 전략 v1.0                               ║
+║                                                              ║
+║   📊 백테스트 최적 파라미터                                    ║
+║      k=0.3 / 손절-2% / 익절+5%                               ║
+║      거래대금 200억+ / 볼륨 2.0x+                              ║
+║                                                              ║
+║   🏆 성과: 승률 76~84% / 수익 +6.32%                          ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+    """)
+    
+    logger.info("K값 돌파 스크리닝 시작")
+    
+    from src.services.k_screener import run_k_screening, print_k_result
+    
+    result = run_k_screening(
+        send_alert=send_alert,
+        max_stocks=200,
+        save_to_db=True,
+    )
+    
+    print_k_result(result)
+    
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.2')
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
     parser.add_argument('--run-all', action='store_true', help='모든 서비스 순차 실행')
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
+    parser.add_argument('--run-k', action='store_true', help='K값 변동성 돌파 스크리닝')
     parser.add_argument('--no-alert', action='store_true', help='알림 없음')
     parser.add_argument('--validate', action='store_true', help='설정 검증')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
@@ -410,6 +445,8 @@ def main():
     # 실행
     if args.check:
         check_stock(args.check)
+    elif args.run_k:
+        run_k_breakout(send_alert=not args.no_alert)
     elif args.run_test:
         run_test_mode()
     elif args.run_all:

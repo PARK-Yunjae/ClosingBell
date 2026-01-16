@@ -25,8 +25,8 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MI
 
 from src.config.settings import settings
 from src.services.data_updater import run_data_update
+from src.services.result_collector import run_result_collection
 from src.services.learner_service import run_daily_learning
-from src.services.nomad_study import run_nomad_study
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class ScreenerScheduler:
     
     def _auto_shutdown(self):
         """자동 종료 - 모든 일일 작업 완료 후"""
-        import sys
+        import threading
         
         now = datetime.now()
         uptime = now - self._start_time if self._start_time else timedelta(0)
@@ -231,8 +231,16 @@ class ScreenerScheduler:
         logger.info("=" * 50)
         logger.info("✅ 오늘의 모든 작업 완료. 프로그램을 종료합니다.")
         
-        self.scheduler.shutdown(wait=False)
-        sys.exit(0)
+        # 별도 스레드에서 종료 (APScheduler가 exception으로 잡지 않도록)
+        def delayed_shutdown():
+            import time
+            import os
+            time.sleep(1)
+            self.scheduler.shutdown(wait=False)
+            os._exit(0)  # 강제 종료 (sys.exit보다 깔끔)
+        
+        shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=True)
+        shutdown_thread.start()
     
     def _add_heartbeat_job(self):
         """Heartbeat 작업 추가"""
@@ -250,7 +258,7 @@ class ScreenerScheduler:
         logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
     
     def setup_default_schedules(self):
-        """기본 스케줄 설정 - v5.1"""
+        """기본 스케줄 설정 - v5.3 (종가매매 + K값 학습)"""
         from src.services.screener_service import (
             run_main_screening,
             run_preview_screening,
@@ -287,23 +295,23 @@ class ScreenerScheduler:
             minute=30,
         )
         
-        # v5.2: 17:00 일일 학습 (익일 결과 수집 + 상관관계 분석)
+        # v5.3: 17:00 익일 결과 수집 (승률 추적)
         self.add_job(
-            job_id='daily_learning',
-            func=run_daily_learning,
+            job_id='result_collection',
+            func=run_result_collection,
             hour=17,
             minute=0,
         )
         
-        # v5.2: 17:30 유목민 공부 (TOP5 기업 분석)
+        # v5.3: 17:10 일일 학습 (상관관계 분석 + 가중치 조정)
         self.add_job(
-            job_id='nomad_study',
-            func=run_nomad_study,
+            job_id='daily_learning',
+            func=run_daily_learning,
             hour=17,
-            minute=30,
+            minute=10,
         )
         
-        # v5.2: 17:35 Git 자동 커밋
+        # 17:35 Git 자동 커밋
         self.add_job(
             job_id='git_commit',
             func=run_git_commit,
@@ -311,7 +319,7 @@ class ScreenerScheduler:
             minute=35,
         )
         
-        # v5.2: 17:40 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        # 17:40 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
         self.add_job(
             job_id='auto_shutdown',
             func=self._auto_shutdown,
@@ -320,7 +328,7 @@ class ScreenerScheduler:
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v5.2: 스크리닝 + 학습 + 공부 + Git + 자동종료)")
+        logger.info("기본 스케줄 설정 완료 (v5.3: 스크리닝 + 결과수집 + Git + 자동종료)")
     
     def start(self):
         """스케줄러 시작"""

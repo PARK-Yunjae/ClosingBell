@@ -87,9 +87,6 @@ class Settings:
     database: DatabaseSettings
     screening: ScreeningSettings
     
-    # 추가 API 키
-    gemini_api_key: Optional[str] = None
-    
     # 로깅
     log_level: str = "INFO"
     log_path: Path = BASE_DIR / "logs" / "screener.log"
@@ -146,7 +143,6 @@ def load_settings() -> Settings:
         email=email,
         database=database,
         screening=screening,
-        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip('"') or None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_path=Path(os.getenv("LOG_PATH", str(BASE_DIR / "logs" / "screener.log"))),
     )

@@ -1,15 +1,16 @@
 """
-학습 서비스 v5.2
+학습 서비스 v5.3
 ================
 
-TOP5 스크리닝 결과의 익일 성과를 수집하고,
-상관관계 분석을 통해 가중치를 자동 조정합니다.
+익일 결과를 분석하여 가중치를 자동 조정합니다.
 
-동작 흐름:
-1. 매일 17:00 익일 결과 수집 (data_updater 16:30 후)
-2. 30일치 데이터로 상관관계 분석
-3. 상관관계 높은 지표에 가중치 증가
-4. weight_config 업데이트
+[종가매매]
+- 각 지표(CCI, 등락률, 이격도 등)와 gap_rate 상관관계 분석
+- 상관관계 높은 지표 가중치 증가
+
+[K값 전략]
+- 필터 조건별 승률 분석
+- 최적 파라미터 탐색
 
 사용:
     from src.services.learner_service import run_daily_learning
@@ -17,302 +18,130 @@ TOP5 스크리닝 결과의 익일 성과를 수집하고,
 """
 
 import logging
-import time
-from datetime import date, timedelta
-from typing import Dict, List, Optional
 import statistics
+from datetime import date, timedelta
+from typing import Dict, List, Optional, Tuple
 
-from src.infrastructure.database import get_database
-from src.infrastructure.repository import (
-    get_repository,
-    get_screening_repository,
-    get_next_day_repository,
-)
-from src.adapters.kis_client import get_kis_client
+from src.infrastructure.repository import get_repository
 
 logger = logging.getLogger(__name__)
 
 
 class LearnerService:
-    """학습 서비스"""
+    """학습 서비스 (종가매매 + K값)"""
     
     def __init__(self):
         self.repo = get_repository()
-        self.kis = get_kis_client()
         
         # 학습 설정
-        self.min_samples = 30          # 최소 샘플 수
-        self.learning_rate = 0.1       # 가중치 조정 비율
+        self.min_samples = 20           # 최소 샘플 수
+        self.learning_rate = 0.1        # 가중치 조정 비율
         self.correlation_threshold = 0.05  # 의미있는 상관관계 임계값
-        self.api_delay = 0.3           # API 호출 간격
     
-    def collect_next_day_results(self, target_date: date = None) -> Dict:
-        """익일 결과 수집
-        
-        Args:
-            target_date: 스크리닝 날짜 (기본: 어제)
-            
-        Returns:
-            수집 결과 {'collected': int, 'failed': int, 'skipped': int}
-        """
-        if target_date is None:
-            target_date = date.today() - timedelta(days=1)
-        
-        logger.info(f"📊 익일 결과 수집 시작: {target_date}")
-        
-        # 해당 날짜의 스크리닝 종목 조회 (익일 결과 없는 것만)
-        # top3_only=True: is_top3=1인 종목만 (실제로는 TOP5가 저장됨)
-        items = self.repo.screening.get_items_without_next_day_result(
-            screen_date=target_date,
-            top3_only=True,
-        )
-        
-        if not items:
-            logger.info(f"  수집할 종목 없음 (이미 수집됨 또는 스크리닝 없음)")
-            return {'collected': 0, 'failed': 0, 'skipped': 0}
-        
-        logger.info(f"  수집 대상: {len(items)}개 종목")
-        
-        results = {'collected': 0, 'failed': 0, 'skipped': 0}
-        
-        for item in items:
-            try:
-                code = item['stock_code']
-                name = item['stock_name']
-                yesterday_close = item['current_price']  # 스크리닝 당시 종가
-                
-                # 익일 시고저종 조회
-                prices = self.kis.get_daily_prices(code, count=5)
-                
-                if not prices:
-                    logger.warning(f"  ⚠️ {code} {name}: 가격 데이터 없음")
-                    results['failed'] += 1
-                    continue
-                
-                # 스크리닝 다음 거래일 찾기
-                # prices[0]이 가장 최근, prices[-1]이 가장 과거
-                next_day_price = None
-                for price in prices:
-                    if price.date > target_date:
-                        next_day_price = price
-                        break
-                
-                if next_day_price is None:
-                    logger.debug(f"  ⏭️ {code} {name}: 익일 데이터 없음 (아직)")
-                    results['skipped'] += 1
-                    continue
-                
-                # 수익률 계산
-                gap_rate = ((next_day_price.open - yesterday_close) / yesterday_close) * 100
-                day_return = ((next_day_price.close - yesterday_close) / yesterday_close) * 100
-                high_change = ((next_day_price.high - yesterday_close) / yesterday_close) * 100
-                low_change = ((next_day_price.low - yesterday_close) / yesterday_close) * 100
-                volatility = ((next_day_price.high - next_day_price.low) / next_day_price.low) * 100 if next_day_price.low > 0 else 0
-                
-                # DB 저장
-                self.repo.save_next_day_result(
-                    stock_code=code,
-                    screen_date=target_date,
-                    gap_rate=gap_rate,
-                    day_return=day_return,
-                    volatility=volatility,
-                    next_open=next_day_price.open,
-                    next_close=next_day_price.close,
-                    next_high=next_day_price.high,
-                    next_low=next_day_price.low,
-                    high_change_rate=high_change,
-                )
-                
-                # 결과 로그
-                win_emoji = "✅" if day_return > 0 else "❌"
-                logger.info(f"  {win_emoji} {code} {name}: 갭 {gap_rate:+.1f}%, 종가 {day_return:+.1f}%, 고가 {high_change:+.1f}%")
-                results['collected'] += 1
-                
-                time.sleep(self.api_delay)
-                
-            except Exception as e:
-                logger.error(f"  ✗ {item['stock_code']}: {e}")
-                results['failed'] += 1
-        
-        logger.info(f"📊 익일 결과 수집 완료: 성공 {results['collected']}, 실패 {results['failed']}, 스킵 {results['skipped']}")
-        return results
+    # =========================================
+    # 종가매매 학습
+    # =========================================
     
-    def collect_multiple_days(self, days: int = 7) -> Dict:
-        """최근 N일간 익일 결과 수집 (누락분 보완)
-        
-        Args:
-            days: 수집할 과거 일수
-            
-        Returns:
-            총 수집 결과
-        """
-        logger.info(f"📊 최근 {days}일간 익일 결과 수집")
-        
-        total = {'collected': 0, 'failed': 0, 'skipped': 0}
-        
-        today = date.today()
-        for i in range(1, days + 1):
-            target_date = today - timedelta(days=i)
-            
-            # 주말 스킵
-            if target_date.weekday() >= 5:
-                continue
-            
-            result = self.collect_next_day_results(target_date)
-            total['collected'] += result['collected']
-            total['failed'] += result['failed']
-            total['skipped'] += result['skipped']
-        
-        logger.info(f"📊 총 수집 결과: 성공 {total['collected']}, 실패 {total['failed']}, 스킵 {total['skipped']}")
-        return total
-    
-    def calculate_correlations(self, days: int = 30) -> Dict[str, float]:
-        """점수-수익률 상관관계 계산
+    def analyze_closing_correlations(self, days: int = 30) -> Dict[str, float]:
+        """종가매매 지표별 상관관계 분석
         
         Args:
             days: 분석 기간
             
         Returns:
-            지표별 상관계수 {'score_cci_value': 0.15, ...}
+            지표별 상관관계 딕셔너리
         """
+        # 스크리닝 결과 + 익일 결과 조인 조회
         data = self.repo.get_screening_with_next_day(days=days)
         
         if len(data) < self.min_samples:
-            logger.warning(f"⚠️ 샘플 부족: {len(data)}개 < {self.min_samples}개 필요")
+            logger.warning(f"샘플 부족: {len(data)}개 (최소 {self.min_samples}개 필요)")
             return {}
         
-        logger.info(f"📈 상관관계 분석: {len(data)}개 샘플 ({days}일)")
+        logger.info(f"📊 상관관계 분석: {len(data)}개 샘플")
         
-        # 지표별 상관계수 계산
-        correlations = {}
-        
-        # DB 컬럼명 → 표시 이름
+        # 지표별 상관관계 계산
         indicators = [
-            ('score_total', '총점'),
-            ('score_cci_value', 'CCI'),
-            ('score_cci_slope', '이격도'),
-            ('score_ma20_slope', 'MA20'),
-            ('score_candle', '캔들'),
-            ('score_change', '등락률'),
+            'score_cci_value',
+            'score_cci_slope', 
+            'score_ma20_slope',
+            'score_candle',
+            'score_change',
         ]
         
-        # 수익률 (종가 기준)
-        returns = [d['day_change_rate'] for d in data]
+        correlations = {}
+        gap_rates = [d.get('gap_rate', 0) or 0 for d in data]
         
-        logger.info("  지표별 상관계수:")
-        for db_col, name in indicators:
+        for indicator in indicators:
+            values = [d.get(indicator, 0) or 0 for d in data]
+            
+            if len(values) < 2 or len(set(values)) < 2:
+                continue
+            
             try:
-                values = [d.get(db_col, 0) or 0 for d in data]
-                corr = self._pearson_correlation(values, returns)
-                correlations[db_col] = round(corr, 4)
-                
-                # 상관관계 강도 표시
-                if abs(corr) >= 0.1:
-                    strength = "🔥 강함"
-                elif abs(corr) >= 0.05:
-                    strength = "✅ 보통"
-                else:
-                    strength = "⚪ 약함"
-                
-                logger.info(f"    {name:>8}: {corr:+.4f} {strength}")
-                
+                corr = self._calculate_correlation(values, gap_rates)
+                correlations[indicator] = corr
+                logger.info(f"  {indicator}: {corr:+.3f}")
             except Exception as e:
-                logger.error(f"    {name}: 계산 실패 - {e}")
-                correlations[db_col] = 0.0
+                logger.warning(f"  {indicator} 계산 실패: {e}")
         
         return correlations
     
-    def _pearson_correlation(self, x: List[float], y: List[float]) -> float:
-        """피어슨 상관계수 계산"""
-        n = len(x)
-        if n < 2:
-            return 0.0
-        
-        try:
-            mean_x = statistics.mean(x)
-            mean_y = statistics.mean(y)
-            
-            numerator = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
-            
-            std_x = statistics.stdev(x)
-            std_y = statistics.stdev(y)
-            
-            if std_x == 0 or std_y == 0:
-                return 0.0
-            
-            denominator = (n - 1) * std_x * std_y
-            
-            return numerator / denominator if denominator != 0 else 0.0
-            
-        except Exception:
-            return 0.0
-    
-    def update_weights(self, correlations: Dict[str, float]) -> bool:
-        """가중치 업데이트
-        
-        상관관계가 높은 지표는 가중치 증가
-        상관관계가 낮은 지표는 가중치 감소
+    def update_closing_weights(self, correlations: Dict[str, float]) -> Dict[str, float]:
+        """상관관계 기반 가중치 업데이트
         
         Args:
-            correlations: 지표별 상관계수
+            correlations: 지표별 상관관계
             
         Returns:
-            업데이트 성공 여부
+            업데이트된 가중치
         """
         if not correlations:
-            logger.warning("⚠️ 상관관계 데이터 없음 - 가중치 업데이트 스킵")
-            return False
+            logger.info("업데이트할 상관관계 없음")
+            return {}
         
-        # score_total은 제외 (개별 지표만)
-        correlations = {k: v for k, v in correlations.items() if k != 'score_total'}
-        
-        current_weights = self.repo.get_current_weights()
-        if not current_weights:
-            logger.warning("⚠️ 현재 가중치 없음 - 업데이트 스킵")
-            return False
-        
-        logger.info("📝 가중치 업데이트:")
-        new_weights = {}
+        # 현재 가중치 조회
+        current_weights = self.repo.get_current_weights() or {}
+        updated = {}
         
         for indicator, corr in correlations.items():
-            # indicator 이름 매핑 (DB 컬럼 → weight_config 키)
+            # 지표명 매핑 (score_xxx -> xxx)
             weight_key = indicator.replace('score_', '')
-            old_weight = current_weights.get(weight_key, 1.0)
             
-            # 상관계수 기반 조정
+            if weight_key not in current_weights:
+                continue
+            
+            old_weight = current_weights[weight_key]
+            
+            # 상관관계에 따른 가중치 조정
             if abs(corr) > self.correlation_threshold:
-                # 양의 상관: 가중치 증가, 음의 상관: 가중치 감소
-                adjustment = corr * self.learning_rate
-                new_weight = old_weight * (1 + adjustment)
+                # 양의 상관관계 → 가중치 증가
+                # 음의 상관관계 → 가중치 감소
+                adjustment = corr * self.learning_rate * old_weight
+                new_weight = old_weight + adjustment
                 
-                # 가중치 범위 제한 (0.5 ~ 5.0)
-                new_weight = max(0.5, min(5.0, new_weight))
-            else:
-                new_weight = old_weight
-            
-            new_weights[weight_key] = round(new_weight, 3)
-            
-            change = ((new_weight - old_weight) / old_weight) * 100 if old_weight > 0 else 0
-            if abs(change) > 0.1:
-                logger.info(f"    {weight_key}: {old_weight:.3f} → {new_weight:.3f} ({change:+.1f}%)")
+                # 범위 제한 (0.5 ~ 3.0)
+                new_weight = max(0.5, min(3.0, new_weight))
+                
+                if abs(new_weight - old_weight) > 0.01:
+                    self.repo.weight.update_weight(
+                        indicator=weight_key,
+                        new_weight=round(new_weight, 2),
+                        reason=f"상관관계 {corr:+.3f}",
+                        correlation=corr,
+                        sample_size=self.min_samples,
+                    )
+                    updated[weight_key] = new_weight
+                    logger.info(f"  {weight_key}: {old_weight:.2f} → {new_weight:.2f}")
         
-        # DB 업데이트
-        try:
-            self.repo.update_weights(new_weights)
-            self.repo.save_weight_history(
-                weights=new_weights,
-                correlations=correlations,
-                reason="자동 학습 (30일 상관관계)",
-            )
-            logger.info("✅ 가중치 업데이트 완료")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 가중치 업데이트 실패: {e}")
-            return False
+        return updated
     
-    def get_performance_summary(self, days: int = 30) -> Dict:
-        """성과 요약
+    # =========================================
+    # K값 전략 학습
+    # =========================================
+    
+    def analyze_k_performance(self, days: int = 30) -> Dict:
+        """K값 전략 성과 분석
         
         Args:
             days: 분석 기간
@@ -320,158 +149,191 @@ class LearnerService:
         Returns:
             성과 통계
         """
-        data = self.repo.get_next_day_results(days=days)
+        # K값 시그널의 익일 결과 조회
+        results = self.repo.get_k_signal_results(days=days)
         
-        if not data:
+        if not results:
+            logger.info("K값 시그널 결과 없음")
             return {}
         
-        returns = [d['day_change_rate'] for d in data]
-        gap_rates = [d['gap_rate'] for d in data]
-        high_changes = [d.get('high_change_rate', 0) or 0 for d in data]
+        # 승률 계산
+        total = len(results)
+        wins = sum(1 for r in results if (r.get('gap_rate') or 0) > 0)
+        win_rate = wins / total * 100 if total > 0 else 0
         
-        win_count = sum(1 for r in returns if r > 0)
+        # 평균 수익률
+        avg_gap = sum(r.get('gap_rate', 0) or 0 for r in results) / total
+        avg_high = sum(r.get('high_change_rate', 0) or 0 for r in results) / total
         
-        summary = {
-            'total_trades': len(data),
-            'win_count': win_count,
-            'win_rate': (win_count / len(data)) * 100 if data else 0,
-            'avg_return': statistics.mean(returns) if returns else 0,
-            'avg_gap': statistics.mean(gap_rates) if gap_rates else 0,
-            'avg_high': statistics.mean(high_changes) if high_changes else 0,
-            'max_return': max(returns) if returns else 0,
-            'min_return': min(returns) if returns else 0,
+        stats = {
+            'total': total,
+            'wins': wins,
+            'win_rate': win_rate,
+            'avg_gap': avg_gap,
+            'avg_high': avg_high,
         }
         
-        return summary
-    
-    def run_daily_learning(self) -> Dict:
-        """일일 학습 실행
+        logger.info(f"📊 K값 성과: 승률 {win_rate:.1f}% ({wins}/{total}), 평균갭 {avg_gap:+.2f}%")
         
-        스케줄러에서 매일 17:00에 호출
+        return stats
+    
+    def optimize_k_params(self, days: int = 30) -> Dict:
+        """K값 파라미터 최적화 제안
+        
+        현재는 통계만 제공, 자동 조정은 위험할 수 있음
+        """
+        results = self.repo.get_k_signal_results(days=days)
+        
+        if len(results) < self.min_samples:
+            return {}
+        
+        # 구간별 승률 분석
+        analysis = {
+            'volume_ratio': self._analyze_by_range(results, 'volume_ratio', [1.5, 2.0, 2.5, 3.0, 4.0]),
+            'trading_value': self._analyze_by_range(results, 'trading_value', [50, 100, 150, 200, 300]),
+            'prev_change': self._analyze_by_range(results, 'prev_change_rate', [0, 2, 4, 6, 8, 10]),
+        }
+        
+        return analysis
+    
+    def _analyze_by_range(
+        self, 
+        results: List[Dict], 
+        field: str, 
+        ranges: List[float]
+    ) -> Dict:
+        """구간별 승률 분석"""
+        analysis = {}
+        
+        for i in range(len(ranges) - 1):
+            low, high = ranges[i], ranges[i + 1]
+            filtered = [r for r in results if low <= (r.get(field) or 0) < high]
+            
+            if filtered:
+                wins = sum(1 for r in filtered if (r.get('gap_rate') or 0) > 0)
+                win_rate = wins / len(filtered) * 100
+                analysis[f"{low}-{high}"] = {
+                    'count': len(filtered),
+                    'win_rate': round(win_rate, 1),
+                }
+        
+        return analysis
+    
+    # =========================================
+    # 유틸리티
+    # =========================================
+    
+    def _calculate_correlation(self, x: List[float], y: List[float]) -> float:
+        """피어슨 상관계수 계산"""
+        n = len(x)
+        if n < 2:
+            return 0.0
+        
+        mean_x = sum(x) / n
+        mean_y = sum(y) / n
+        
+        numerator = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+        
+        std_x = (sum((xi - mean_x) ** 2 for xi in x) / n) ** 0.5
+        std_y = (sum((yi - mean_y) ** 2 for yi in y) / n) ** 0.5
+        
+        if std_x == 0 or std_y == 0:
+            return 0.0
+        
+        return numerator / (n * std_x * std_y)
+    
+    def get_learning_stats(self, days: int = 30) -> Dict:
+        """학습 통계 조회 (Streamlit용)
         
         Returns:
-            실행 결과
+            {
+                'closing': {'win_rate': float, 'total': int, ...},
+                'k_value': {'win_rate': float, 'total': int, ...},
+                'weights': {'cci_value': float, ...},
+                'weight_history': [...]
+            }
         """
-        logger.info("=" * 60)
-        logger.info("📚 일일 학습 시작")
-        logger.info("=" * 60)
+        # 종가매매 통계
+        closing_results = self.repo.get_next_day_results(days=days)
+        closing_stats = self._calc_stats(closing_results)
         
-        results = {
-            'next_day_collected': 0,
-            'correlations': {},
-            'weights_updated': False,
-            'performance': {},
+        # K값 통계
+        k_stats = self.analyze_k_performance(days=days)
+        
+        # 현재 가중치
+        weights = self.repo.get_current_weights() or {}
+        
+        # 가중치 변경 이력
+        weight_history = self.repo.weight.get_weight_history(days=days)
+        
+        return {
+            'closing': closing_stats,
+            'k_value': k_stats,
+            'weights': weights,
+            'weight_history': weight_history,
         }
+    
+    def _calc_stats(self, results: List[Dict]) -> Dict:
+        """승률 통계 계산"""
+        if not results:
+            return {'total': 0, 'wins': 0, 'win_rate': 0, 'avg_gap': 0}
         
-        try:
-            # 1. 익일 결과 수집 (어제 스크리닝 → 오늘 결과)
-            logger.info("\n[1단계] 익일 결과 수집")
-            collection = self.collect_next_day_results()
-            results['next_day_collected'] = collection['collected']
-            
-            # 2. 누락분 보완 (최근 7일)
-            if collection['collected'] == 0:
-                logger.info("\n[1-1단계] 누락분 보완 수집")
-                backup = self.collect_multiple_days(days=7)
-                results['next_day_collected'] = backup['collected']
-            
-            # 3. 상관관계 분석
-            logger.info("\n[2단계] 상관관계 분석")
-            correlations = self.calculate_correlations(days=30)
-            results['correlations'] = correlations
-            
-            # 4. 가중치 업데이트
-            logger.info("\n[3단계] 가중치 업데이트")
-            if correlations:
-                results['weights_updated'] = self.update_weights(correlations)
-            else:
-                logger.info("  상관관계 데이터 부족 - 스킵")
-            
-            # 5. 성과 요약
-            logger.info("\n[4단계] 성과 요약")
-            performance = self.get_performance_summary(days=30)
-            results['performance'] = performance
-            
-            if performance:
-                logger.info(f"  총 매매: {performance['total_trades']}건")
-                logger.info(f"  승률: {performance['win_rate']:.1f}% ({performance['win_count']}/{performance['total_trades']})")
-                logger.info(f"  평균 수익률: {performance['avg_return']:+.2f}%")
-                logger.info(f"  평균 갭: {performance['avg_gap']:+.2f}%")
-                logger.info(f"  평균 고가: {performance['avg_high']:+.2f}%")
-            
-        except Exception as e:
-            logger.error(f"❌ 학습 실행 오류: {e}")
-            import traceback
-            traceback.print_exc()
+        total = len(results)
+        wins = sum(1 for r in results if (r.get('gap_rate') or 0) > 0)
+        avg_gap = sum(r.get('gap_rate', 0) or 0 for r in results) / total
         
-        logger.info("\n" + "=" * 60)
-        logger.info("📚 일일 학습 완료")
-        logger.info(f"   익일 결과 수집: {results['next_day_collected']}건")
-        logger.info(f"   가중치 업데이트: {'✅ 완료' if results['weights_updated'] else '⏭️ 스킵'}")
-        logger.info("=" * 60)
-        
-        return results
-
-
-# ============================================================
-# 싱글톤 및 편의 함수
-# ============================================================
-
-_learner: Optional[LearnerService] = None
-
-
-def get_learner() -> LearnerService:
-    """학습 서비스 인스턴스 반환"""
-    global _learner
-    if _learner is None:
-        _learner = LearnerService()
-    return _learner
+        return {
+            'total': total,
+            'wins': wins,
+            'win_rate': round(wins / total * 100, 1) if total > 0 else 0,
+            'avg_gap': round(avg_gap, 2),
+        }
 
 
 def run_daily_learning() -> Dict:
-    """일일 학습 실행 (스케줄러용)"""
-    learner = get_learner()
-    return learner.run_daily_learning()
-
-
-# ============================================================
-# 테스트
-# ============================================================
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(message)s'
-    )
+    """일일 학습 실행 (스케줄러용)
     
-    print("=" * 60)
-    print("🧪 학습 서비스 테스트")
-    print("=" * 60)
+    Returns:
+        학습 결과 요약
+    """
+    logger.info("=" * 50)
+    logger.info("🧠 일일 학습 시작")
+    logger.info("=" * 50)
     
     learner = LearnerService()
+    result = {'closing': {}, 'k_value': {}}
     
-    # 테스트 1: 성과 요약
-    print("\n[테스트 1] 성과 요약")
-    performance = learner.get_performance_summary(days=30)
-    if performance:
-        print(f"  총 매매: {performance['total_trades']}건")
-        print(f"  승률: {performance['win_rate']:.1f}%")
-        print(f"  평균 수익률: {performance['avg_return']:+.2f}%")
-    else:
-        print("  데이터 없음")
+    # 1. 종가매매 상관관계 분석 & 가중치 업데이트
+    logger.info("\n[1/2] 종가매매 학습")
+    try:
+        correlations = learner.analyze_closing_correlations(days=30)
+        updated = learner.update_closing_weights(correlations)
+        result['closing'] = {
+            'correlations': correlations,
+            'updated_weights': updated,
+        }
+    except Exception as e:
+        logger.error(f"종가매매 학습 실패: {e}")
     
-    # 테스트 2: 상관관계 분석
-    print("\n[테스트 2] 상관관계 분석")
-    correlations = learner.calculate_correlations(days=30)
-    if correlations:
-        for k, v in correlations.items():
-            print(f"  {k}: {v:+.4f}")
-    else:
-        print("  데이터 부족")
+    # 2. K값 성과 분석
+    logger.info("\n[2/2] K값 전략 분석")
+    try:
+        k_stats = learner.analyze_k_performance(days=30)
+        k_analysis = learner.optimize_k_params(days=30)
+        result['k_value'] = {
+            'stats': k_stats,
+            'analysis': k_analysis,
+        }
+    except Exception as e:
+        logger.error(f"K값 분석 실패: {e}")
     
-    # 테스트 3: 전체 학습 실행
-    print("\n[테스트 3] 전체 학습 실행")
-    confirm = input("전체 학습을 실행하시겠습니까? (y/N): ")
-    if confirm.lower() == 'y':
-        result = learner.run_daily_learning()
-        print(f"\n결과: {result}")
+    logger.info("=" * 50)
+    logger.info("🧠 일일 학습 완료")
+    logger.info("=" * 50)
+    
+    return result
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    run_daily_learning()

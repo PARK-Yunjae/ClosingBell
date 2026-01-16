@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul 2>&1
-title ClosingBell Screener
+title ClosingBell Dashboard
 
 echo ========================================
-echo  ClosingBell v5.3 - Scheduler Mode
+echo  ClosingBell v5.3 - Dashboard
 echo ========================================
 echo.
 
@@ -15,24 +15,21 @@ if exist "venv\Scripts\activate.bat" (
     echo [WARN] No venv found, using system Python
 )
 
-:: Check Python
-python --version >nul 2>&1
+:: Check streamlit
+streamlit --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python not found!
-    echo Please install Python 3.10+
+    echo [ERROR] Streamlit not found!
+    echo Run: pip install streamlit
     pause
     exit /b 1
 )
 
 echo.
-echo Starting scheduler mode...
+echo Starting dashboard...
+echo Browser will open automatically
 echo Press Ctrl+C to stop
 echo.
 
-python main.py
+streamlit run dashboard/app.py
 
-echo.
-echo ========================================
-echo  Finished
-echo ========================================
 pause
