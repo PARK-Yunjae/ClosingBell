@@ -1,13 +1,15 @@
 """
-ClosingBell 대시보드 v5.3
+ClosingBell 대시보드 v5.4
 ==========================
 
-📊 종가매매 TOP5 & K값 TOP3 성과 추적
+📊 종가매매 TOP5 성과 추적
+
+v5.4: K값 전략 제거
 
 기능:
 - 전체 승률 요약
 - 누적 수익률 그래프
-- 종가매매 vs K값 비교
+- 최근 결과 테이블
 """
 
 import streamlit as st
@@ -34,7 +36,7 @@ st.set_page_config(
 
 # ==================== 헤더 ====================
 st.title("🔔 ClosingBell 대시보드")
-st.markdown("**종가매매 TOP5 & K값 TOP3 성과 추적** | _차트가 모든 것을 반영한다_ 📈")
+st.markdown("**종가매매 TOP5 성과 추적** | _차트가 모든 것을 반영한다_ 📈")
 st.markdown("---")
 
 
@@ -214,8 +216,8 @@ if results:
     
     st.markdown("---")
     
-    # 하단: 최근 결과 테이블
-    st.subheader("📋 최근 결과 (10건)")
+    # 하단: 최근 결과 테이블 (스크롤 버그 수정)
+    st.subheader(f"📋 최근 결과 ({min(stats['total'], 10)}건)")
     
     df = pd.DataFrame(results)
     df['screen_date'] = pd.to_datetime(df['screen_date'])
@@ -228,7 +230,13 @@ if results:
     display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
     display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
     
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    # height 고정으로 스크롤 버그 해결
+    st.dataframe(
+        display_df, 
+        use_container_width=True, 
+        hide_index=True,
+        height=min(len(display_df) * 35 + 38, 400)  # 행당 35px + 헤더
+    )
 
 else:
     st.info("📭 아직 수집된 데이터가 없습니다.")
@@ -246,22 +254,17 @@ else:
     # 3. 대시보드 확인
     streamlit run dashboard/app.py
     ```
-    
-    ---
-    
-    👈 **좌측 메뉴 "📅 날짜별 결과"에서 달력 형태로 상세 확인 가능합니다.**
     """)
 
 
 # ==================== 사이드바 ====================
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔔 ClosingBell v5.3")
+st.sidebar.markdown("### 🔔 ClosingBell v5.4")
 st.sidebar.markdown("_차트가 모든 것을 반영한다_ 📈")
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 **전략:**
 - 종가매매 TOP5 (점수제)
-- K값 돌파 TOP3 (k=0.3)
 
 **매도:**
 - 익일 시가 매도
@@ -270,4 +273,4 @@ st.sidebar.markdown("""
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v5.3 | 종가매매 + K값 돌파 전략")
+st.caption("ClosingBell v5.4 | 종가매매 전략 (백테스트 최적화)")

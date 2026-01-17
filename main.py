@@ -1,9 +1,8 @@
 """
-종가매매 스크리너 v5.3
+종가매매 스크리너 v5.4
 
-📊 이중 전략 시스템:
-1. 종가매매 (100점 만점): 거래량비·등락률·연속양봉·CCI·이격도·캔들
-2. K값 돌파 (승률 76~84%): 시가+레인지×0.3 돌파 → 익일 시가 매도
+📊 종가매매 점수제 (100점 만점):
+   거래량비·등락률·연속양봉·CCI·이격도·캔들
 
 📈 등급별 매도전략:
 - S등급 (85+): 시초 30% + 목표 +4%
@@ -12,10 +11,14 @@
 - C등급 (55-64): 시초 70% + 목표 +2%
 - D등급 (<55): 시초 전량매도
 
+⚡ v5.4 업데이트 (백테스트 기반):
+- 연속양봉 4일 이상 감점 강화 (50.9% → 위험)
+- D+1 시초가 매도 최적 (승률 54.5%)
+- K값 전략 제거 (승률 49% 부적합)
+
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
     python main.py --run        # 스크리닝 즉시 실행
-    python main.py --run-k      # K값 스크리닝 실행
     python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
     python main.py --run-test   # 테스트 (알림X)
     python main.py --check 종목코드  # 특정 종목 점수 확인 (예: --check 005930)
@@ -47,7 +50,7 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v5.3                                   ║
+║   🔔  종가매매 스크리너 v5.4                                   ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
 ║      거래량 25 / 등락률 20 / CCI·연속·이격 15 / 캔들 10        ║
@@ -55,6 +58,8 @@ def print_banner():
 ║   🏆 등급별 매도전략                                           ║
 ║      S(85+) → 시초30% + 목표+4%                               ║
 ║      D(<55) → 시초 전량매도                                    ║
+║                                                              ║
+║   ⚡ v5.4: 연속양봉4일+ 감점강화, D+1 시초매도 최적             ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -366,45 +371,11 @@ def check_stock(stock_code: str):
         traceback.print_exc()
 
 
-def run_k_breakout(send_alert: bool = True):
-    """K값 변동성 돌파 스크리닝"""
-    logger = logging.getLogger(__name__)
-    
-    print("""
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   🚀  K값 변동성 돌파 전략 v1.0                               ║
-║                                                              ║
-║   📊 백테스트 최적 파라미터                                    ║
-║      k=0.3 / 손절-2% / 익절+5%                               ║
-║      거래대금 200억+ / 볼륨 2.0x+                              ║
-║                                                              ║
-║   🏆 성과: 승률 76~84% / 수익 +6.32%                          ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-    """)
-    
-    logger.info("K값 돌파 스크리닝 시작")
-    
-    from src.services.k_screener import run_k_screening, print_k_result
-    
-    result = run_k_screening(
-        send_alert=send_alert,
-        max_stocks=200,
-        save_to_db=True,
-    )
-    
-    print_k_result(result)
-    
-    return result
-
-
 def main():
-    parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.2')
+    parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.4')
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
     parser.add_argument('--run-all', action='store_true', help='모든 서비스 순차 실행')
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
-    parser.add_argument('--run-k', action='store_true', help='K값 변동성 돌파 스크리닝')
     parser.add_argument('--no-alert', action='store_true', help='알림 없음')
     parser.add_argument('--validate', action='store_true', help='설정 검증')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
@@ -445,8 +416,6 @@ def main():
     # 실행
     if args.check:
         check_stock(args.check)
-    elif args.run_k:
-        run_k_breakout(send_alert=not args.no_alert)
     elif args.run_test:
         run_test_mode()
     elif args.run_all:

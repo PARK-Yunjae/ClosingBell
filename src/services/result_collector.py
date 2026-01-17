@@ -1,9 +1,11 @@
 """
-익일 결과 수집 서비스 v5.3 (단순화)
+익일 결과 수집 서비스 v5.4 (종가매매 전용)
 ==================================
 
-종가매매 TOP5 + K값 TOP3의 익일 시고저종을 수집하고
+종가매매 TOP5의 익일 시고저종을 수집하고
 승률을 계산합니다.
+
+v5.4: K값 전략 제거
 
 사용:
     from src.services.result_collector import run_result_collection

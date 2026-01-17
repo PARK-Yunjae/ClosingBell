@@ -1,4 +1,4 @@
-# 종가매매 스크리너 (Closing Trade Screener) - 의존성
+# 종가매매 스크리너 (Closing Trade Screener) v5.4 - 의존성
 
 # Core
 python-dotenv==1.0.0
@@ -16,6 +16,9 @@ pandas==2.1.4
 
 # Data Processing
 numpy==1.26.2
+
+# Global Indicators (v5.4)
+finance-datareader>=0.9.50
 
 # Testing
 pytest==7.4.3

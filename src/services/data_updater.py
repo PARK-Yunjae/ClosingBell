@@ -1,5 +1,5 @@
 """
-OHLCV 데이터 자동 갱신 스크립트 (data_updater.py)
+OHLCV + 글로벌 데이터 자동 갱신 스크립트 (data_updater.py) v5.4
 """
 
 import logging
@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 # ============================================
 # 설정
 # ============================================
-DATA_DIR = Path(r"C:\Coding\data\adjusted")
+DATA_DIR = Path(r"C:\Coding\data\ohlcv")  # 종목별 OHLCV
+GLOBAL_DIR = Path(r"C:\Coding\data\global")  # 글로벌 데이터
 MAPPING_FILE = Path(r"C:\Coding\data\stock_mapping.csv")
 
 API_DELAY = 0.3
@@ -164,3 +165,190 @@ def run_data_update(max_stocks: int = MAX_STOCKS_PER_RUN) -> dict:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     run_data_update(max_stocks=10)
+
+
+# ============================================
+# 글로벌 데이터 갱신 (v5.4)
+# ============================================
+
+# 글로벌 지표 심볼
+GLOBAL_SYMBOLS = {
+    'nasdaq': 'IXIC',      # 나스닥 종합
+    'dow': 'DJI',          # 다우존스
+    'sp500': 'US500',      # S&P 500
+    'usdkrw': 'USD/KRW',   # 원/달러 환율
+    'kospi': 'KS11',       # 코스피
+    'kosdaq': 'KQ11',      # 코스닥
+}
+
+
+def update_global_data() -> dict:
+    """글로벌 지표 데이터 갱신 (나스닥, 다우, S&P500, 환율, 코스피, 코스닥)
+    
+    Returns:
+        갱신 결과 {'updated': int, 'failed': int}
+    """
+    try:
+        import FinanceDataReader as fdr
+    except ImportError:
+        logger.error("FinanceDataReader 미설치. pip install finance-datareader")
+        return {'updated': 0, 'failed': len(GLOBAL_SYMBOLS)}
+    
+    print("=" * 50)
+    print("🌍 글로벌 데이터 갱신 시작")
+    print("=" * 50)
+    
+    today = date.today()
+    
+    # 디렉토리 생성
+    GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+    
+    results = {'updated': 0, 'failed': 0}
+    
+    for name, symbol in GLOBAL_SYMBOLS.items():
+        file_path = GLOBAL_DIR / f"{name}.csv"
+        
+        try:
+            # 기존 데이터 확인
+            if file_path.exists():
+                df_existing = pd.read_csv(file_path, index_col=0, parse_dates=True)
+                last_date = df_existing.index[-1].date()
+                
+                # 이미 최신이면 스킵
+                if last_date >= today - timedelta(days=1):
+                    logger.debug(f"  {name}: 이미 최신 ({last_date})")
+                    results['updated'] += 1
+                    continue
+                
+                # 부족한 기간만 조회
+                start_date = last_date + timedelta(days=1)
+            else:
+                # 신규: 2016년부터
+                df_existing = None
+                start_date = date(2016, 6, 1)
+            
+            # 데이터 조회
+            df_new = fdr.DataReader(symbol, start_date, today)
+            
+            if df_new is None or len(df_new) == 0:
+                logger.warning(f"  {name}: 신규 데이터 없음")
+                results['updated'] += 1
+                continue
+            
+            # 컬럼 정리
+            df_new = df_new[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+            df_new.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            
+            # 기존 데이터와 병합
+            if df_existing is not None:
+                df_combined = pd.concat([df_existing, df_new])
+                df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
+                df_combined.sort_index(inplace=True)
+            else:
+                df_combined = df_new
+            
+            # 저장
+            df_combined.to_csv(file_path)
+            
+            new_count = len(df_new)
+            logger.info(f"  ✓ {name}: {new_count}일 추가 (마지막: {df_combined.index[-1].date()})")
+            results['updated'] += 1
+            
+        except Exception as e:
+            logger.error(f"  ✗ {name}: 갱신 실패 - {e}")
+            results['failed'] += 1
+    
+    # global_merged.csv 갱신
+    try:
+        update_global_merged()
+    except Exception as e:
+        logger.warning(f"global_merged 갱신 실패: {e}")
+    
+    print("=" * 50)
+    print(f"🌍 글로벌 데이터 갱신 완료: 성공 {results['updated']}, 실패 {results['failed']}")
+    print("=" * 50)
+    
+    return results
+
+
+def update_global_merged():
+    """글로벌 통합 데이터 갱신 (global_merged.csv)"""
+    
+    # 코스피 기준 (한국 거래일)
+    kospi_path = GLOBAL_DIR / "kospi.csv"
+    if not kospi_path.exists():
+        logger.warning("kospi.csv 없음 - global_merged 스킵")
+        return
+    
+    kospi = pd.read_csv(kospi_path, index_col=0, parse_dates=True)
+    
+    # 각 지표 로드 및 병합
+    merged = pd.DataFrame(index=kospi.index)
+    merged['date_kr'] = merged.index
+    
+    for name in GLOBAL_SYMBOLS.keys():
+        file_path = GLOBAL_DIR / f"{name}.csv"
+        if file_path.exists():
+            df = pd.read_csv(file_path, index_col=0, parse_dates=True)
+            
+            # 등락률 계산
+            df['change_pct'] = ((df['Close'] / df['Close'].shift(1)) - 1) * 100
+            
+            # 한국 날짜에 맞춰 병합 (미국 데이터는 +1일 매핑)
+            if name in ['nasdaq', 'dow', 'sp500', 'usdkrw']:
+                # 미국 데이터: 다음 한국 영업일에 영향
+                df.index = df.index + pd.Timedelta(days=1)
+            
+            merged[f'{name}_close'] = df['Close']
+            merged[f'{name}_change_pct'] = df['change_pct']
+    
+    # 나스닥 트렌드 분류
+    if 'nasdaq_change_pct' in merged.columns:
+        merged['nasdaq_trend'] = merged['nasdaq_change_pct'].apply(
+            lambda x: '폭등' if x >= 2 else '급등' if x >= 1 else '상승' if x > 0 
+            else '하락' if x > -1 else '급락' if x > -2 else '폭락' if pd.notna(x) else 'unknown'
+        )
+    
+    # 환율 트렌드 분류
+    if 'usdkrw_change_pct' in merged.columns:
+        merged['fx_trend'] = merged['usdkrw_change_pct'].apply(
+            lambda x: '원화강세' if x <= -0.5 else '약보합' if x < 0 
+            else '강보합' if x < 0.5 else '원화약세' if pd.notna(x) else 'unknown'
+        )
+    
+    # NaN 제거
+    merged = merged.dropna(subset=['kospi_close'])
+    
+    # 저장
+    merged_path = GLOBAL_DIR / "global_merged.csv"
+    merged.to_csv(merged_path)
+    
+    logger.info(f"  ✓ global_merged.csv: {len(merged)}일 저장")
+
+
+def run_full_data_update(max_stocks: int = MAX_STOCKS_PER_RUN) -> dict:
+    """OHLCV + 글로벌 데이터 전체 갱신 (v5.4)
+    
+    Returns:
+        {'ohlcv': dict, 'global': dict}
+    """
+    print("\n" + "=" * 60)
+    print("📊 전체 데이터 갱신 시작 (OHLCV + 글로벌)")
+    print("=" * 60 + "\n")
+    
+    # 1. OHLCV 갱신
+    ohlcv_result = run_data_update(max_stocks=max_stocks)
+    
+    # 2. 글로벌 데이터 갱신
+    global_result = update_global_data()
+    
+    print("\n" + "=" * 60)
+    print("📊 전체 데이터 갱신 완료")
+    print(f"   OHLCV: 성공 {ohlcv_result['updated']}, 실패 {ohlcv_result['failed']}")
+    print(f"   글로벌: 성공 {global_result['updated']}, 실패 {global_result['failed']}")
+    print("=" * 60)
+    
+    return {
+        'ohlcv': ohlcv_result,
+        'global': global_result,
+    }

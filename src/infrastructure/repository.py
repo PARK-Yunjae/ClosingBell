@@ -786,43 +786,12 @@ class Repository:
         return {row['indicator']: row['weight'] for row in rows}
     
     def get_k_signal_results(self, days: int = 30) -> List[Dict]:
-        """K값 시그널 익일 결과 조회
-        
-        Args:
-            days: 조회 기간
-            
-        Returns:
-            시그널 + 익일 결과 리스트
-        """
-        rows = self.db.fetch_all(
-            """
-            SELECT 
-                ks.*,
-                kr.next_open,
-                kr.next_high,
-                kr.next_low,
-                kr.next_close,
-                kr.profit_pct,
-                kr.is_win,
-                kr.max_profit_pct,
-                kr.max_loss_pct,
-                (kr.next_open - ks.current_price) * 100.0 / ks.current_price as gap_rate,
-                (kr.next_high - ks.current_price) * 100.0 / ks.current_price as high_change_rate
-            FROM k_signals ks
-            JOIN k_signal_results kr ON ks.id = kr.k_signal_id
-            WHERE ks.signal_date >= DATE('now', ?)
-            ORDER BY ks.signal_date DESC
-            """,
-            (f'-{days} days',)
-        )
-        return [dict(row) for row in rows]
+        """v5.4: K값 전략 제거됨 - 빈 리스트 반환"""
+        return []
     
     def get_k_strategy_config(self) -> Dict[str, float]:
-        """K값 전략 파라미터 조회"""
-        rows = self.db.fetch_all(
-            "SELECT param_name, param_value FROM k_strategy_config WHERE is_active = 1"
-        )
-        return {row['param_name']: row['param_value'] for row in rows}
+        """v5.4: K값 전략 제거됨 - 빈 딕셔너리 반환"""
+        return {}
     
     def update_k_strategy_param(
         self, 
@@ -830,35 +799,8 @@ class Repository:
         new_value: float, 
         reason: str = ""
     ):
-        """K값 전략 파라미터 업데이트"""
-        # 현재 값 조회
-        current = self.db.fetch_one(
-            "SELECT param_value FROM k_strategy_config WHERE param_name = ?",
-            (param_name,)
-        )
-        
-        if not current:
-            logger.warning(f"알 수 없는 파라미터: {param_name}")
-            return
-        
-        old_value = current['param_value']
-        
-        # 업데이트
-        self.db.execute(
-            "UPDATE k_strategy_config SET param_value = ?, updated_at = CURRENT_TIMESTAMP WHERE param_name = ?",
-            (new_value, param_name)
-        )
-        
-        # 이력 저장
-        self.db.execute(
-            """
-            INSERT INTO k_strategy_history (param_name, old_value, new_value, change_reason)
-            VALUES (?, ?, ?, ?)
-            """,
-            (param_name, old_value, new_value, reason)
-        )
-        
-        logger.info(f"K값 파라미터 업데이트: {param_name} {old_value} → {new_value}")
+        """v5.4: K값 전략 제거됨 - 아무 작업 안함"""
+        pass
     
     def update_weights(self, weights: Dict[str, float]):
         """전체 가중치 업데이트"""
@@ -1276,11 +1218,15 @@ def get_next_day_repository() -> NextDayResultRepository:
 def get_trade_journal_repository() -> TradeJournalRepository:
     return TradeJournalRepository()
 
-def get_k_signal_repository() -> KSignalRepository:
-    return KSignalRepository()
 
-def get_k_strategy_config_repository() -> KStrategyConfigRepository:
-    return KStrategyConfigRepository()
+# v5.4: K값 전략 제거 - 아래 함수들은 호환성을 위해 빈 값 반환
+def get_k_signal_repository():
+    """v5.4: K값 전략 제거됨 - 빈 객체 반환"""
+    return None
+
+def get_k_strategy_config_repository():
+    """v5.4: K값 전략 제거됨 - 빈 객체 반환"""
+    return None
 
 
 if __name__ == "__main__":

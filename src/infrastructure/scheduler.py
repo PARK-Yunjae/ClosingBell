@@ -24,7 +24,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from src.config.settings import settings
-from src.services.data_updater import run_data_update
+from src.services.data_updater import run_data_update, update_global_data
 from src.services.result_collector import run_result_collection
 from src.services.learner_service import run_daily_learning
 
@@ -258,7 +258,7 @@ class ScreenerScheduler:
         logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
     
     def setup_default_schedules(self):
-        """기본 스케줄 설정 - v5.3 (종가매매 + K값 학습)"""
+        """기본 스케줄 설정 - v5.4 (종가매매 전용 + 글로벌 데이터 갱신)"""
         from src.services.screener_service import (
             run_main_screening,
             run_preview_screening,
@@ -287,7 +287,7 @@ class ScreenerScheduler:
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
-        # 16:30 데이터 갱신 (OHLCV 자동 업데이트)
+        # 16:30 OHLCV 데이터 갱신
         self.add_job(
             job_id='daily_data_update',
             func=run_data_update,
@@ -295,7 +295,15 @@ class ScreenerScheduler:
             minute=30,
         )
         
-        # v5.3: 17:00 익일 결과 수집 (승률 추적)
+        # v5.4: 16:40 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
+        self.add_job(
+            job_id='global_data_update',
+            func=update_global_data,
+            hour=16,
+            minute=40,
+        )
+        
+        # 17:00 익일 결과 수집 (승률 추적)
         self.add_job(
             job_id='result_collection',
             func=run_result_collection,
@@ -303,7 +311,7 @@ class ScreenerScheduler:
             minute=0,
         )
         
-        # v5.3: 17:10 일일 학습 (상관관계 분석 + 가중치 조정)
+        # 17:10 일일 학습 (상관관계 분석 + 가중치 조정)
         self.add_job(
             job_id='daily_learning',
             func=run_daily_learning,
@@ -328,7 +336,7 @@ class ScreenerScheduler:
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v5.3: 스크리닝 + 결과수집 + Git + 자동종료)")
+        logger.info("기본 스케줄 설정 완료 (v5.4: 종가매매 + OHLCV/글로벌 갱신 + 학습)")
     
     def start(self):
         """스케줄러 시작"""

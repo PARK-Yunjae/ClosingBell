@@ -458,7 +458,8 @@ class Database:
         
         # 초기 데이터 삽입
         self.execute_script(INITIAL_WEIGHTS)
-        self.execute_script(INITIAL_K_CONFIG)
+        # v5.4: K값 초기화 제거 (K값 전략 폐기)
+        # self.execute_script(INITIAL_K_CONFIG)
         
         # 마이그레이션 실행
         self.run_migrations()

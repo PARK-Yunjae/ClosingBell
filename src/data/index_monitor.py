@@ -437,6 +437,128 @@ def get_index_monitor(kis_client=None) -> IndexMonitor:
     return _index_monitor
 
 
+# ============================================================
+# 글로벌 지표 (나스닥/환율) - v5.4 추가
+# ============================================================
+
+@dataclass
+class GlobalIndicators:
+    """글로벌 지표 데이터"""
+    nasdaq_change: Optional[float] = None    # 전일 나스닥 등락률 (%)
+    usdkrw_change: Optional[float] = None    # 전일 환율 등락률 (%)
+    nasdaq_trend: str = "unknown"            # 폭등/급등/상승/하락/급락/폭락
+    fx_trend: str = "unknown"                # 원화강세/약보합/강보합/원화약세
+    timestamp: Optional[datetime] = None
+    
+    @property
+    def is_risk_off(self) -> bool:
+        """리스크 오프 상태 (나스닥 -2% 이하 또는 환율 +1% 이상)"""
+        if self.nasdaq_change is not None and self.nasdaq_change <= -2.0:
+            return True
+        if self.usdkrw_change is not None and self.usdkrw_change >= 1.0:
+            return True
+        return False
+    
+    @property
+    def is_optimal(self) -> bool:
+        """최적 조건 (나스닥↑ & 환율↓) - 백테스트 승률 55.2%"""
+        if self.nasdaq_change is not None and self.usdkrw_change is not None:
+            return self.nasdaq_change > 0 and self.usdkrw_change < 0
+        return False
+    
+    def get_score_adjustment(self) -> int:
+        """글로벌 지표 기반 점수 조정값
+        
+        백테스트 결과:
+        - 나스닥↑ & 환율↓: 55.2% (최적) → +3점
+        - 나스닥 폭락(-2%↓): 57.2% (역발상) → +5점
+        - 나스닥↓ & 환율↑: 56.2% (오히려 좋음) → 0점
+        """
+        adjustment = 0
+        
+        # 나스닥 폭락 시 역발상 보너스 (백테스트 57.2%)
+        if self.nasdaq_change is not None and self.nasdaq_change <= -2.0:
+            adjustment += 5
+        # 나스닥↑ & 환율↓ 최적 조건 보너스
+        elif self.is_optimal:
+            adjustment += 3
+        
+        return adjustment
+
+
+def get_global_indicators() -> GlobalIndicators:
+    """글로벌 지표 조회 (나스닥, 환율)
+    
+    FinanceDataReader를 사용하여 전일 나스닥/환율 데이터 조회
+    """
+    try:
+        import FinanceDataReader as fdr
+        from datetime import timedelta
+        
+        today = date.today()
+        start_date = today - timedelta(days=7)  # 최근 7일
+        
+        # 나스닥 조회
+        nasdaq_change = None
+        try:
+            nasdaq = fdr.DataReader('IXIC', start_date, today)
+            if len(nasdaq) >= 2:
+                nasdaq_change = ((nasdaq['Close'].iloc[-1] / nasdaq['Close'].iloc[-2]) - 1) * 100
+        except Exception as e:
+            logger.warning(f"나스닥 조회 실패: {e}")
+        
+        # 환율 조회
+        usdkrw_change = None
+        try:
+            usdkrw = fdr.DataReader('USD/KRW', start_date, today)
+            if len(usdkrw) >= 2:
+                usdkrw_change = ((usdkrw['Close'].iloc[-1] / usdkrw['Close'].iloc[-2]) - 1) * 100
+        except Exception as e:
+            logger.warning(f"환율 조회 실패: {e}")
+        
+        # 트렌드 분류
+        nasdaq_trend = "unknown"
+        if nasdaq_change is not None:
+            if nasdaq_change >= 2.0:
+                nasdaq_trend = "폭등"
+            elif nasdaq_change >= 1.0:
+                nasdaq_trend = "급등"
+            elif nasdaq_change > 0:
+                nasdaq_trend = "상승"
+            elif nasdaq_change > -1.0:
+                nasdaq_trend = "하락"
+            elif nasdaq_change > -2.0:
+                nasdaq_trend = "급락"
+            else:
+                nasdaq_trend = "폭락"
+        
+        fx_trend = "unknown"
+        if usdkrw_change is not None:
+            if usdkrw_change <= -0.5:
+                fx_trend = "원화강세"
+            elif usdkrw_change < 0:
+                fx_trend = "약보합"
+            elif usdkrw_change < 0.5:
+                fx_trend = "강보합"
+            else:
+                fx_trend = "원화약세"
+        
+        return GlobalIndicators(
+            nasdaq_change=nasdaq_change,
+            usdkrw_change=usdkrw_change,
+            nasdaq_trend=nasdaq_trend,
+            fx_trend=fx_trend,
+            timestamp=datetime.now(),
+        )
+        
+    except ImportError:
+        logger.warning("FinanceDataReader 미설치")
+        return GlobalIndicators()
+    except Exception as e:
+        logger.error(f"글로벌 지표 조회 실패: {e}")
+        return GlobalIndicators()
+
+
 # 테스트
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -454,3 +576,12 @@ if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("짧은 형식:")
     print(monitor.format_market_status_short(status))
+    
+    print("\n" + "=" * 50)
+    print("글로벌 지표 (v5.4):")
+    global_ind = get_global_indicators()
+    print(f"  나스닥: {global_ind.nasdaq_change:+.2f}% ({global_ind.nasdaq_trend})" if global_ind.nasdaq_change else "  나스닥: 조회실패")
+    print(f"  환율: {global_ind.usdkrw_change:+.2f}% ({global_ind.fx_trend})" if global_ind.usdkrw_change else "  환율: 조회실패")
+    print(f"  리스크오프: {global_ind.is_risk_off}")
+    print(f"  최적조건: {global_ind.is_optimal}")
+    print(f"  점수조정: {global_ind.get_score_adjustment():+d}점")

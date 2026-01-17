@@ -1,12 +1,18 @@
 """
-스크리닝 서비스 v5.3
+스크리닝 서비스 v5.4
 
 책임:
 - 스크리닝 플로우 제어
 - 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
 - 최소한의 하드필터 (데이터부족, 하락종목만 제외)
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
-- K값 돌파 시그널 통합 (v5.3)
+- 글로벌 지표 필터 (나스닥/환율) v5.4
+
+v5.4 변경사항:
+- K값 전략 제거
+- 글로벌 지표 점수 조정 (나스닥/환율)
+- 연속양봉 4일 이상 감점 강화
+- CCI 150~170 최적 구간
 """
 
 import os
@@ -36,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScreenerService:
-    """스크리닝 서비스 v5.3 (종가매매 + K값 돌파)"""
+    """스크리닝 서비스 v5.4 (글로벌 지표 필터 통합)"""
     
     def __init__(
         self,
@@ -49,7 +55,7 @@ class ScreenerService:
         self.screening_repo = screening_repo or get_screening_repository()
         self.calculator = ScoreCalculatorV5()
         
-        logger.info("ScreenerService v5.3 초기화")
+        logger.info("ScreenerService v5.4 초기화")
     
     def run_screening(
         self,
@@ -65,6 +71,26 @@ class ScreenerService:
         logger.info(f"스크리닝 시작: {screen_date} {screen_time}")
         
         try:
+            # 0. 글로벌 지표 조회 (v5.4)
+            global_adjustment = 0
+            global_info = ""
+            try:
+                from src.data.index_monitor import get_global_indicators
+                global_ind = get_global_indicators()
+                global_adjustment = global_ind.get_score_adjustment()
+                
+                if global_ind.nasdaq_change is not None:
+                    global_info = f"나스닥 {global_ind.nasdaq_change:+.1f}%({global_ind.nasdaq_trend})"
+                    if global_ind.usdkrw_change is not None:
+                        global_info += f" / 환율 {global_ind.usdkrw_change:+.1f}%({global_ind.fx_trend})"
+                    
+                    if global_adjustment != 0:
+                        global_info += f" → 점수 {global_adjustment:+d}점"
+                    
+                    logger.info(f"글로벌 지표: {global_info}")
+            except Exception as e:
+                logger.warning(f"글로벌 지표 조회 실패: {e}")
+            
             # 1. 유니버스 조회
             stocks = self._get_universe()
             if not stocks:
@@ -83,6 +109,16 @@ class ScreenerService:
             
             # 3. 점수 계산
             scores = self.calculator.calculate_scores(stock_data_list)
+            
+            # 3-1. 글로벌 지표 점수 조정 (v5.4)
+            if global_adjustment != 0:
+                for score in scores:
+                    score.score_total = min(100, score.score_total + global_adjustment)
+                    # 등급 재계산
+                    score.grade = self.calculator._determine_grade(score.score_total)
+                    score.sell_strategy = self.calculator._get_sell_strategy(score.grade)
+                logger.info(f"글로벌 점수 조정: {global_adjustment:+d}점 적용")
+            
             top_n = self.calculator.select_top_n(scores, TOP_N_COUNT)
             
             execution_time = time.time() - start_time
@@ -97,6 +133,7 @@ class ScreenerService:
                 "status": "SUCCESS",
                 "is_preview": is_preview,
                 "error_message": None,
+                "global_info": global_info,  # v5.4
             }
             
             # 4. DB 저장
@@ -290,11 +327,11 @@ class ScreenerService:
             logger.error(f"DB 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
-        """알림 발송 (종가매매 + K값 돌파)"""
+        """알림 발송 (종가매매 TOP5) v5.4"""
         try:
             top_n = result["top_n"]
             
-            # 1. 종가매매 TOP5 발송
+            # 종가매매 TOP5 발송
             if not top_n:
                 self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
             else:
@@ -306,147 +343,14 @@ class ScreenerService:
                     logger.info("종가매매 Discord 발송 완료")
                 else:
                     logger.warning("종가매매 Discord 발송 실패")
-            
-            # 2. K값 돌파 TOP3 발송
-            try:
-                k_signals = self._get_k_signals(result.get("all_scores", []))
-                
-                if k_signals:
-                    from src.domain.k_breakout import format_k_signal_embed
-                    
-                    k_title = "[프리뷰] K값 돌파 TOP3" if is_preview else "🚀 K값 돌파 TOP3"
-                    k_embed = format_k_signal_embed(k_signals[:3], title=k_title)
-                    
-                    k_success = self.discord_notifier.send_embed(k_embed)
-                    if k_success:
-                        logger.info(f"K값 돌파 Discord 발송 완료 ({len(k_signals)}개)")
-                    else:
-                        logger.warning("K값 돌파 Discord 발송 실패")
-                else:
-                    logger.info("K값 돌파 시그널 없음")
-                    
-            except Exception as e:
-                logger.warning(f"K값 돌파 알림 에러: {e}")
                 
         except Exception as e:
             logger.error(f"알림 에러: {e}")
     
-    def _get_k_signals(self, all_scores: List) -> List:
-        """K값 돌파 시그널 조회 및 DB 저장"""
-        try:
-            from src.domain.k_breakout import KBreakoutStrategy, KBreakoutConfig
-            from src.infrastructure.repository import get_k_signal_repository
-            
-            config = KBreakoutConfig(
-                k=0.3,
-                stop_loss_pct=-2.0,
-                take_profit_pct=5.0,
-                min_trading_value=200.0,
-                min_volume_ratio=2.0,
-                max_signals=5,
-            )
-            strategy = KBreakoutStrategy(config)
-            
-            # 지수 데이터 조회 시도
-            try:
-                index_data = self.kis_client.get_index_price("0001")
-                if index_data:
-                    strategy.set_index_data(
-                        index_change=getattr(index_data, 'change_rate', 0),
-                        index_close=getattr(index_data, 'close', 0),
-                        index_ma5=getattr(index_data, 'ma5', 0),
-                        index_ma20=getattr(index_data, 'ma20', 0),
-                    )
-            except Exception as e:
-                logger.debug(f"K값 지수 조회 실패: {e}")
-                strategy.config.require_index_above_ma5 = False
-            
-            # 스크리닝된 종목들에서 K값 시그널 체크
-            signals = []
-            
-            for score in all_scores:
-                try:
-                    # StockScoreV5에서 데이터 추출
-                    stock_code = score.stock_code
-                    stock_name = score.stock_name
-                    
-                    # 일봉 데이터 재조회 (open, high, low 필요)
-                    daily_prices = self.kis_client.get_daily_prices(stock_code, count=25)
-                    
-                    if len(daily_prices) < 2:
-                        continue
-                    
-                    signal = strategy.scan_from_daily_prices(
-                        stock_code=stock_code,
-                        stock_name=stock_name,
-                        daily_prices=daily_prices,
-                        current_price=score.current_price,
-                    )
-                    
-                    if signal:
-                        # ClosingBell 점수 추가
-                        signal.score = max(signal.score, score.score_total)
-                        signals.append(signal)
-                        
-                except Exception as e:
-                    logger.debug(f"K값 체크 실패 {score.stock_code}: {e}")
-                    continue
-            
-            # 점수순 정렬
-            signals.sort(key=lambda x: x.score, reverse=True)
-            signals = signals[:5]
-            
-            # DB 저장
-            if signals:
-                try:
-                    k_repo = get_k_signal_repository()
-                    signal_dicts = []
-                    
-                    for i, sig in enumerate(signals):
-                        sig_dict = {
-                            'stock_code': sig.stock_code,
-                            'stock_name': sig.stock_name,
-                            'signal_date': sig.signal_date,
-                            'signal_time': sig.signal_time,
-                            'current_price': sig.current_price,
-                            'open_price': sig.open_price,
-                            'breakout_price': sig.breakout_price,
-                            'prev_high': sig.prev_high,
-                            'prev_low': sig.prev_low,
-                            'prev_close': sig.prev_close,
-                            'k_value': sig.k_value,
-                            'range_value': sig.range_value,
-                            'prev_change_pct': sig.prev_change_pct,
-                            'volume_ratio': sig.volume_ratio,
-                            'trading_value': sig.trading_value,
-                            'stop_loss_pct': sig.stop_loss_pct,
-                            'take_profit_pct': sig.take_profit_pct,
-                            'stop_loss_price': sig.stop_loss_price,
-                            'take_profit_price': sig.take_profit_price,
-                            'index_change': sig.index_change,
-                            'index_above_ma5': sig.index_above_ma5,
-                            'score': sig.score,
-                            'confidence': sig.confidence,
-                            'rank': i + 1,
-                        }
-                        signal_dicts.append(sig_dict)
-                    
-                    k_repo.save_signals(signal_dicts)
-                    logger.info(f"K값 시그널 {len(signal_dicts)}개 DB 저장 완료")
-                    
-                except Exception as e:
-                    logger.warning(f"K값 시그널 DB 저장 실패: {e}")
-            
-            return signals[:5]
-            
-        except Exception as e:
-            logger.error(f"K값 시그널 조회 에러: {e}")
-            return []
-    
     def _print_results(self, top_n: List[StockScoreV5]):
         """콘솔 출력"""
         print("\n" + "=" * 60)
-        print("🔔 종가매매 TOP5 (v5.3)")
+        print("🔔 종가매매 TOP5 (v5.4)")
         print("=" * 60)
         
         if not top_n:

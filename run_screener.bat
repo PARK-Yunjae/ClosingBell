@@ -1,37 +1,21 @@
 @echo off
-chcp 65001 >nul 2>&1
-title ClosingBell Screener
+chcp 65001 >nul
+cd /d "%~dp0"
 
 echo ========================================
-echo  ClosingBell v5.3 - Scheduler Mode
+echo  ClosingBell v5.4 - Scheduler Mode
 echo ========================================
-echo.
 
-:: Check venv
 if exist "venv\Scripts\activate.bat" (
-    echo [OK] Virtual environment found
     call venv\Scripts\activate.bat
+    echo [OK] Virtual environment activated
 ) else (
     echo [WARN] No venv found, using system Python
 )
 
-:: Check Python
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found!
-    echo Please install Python 3.10+
-    pause
-    exit /b 1
-)
-
-echo.
 echo Starting scheduler mode...
-echo Press Ctrl+C to stop
-echo.
-
 python main.py
 
-echo.
 echo ========================================
 echo  Finished
 echo ========================================
