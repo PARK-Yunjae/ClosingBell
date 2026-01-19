@@ -1,10 +1,16 @@
 """
-데이터 접근 레이어
+데이터 접근 레이어 (v6.0)
 
 책임:
 - CRUD 오퍼레이션
 - 복잡한 쿼리 캡슐화
 - 데이터 모델 변환
+
+v6.0 추가:
+- Top5HistoryRepository: TOP5 20일 추적 마스터
+- Top5DailyPricesRepository: D+1~D+20 일별 가격
+- NomadCandidatesRepository: 유목민 후보 종목
+- NomadNewsRepository: 유목민 뉴스
 
 의존성:
 - infrastructure.database
@@ -1227,6 +1233,421 @@ def get_k_signal_repository():
 def get_k_strategy_config_repository():
     """v5.4: K값 전략 제거됨 - 빈 객체 반환"""
     return None
+
+
+# ========================================================================
+# v6.0 Repository 클래스들: TOP5 20일 추적 + 유목민 공부법
+# ========================================================================
+
+class Top5HistoryRepository:
+    """closing_top5_history 테이블 CRUD"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def upsert(self, data: dict) -> int:
+        """TOP5 이력 삽입/갱신 (UNIQUE 충돌 시 UPDATE)"""
+        existing = self.db.fetch_one(
+            "SELECT id FROM closing_top5_history WHERE screen_date = ? AND stock_code = ?",
+            (data['screen_date'], data['stock_code'])
+        )
+        
+        if existing:
+            self.db.execute(
+                """
+                UPDATE closing_top5_history SET
+                    rank = ?, stock_name = ?, screen_price = ?, screen_score = ?, grade = ?,
+                    cci = ?, rsi = ?, change_rate = ?, disparity_20 = ?,
+                    consecutive_up = ?, volume_ratio_5 = ?, data_source = ?
+                WHERE id = ?
+                """,
+                (
+                    data['rank'], data['stock_name'], data['screen_price'],
+                    data['screen_score'], data['grade'],
+                    data.get('cci'), data.get('rsi'), data.get('change_rate'),
+                    data.get('disparity_20'), data.get('consecutive_up', 0),
+                    data.get('volume_ratio_5'), data.get('data_source', 'realtime'),
+                    existing['id']
+                )
+            )
+            return existing['id']
+        else:
+            cursor = self.db.execute(
+                """
+                INSERT INTO closing_top5_history 
+                (screen_date, rank, stock_code, stock_name, screen_price, screen_score, grade,
+                 cci, rsi, change_rate, disparity_20, consecutive_up, volume_ratio_5, data_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data['screen_date'], data['rank'], data['stock_code'], data['stock_name'],
+                    data['screen_price'], data['screen_score'], data['grade'],
+                    data.get('cci'), data.get('rsi'), data.get('change_rate'),
+                    data.get('disparity_20'), data.get('consecutive_up', 0),
+                    data.get('volume_ratio_5'), data.get('data_source', 'realtime')
+                )
+            )
+            return cursor.lastrowid
+    
+    def get_active_items(self) -> List[dict]:
+        """tracking_status='active'인 항목들"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM closing_top5_history WHERE tracking_status = 'active' ORDER BY screen_date DESC, rank"
+        )
+        return [dict(row) for row in rows]
+    
+    def get_by_date(self, screen_date: str) -> List[dict]:
+        """특정 날짜의 TOP5"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM closing_top5_history WHERE screen_date = ? ORDER BY rank",
+            (screen_date,)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_dates_with_data(self, days: int = 60) -> List[str]:
+        """데이터가 있는 날짜 목록"""
+        rows = self.db.fetch_all(
+            "SELECT DISTINCT screen_date FROM closing_top5_history ORDER BY screen_date DESC LIMIT ?",
+            (days,)
+        )
+        return [row['screen_date'] for row in rows]
+    
+    def update_tracking_days(self, id: int, days: int, last_date: str):
+        """추적 일수 업데이트"""
+        self.db.execute(
+            "UPDATE closing_top5_history SET tracking_days = ?, last_tracked_date = ? WHERE id = ?",
+            (days, last_date, id)
+        )
+    
+    def update_status(self, id: int, status: str):
+        """상태 변경"""
+        self.db.execute(
+            "UPDATE closing_top5_history SET tracking_status = ? WHERE id = ?",
+            (status, id)
+        )
+    
+    def get_by_id(self, id: int) -> Optional[dict]:
+        """ID로 조회"""
+        row = self.db.fetch_one("SELECT * FROM closing_top5_history WHERE id = ?", (id,))
+        return dict(row) if row else None
+
+
+class Top5DailyPricesRepository:
+    """top5_daily_prices 테이블 CRUD"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def insert(self, data: dict) -> int:
+        """일별 가격 삽입"""
+        existing = self.db.fetch_one(
+            "SELECT id FROM top5_daily_prices WHERE top5_history_id = ? AND trade_date = ?",
+            (data['top5_history_id'], data['trade_date'])
+        )
+        
+        if existing:
+            return existing['id']
+        
+        cursor = self.db.execute(
+            """
+            INSERT INTO top5_daily_prices
+            (top5_history_id, trade_date, days_after, open_price, high_price, low_price, close_price,
+             volume, return_from_screen, gap_rate, high_return, low_return, data_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data['top5_history_id'], data['trade_date'], data['days_after'],
+                data['open_price'], data['high_price'], data['low_price'], data['close_price'],
+                data.get('volume'), data['return_from_screen'],
+                data.get('gap_rate'), data.get('high_return'), data.get('low_return'),
+                data.get('data_source', 'realtime')
+            )
+        )
+        return cursor.lastrowid
+    
+    def get_by_history(self, history_id: int) -> List[dict]:
+        """특정 TOP5 종목의 모든 일별 가격"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM top5_daily_prices WHERE top5_history_id = ? ORDER BY days_after",
+            (history_id,)
+        )
+        return [dict(row) for row in rows]
+    
+    def exists(self, history_id: int, trade_date: str) -> bool:
+        """중복 체크"""
+        row = self.db.fetch_one(
+            "SELECT id FROM top5_daily_prices WHERE top5_history_id = ? AND trade_date = ?",
+            (history_id, trade_date)
+        )
+        return row is not None
+    
+    def get_collected_days(self, history_id: int) -> List[int]:
+        """수집된 D+N 목록"""
+        rows = self.db.fetch_all(
+            "SELECT days_after FROM top5_daily_prices WHERE top5_history_id = ? ORDER BY days_after",
+            (history_id,)
+        )
+        return [row['days_after'] for row in rows]
+
+
+class NomadCandidatesRepository:
+    """nomad_candidates 테이블 CRUD"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def upsert(self, data: dict) -> int:
+        """후보 삽입/갱신"""
+        existing = self.db.fetch_one(
+            "SELECT id FROM nomad_candidates WHERE study_date = ? AND stock_code = ?",
+            (data['study_date'], data['stock_code'])
+        )
+        
+        if existing:
+            self.db.execute(
+                """
+                UPDATE nomad_candidates SET
+                    stock_name = ?, reason_flag = ?, close_price = ?, change_rate = ?,
+                    volume = ?, trading_value = ?, data_source = ?
+                WHERE id = ?
+                """,
+                (
+                    data['stock_name'], data['reason_flag'], data['close_price'],
+                    data['change_rate'], data['volume'], data['trading_value'],
+                    data.get('data_source', 'realtime'), existing['id']
+                )
+            )
+            return existing['id']
+        else:
+            cursor = self.db.execute(
+                """
+                INSERT INTO nomad_candidates
+                (study_date, stock_code, stock_name, reason_flag, close_price, change_rate,
+                 volume, trading_value, data_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data['study_date'], data['stock_code'], data['stock_name'],
+                    data['reason_flag'], data['close_price'], data['change_rate'],
+                    data['volume'], data['trading_value'],
+                    data.get('data_source', 'realtime')
+                )
+            )
+            return cursor.lastrowid
+    
+    def get_by_date(self, study_date: str) -> List[dict]:
+        """특정 날짜의 후보"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM nomad_candidates WHERE study_date = ? ORDER BY change_rate DESC",
+            (study_date,)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_by_date_and_reason(self, study_date: str, reason_flag: str) -> List[dict]:
+        """날짜 + 사유로 조회"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM nomad_candidates WHERE study_date = ? AND reason_flag = ? ORDER BY change_rate DESC",
+            (study_date, reason_flag)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_by_date_and_code(self, study_date: str, stock_code: str) -> Optional[dict]:
+        """특정 종목 조회"""
+        row = self.db.fetch_one(
+            "SELECT * FROM nomad_candidates WHERE study_date = ? AND stock_code = ?",
+            (study_date, stock_code)
+        )
+        return dict(row) if row else None
+    
+    def update_company_info(self, study_date: str, stock_code: str, info: dict):
+        """기업 정보 업데이트"""
+        self.db.execute(
+            """
+            UPDATE nomad_candidates SET
+                market = ?, sector = ?, market_cap = ?, per = ?, pbr = ?,
+                eps = ?, roe = ?, business_summary = ?, establishment_date = ?,
+                ceo_name = ?, revenue = ?, operating_profit = ?
+            WHERE study_date = ? AND stock_code = ?
+            """,
+            (
+                info.get('market'), info.get('sector'), info.get('market_cap'),
+                info.get('per'), info.get('pbr'), info.get('eps'), info.get('roe'),
+                info.get('business_summary'), info.get('establishment_date'),
+                info.get('ceo_name'), info.get('revenue'), info.get('operating_profit'),
+                study_date, stock_code
+            )
+        )
+    
+    def update_news_status(self, study_date: str, stock_code: str, status: str, count: int):
+        """뉴스 상태 업데이트"""
+        self.db.execute(
+            "UPDATE nomad_candidates SET news_status = ?, news_count = ? WHERE study_date = ? AND stock_code = ?",
+            (status, count, study_date, stock_code)
+        )
+    
+    def update_ai_summary(self, study_date: str, stock_code: str, summary: str):
+        """AI 요약 업데이트"""
+        self.db.execute(
+            "UPDATE nomad_candidates SET ai_summary = ? WHERE study_date = ? AND stock_code = ?",
+            (summary, study_date, stock_code)
+        )
+    
+    def get_dates_with_data(self, days: int = 60) -> List[str]:
+        """데이터가 있는 날짜 목록"""
+        rows = self.db.fetch_all(
+            "SELECT DISTINCT study_date FROM nomad_candidates ORDER BY study_date DESC LIMIT ?",
+            (days,)
+        )
+        return [row['study_date'] for row in rows]
+    
+    def get_uncollected_news(self, limit: int = 20) -> List[dict]:
+        """뉴스 미수집 후보 조회"""
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM nomad_candidates 
+            WHERE news_collected = 0 OR news_collected IS NULL
+            ORDER BY study_date DESC, change_rate DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+        return [dict(row) for row in rows]
+    
+    def update_news_collected(self, candidate_id: int):
+        """뉴스 수집 완료 표시"""
+        self.db.execute(
+            "UPDATE nomad_candidates SET news_collected = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (candidate_id,)
+        )
+    
+    def get_uncollected_company_info(self, limit: int = 20) -> List[dict]:
+        """기업정보 미수집 후보 조회"""
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM nomad_candidates 
+            WHERE company_info_collected = 0 OR company_info_collected IS NULL
+            ORDER BY study_date DESC, change_rate DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+        return [dict(row) for row in rows]
+    
+    def update_company_info_by_id(self, candidate_id: int, info: dict):
+        """기업 정보 업데이트 (ID 기준)"""
+        self.db.execute(
+            """
+            UPDATE nomad_candidates SET
+                market = ?, sector = ?, market_cap = ?, per = ?, pbr = ?,
+                eps = ?, roe = ?, business_summary = ?, establishment_date = ?,
+                ceo_name = ?, revenue = ?, operating_profit = ?,
+                company_info_collected = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                info.get('market'), info.get('sector'), info.get('market_cap'),
+                info.get('per'), info.get('pbr'), info.get('eps'), info.get('roe'),
+                info.get('business_summary'), info.get('establishment_date'),
+                info.get('ceo_name'), info.get('revenue'), info.get('operating_profit'),
+                candidate_id
+            )
+        )
+
+
+class NomadNewsRepository:
+    """nomad_news 테이블 CRUD (v6.0)"""
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+    
+    def insert(self, data: dict) -> int:
+        """뉴스 삽입"""
+        # 중복 체크 (candidate_id + news_url)
+        existing = self.db.fetch_one(
+            "SELECT id FROM nomad_news WHERE candidate_id = ? AND news_url = ?",
+            (data['candidate_id'], data.get('news_url', ''))
+        )
+        
+        if existing:
+            return existing['id']
+        
+        cursor = self.db.execute(
+            """
+            INSERT INTO nomad_news
+            (candidate_id, news_date, news_title, news_source, news_url, summary, sentiment, relevance_score, category)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data['candidate_id'],
+                data.get('news_date'),
+                data.get('news_title', '')[:200],
+                data.get('news_source', ''),
+                data.get('news_url', ''),
+                data.get('summary', ''),
+                data.get('sentiment', 'neutral'),
+                data.get('relevance_score', 0.5),
+                data.get('category', '기타'),
+            )
+        )
+        return cursor.lastrowid
+    
+    def get_by_candidate_id(self, candidate_id: int) -> List[dict]:
+        """후보 ID로 뉴스 조회"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM nomad_news WHERE candidate_id = ? ORDER BY news_date DESC",
+            (candidate_id,)
+        )
+        return [dict(row) for row in rows]
+    
+    def get_by_candidate(self, study_date: str, stock_code: str) -> List[dict]:
+        """후보의 뉴스 조회 (날짜+종목코드)"""
+        # candidate_id 찾기
+        candidate = self.db.fetch_one(
+            "SELECT id FROM nomad_candidates WHERE study_date = ? AND stock_code = ?",
+            (study_date, stock_code)
+        )
+        
+        if not candidate:
+            return []
+        
+        return self.get_by_candidate_id(candidate['id'])
+    
+    def count_by_candidate(self, candidate_id: int) -> int:
+        """후보의 뉴스 개수"""
+        row = self.db.fetch_one(
+            "SELECT COUNT(*) as cnt FROM nomad_news WHERE candidate_id = ?",
+            (candidate_id,)
+        )
+        return row['cnt'] if row else 0
+    
+    def get_summary_stats(self) -> dict:
+        """뉴스 통계"""
+        row = self.db.fetch_one(
+            """
+            SELECT 
+                COUNT(*) as total_news,
+                COUNT(DISTINCT candidate_id) as candidates_with_news,
+                SUM(CASE WHEN sentiment = 'positive' THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) as negative,
+                SUM(CASE WHEN sentiment = 'neutral' THEN 1 ELSE 0 END) as neutral
+            FROM nomad_news
+            """
+        )
+        return dict(row) if row else {}
+
+
+# v6.0 Repository 편의 함수들
+def get_top5_history_repository() -> Top5HistoryRepository:
+    return Top5HistoryRepository()
+
+def get_top5_prices_repository() -> Top5DailyPricesRepository:
+    return Top5DailyPricesRepository()
+
+def get_nomad_candidates_repository() -> NomadCandidatesRepository:
+    return NomadCandidatesRepository()
+
+def get_nomad_news_repository() -> NomadNewsRepository:
+    return NomadNewsRepository()
 
 
 if __name__ == "__main__":

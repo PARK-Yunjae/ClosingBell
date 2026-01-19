@@ -1,10 +1,13 @@
 """
-ClosingBell 대시보드 v5.4
+ClosingBell 대시보드 v6.0
 ==========================
 
-📊 종가매매 TOP5 성과 추적
+📊 종가매매 TOP5 20일 추적 + 유목민 공부법
 
-v5.4: K값 전략 제거
+v6.0 변경사항:
+- TOP5 20일 추적 대시보드
+- 유목민 공부법 대시보드
+- 멀티페이지 구조
 
 기능:
 - 전체 승률 요약
@@ -29,14 +32,14 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 st.set_page_config(
-    page_title="ClosingBell Dashboard",
+    page_title="ClosingBell v6.0",
     page_icon="🔔",
     layout="wide",
 )
 
 # ==================== 헤더 ====================
-st.title("🔔 ClosingBell 대시보드")
-st.markdown("**종가매매 TOP5 성과 추적** | _차트가 모든 것을 반영한다_ 📈")
+st.title("🔔 ClosingBell v6.0")
+st.markdown("**종가매매 TOP5 20일 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
 st.markdown("---")
 
 
@@ -56,6 +59,32 @@ def load_all_results(days=60):
     except Exception as e:
         st.error(f"데이터 로드 실패: {e}")
         return []
+
+
+@st.cache_data(ttl=300)
+def load_top5_summary():
+    """TOP5 20일 추적 요약"""
+    try:
+        from src.infrastructure.repository import get_top5_history_repository
+        repo = get_top5_history_repository()
+        
+        dates = repo.get_dates_with_data(30)
+        return {'dates_count': len(dates), 'latest_date': dates[0] if dates else None}
+    except Exception:
+        return {'dates_count': 0, 'latest_date': None}
+
+
+@st.cache_data(ttl=300)
+def load_nomad_summary():
+    """유목민 공부법 요약"""
+    try:
+        from src.infrastructure.repository import get_nomad_candidates_repository
+        repo = get_nomad_candidates_repository()
+        
+        dates = repo.get_dates_with_data(30)
+        return {'dates_count': len(dates), 'latest_date': dates[0] if dates else None}
+    except Exception:
+        return {'dates_count': 0, 'latest_date': None}
 
 
 # ==================== 통계 함수 ====================
@@ -171,15 +200,43 @@ def create_gauge(value, title):
     return fig
 
 
-# ==================== 메인 컨텐츠 ====================
+# ==================== v6.0 기능 요약 카드 ====================
+st.subheader("🆕 v6.0 새로운 기능")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    top5_summary = load_top5_summary()
+    st.markdown("### 📈 종가매매 TOP5 20일 추적")
+    st.markdown(f"""
+    - **수집 기간**: {top5_summary['dates_count']}일
+    - **최신 데이터**: {top5_summary['latest_date'] or '없음'}
+    - **기능**: D+1 ~ D+20 수익률 추적
+    """)
+    st.info("👈 사이드바에서 **📊 종가매매_TOP5** 페이지로 이동하세요")
+
+with col2:
+    nomad_summary = load_nomad_summary()
+    st.markdown("### 📚 유목민 공부법")
+    st.markdown(f"""
+    - **수집 기간**: {nomad_summary['dates_count']}일
+    - **최신 데이터**: {nomad_summary['latest_date'] or '없음'}
+    - **기능**: 상한가/거래량천만 종목 뉴스 분석
+    """)
+    st.info("👈 사이드바에서 **📚 유목민_공부법** 페이지로 이동하세요")
+
+st.markdown("---")
+
+
+# ==================== 메인 컨텐츠 (기존 D+1 성과) ====================
+st.subheader("📊 기존 D+1 성과 요약")
+
 results = load_all_results(60)
 
 if results:
     stats = calc_stats(results)
     
     # 상단: 요약 카드
-    st.subheader("📊 최근 60일 성과 요약")
-    
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("📈 총 거래", f"{stats['total']}건")
     col2.metric("✅ 승리", f"{stats['wins']}건")
@@ -216,7 +273,7 @@ if results:
     
     st.markdown("---")
     
-    # 하단: 최근 결과 테이블 (스크롤 버그 수정)
+    # 하단: 최근 결과 테이블
     st.subheader(f"📋 최근 결과 ({min(stats['total'], 10)}건)")
     
     df = pd.DataFrame(results)
@@ -230,12 +287,11 @@ if results:
     display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
     display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
     
-    # height 고정으로 스크롤 버그 해결
     st.dataframe(
         display_df, 
         use_container_width=True, 
         hide_index=True,
-        height=min(len(display_df) * 35 + 38, 400)  # 행당 35px + 헤더
+        height=min(len(display_df) * 35 + 38, 400)
     )
 
 else:
@@ -245,11 +301,11 @@ else:
     ### 🚀 시작하기
     
     ```bash
-    # 1. 스크리닝 실행
-    python main.py --run
+    # 1. 과거 데이터 백필 (최초 1회)
+    python main.py --backfill 20
     
-    # 2. 익일 결과 수집 (다음 날)
-    python main.py --run-all
+    # 2. 스크리닝 실행
+    python main.py --run
     
     # 3. 대시보드 확인
     streamlit run dashboard/app.py
@@ -259,10 +315,14 @@ else:
 
 # ==================== 사이드바 ====================
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔔 ClosingBell v5.4")
+st.sidebar.markdown("### 🔔 ClosingBell v6.0")
 st.sidebar.markdown("_차트가 모든 것을 반영한다_ 📈")
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
+**v6.0 새 기능:**
+- 📈 TOP5 20일 추적
+- 📚 유목민 공부법
+
 **전략:**
 - 종가매매 TOP5 (점수제)
 
@@ -273,4 +333,4 @@ st.sidebar.markdown("""
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v5.4 | 종가매매 전략 (백테스트 최적화)")
+st.caption("ClosingBell v6.0 | 종가매매 TOP5 20일 추적 + 유목민 공부법")

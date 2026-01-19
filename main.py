@@ -1,5 +1,5 @@
 """
-종가매매 스크리너 v5.4
+종가매매 스크리너 v6.0
 
 📊 종가매매 점수제 (100점 만점):
    거래량비·등락률·연속양봉·CCI·이격도·캔들
@@ -11,14 +11,16 @@
 - C등급 (55-64): 시초 70% + 목표 +2%
 - D등급 (<55): 시초 전량매도
 
-⚡ v5.4 업데이트 (백테스트 기반):
-- 연속양봉 4일 이상 감점 강화 (50.9% → 위험)
-- D+1 시초가 매도 최적 (승률 54.5%)
-- K값 전략 제거 (승률 49% 부적합)
+⚡ v6.0 업데이트:
+- TOP5 20일 추적 (D+1 ~ D+20)
+- 유목민 공부법 (상한가/거래량천만)
+- 과거 데이터 백필
+- 멀티페이지 대시보드
 
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
     python main.py --run        # 스크리닝 즉시 실행
+    python main.py --backfill 20  # 과거 20일 데이터 백필
     python main.py --run-all    # 모든 서비스 순차 실행 (테스트용)
     python main.py --run-test   # 테스트 (알림X)
     python main.py --check 종목코드  # 특정 종목 점수 확인 (예: --check 005930)
@@ -50,16 +52,15 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v5.4                                   ║
+║   🔔  종가매매 스크리너 v6.0                                   ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
 ║      거래량 25 / 등락률 20 / CCI·연속·이격 15 / 캔들 10        ║
 ║                                                              ║
-║   🏆 등급별 매도전략                                           ║
-║      S(85+) → 시초30% + 목표+4%                               ║
-║      D(<55) → 시초 전량매도                                    ║
-║                                                              ║
-║   ⚡ v5.4: 연속양봉4일+ 감점강화, D+1 시초매도 최적             ║
+║   🆕 v6.0 새 기능                                             ║
+║      • TOP5 20일 추적 (D+1 ~ D+20)                            ║
+║      • 유목민 공부법 (상한가/거래량천만)                         ║
+║      • 과거 데이터 백필                                        ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -372,7 +373,7 @@ def check_stock(stock_code: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='종가매매 스크리너 v5.4')
+    parser = argparse.ArgumentParser(description='종가매매 스크리너 v6.0')
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
     parser.add_argument('--run-all', action='store_true', help='모든 서비스 순차 실행')
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
@@ -380,6 +381,17 @@ def main():
     parser.add_argument('--validate', action='store_true', help='설정 검증')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
     parser.add_argument('--check', type=str, metavar='CODE', help='특정 종목 점수 확인 (예: --check 074610)')
+    
+    # v6.0 옵션
+    parser.add_argument('--backfill', type=int, metavar='DAYS', help='과거 N일 데이터 백필 (TOP5 + 유목민)')
+    parser.add_argument('--backfill-top5', type=int, metavar='DAYS', help='TOP5만 백필')
+    parser.add_argument('--backfill-nomad', type=int, metavar='DAYS', help='유목민만 백필')
+    parser.add_argument('--auto-fill', action='store_true', help='누락 데이터 자동 수집')
+    parser.add_argument('--run-top5-update', action='store_true', help='TOP5 일일 추적 업데이트')
+    parser.add_argument('--run-nomad', action='store_true', help='유목민 공부 실행')
+    parser.add_argument('--run-news', action='store_true', help='유목민 뉴스 수집 (네이버+Gemini)')
+    parser.add_argument('--run-company-info', action='store_true', help='유목민 기업정보 수집 (네이버금융)')
+    parser.add_argument('--version', action='version', version='ClosingBell v6.0')
     
     args = parser.parse_args()
     
@@ -413,6 +425,39 @@ def main():
         logger.info("DB 초기화 완료")
         return
     
+    # v6.0 명령어 처리
+    if args.backfill:
+        run_backfill(args.backfill, top5=True, nomad=True)
+        return
+    
+    if args.backfill_top5:
+        run_backfill(args.backfill_top5, top5=True, nomad=False)
+        return
+    
+    if args.backfill_nomad:
+        run_backfill(args.backfill_nomad, top5=False, nomad=True)
+        return
+    
+    if args.auto_fill:
+        run_auto_fill()
+        return
+    
+    if args.run_top5_update:
+        run_top5_daily_update()
+        return
+    
+    if args.run_nomad:
+        run_nomad_study()
+        return
+    
+    if args.run_news:
+        run_news_collection_cli()
+        return
+    
+    if args.run_company_info:
+        run_company_info_cli()
+        return
+    
     # 실행
     if args.check:
         check_stock(args.check)
@@ -424,6 +469,184 @@ def main():
         run_immediate(send_alert=not args.no_alert)
     else:
         run_scheduler_mode()
+
+
+# ========================================================================
+# v6.0 함수들
+# ========================================================================
+
+def run_backfill(days: int, top5: bool = True, nomad: bool = True):
+    """과거 데이터 백필"""
+    logger = logging.getLogger(__name__)
+    
+    print(f"\n🔄 과거 {days}일 데이터 백필 시작...")
+    print(f"   TOP5: {'✅' if top5 else '❌'}")
+    print(f"   유목민: {'✅' if nomad else '❌'}")
+    
+    # 설정 검증
+    from src.config.backfill_config import get_backfill_config
+    config = get_backfill_config()
+    
+    is_valid, errors = config.validate()
+    if not is_valid:
+        print(f"\n❌ 백필 설정 오류:")
+        for err in errors:
+            print(f"   - {err}")
+        return
+    
+    print(f"\n📁 데이터 경로:")
+    print(f"   OHLCV: {config.ohlcv_dir}")
+    print(f"   매핑: {config.stock_mapping_path}")
+    print(f"   글로벌: {config.global_data_dir}")
+    
+    # 백필 서비스 실행
+    try:
+        from src.services.backfill import HistoricalBackfillService
+        
+        service = HistoricalBackfillService(config)
+        
+        # 데이터 로드
+        print(f"\n📥 데이터 로드 중...")
+        if not service.load_data():
+            print("❌ 데이터 로드 실패")
+            return
+        
+        # TOP5 백필
+        if top5:
+            print(f"\n📊 TOP5 백필 중... (최근 {days}일)")
+            top5_result = service.backfill_top5(days=days)
+            print(f"   ✅ TOP5 저장: {top5_result.get('top5_saved', 0)}개")
+            print(f"   ✅ 가격 저장: {top5_result.get('prices_saved', 0)}개")
+        
+        # 유목민 백필
+        if nomad:
+            print(f"\n📚 유목민 백필 중... (최근 {days}일)")
+            nomad_result = service.backfill_nomad(days=days)
+            print(f"   ✅ 상한가: {nomad_result.get('limit_up', 0)}개")
+            print(f"   ✅ 거래량천만: {nomad_result.get('volume_explosion', 0)}개")
+        
+        print(f"\n✅ 백필 완료!")
+        print(f"   대시보드에서 확인: streamlit run dashboard/app.py")
+        
+    except Exception as e:
+        logger.error(f"백필 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_auto_fill():
+    """누락 데이터 자동 수집"""
+    logger = logging.getLogger(__name__)
+    print("\n🔄 누락 데이터 자동 수집...")
+    
+    # TODO: 실제 자동 채우기 로직 구현
+    print(f"\n⚠️ 자동 채우기 기능은 Windows 환경에서 실행해주세요.")
+
+
+def run_top5_daily_update():
+    """TOP5 일일 추적 업데이트"""
+    logger = logging.getLogger(__name__)
+    print("\n📈 TOP5 일일 추적 업데이트...")
+    
+    try:
+        from src.infrastructure.repository import get_top5_history_repository, get_top5_prices_repository
+        
+        history_repo = get_top5_history_repository()
+        prices_repo = get_top5_prices_repository()
+        
+        # 활성 항목 조회
+        active_items = history_repo.get_active_items()
+        print(f"활성 추적 항목: {len(active_items)}개")
+        
+        if not active_items:
+            print("추적할 항목이 없습니다.")
+            return
+        
+        # TODO: KIS API로 일별 가격 수집
+        print(f"\n⚠️ KIS API 연동이 필요합니다.")
+        print(f"   --run 명령으로 스크리닝 후 자동 수집됩니다.")
+        
+    except Exception as e:
+        logger.error(f"TOP5 업데이트 실패: {e}")
+        print(f"\n❌ 오류: {e}")
+
+
+def run_nomad_study():
+    """유목민 공부 실행"""
+    logger = logging.getLogger(__name__)
+    print("\n📚 유목민 공부 실행...")
+    
+    try:
+        from datetime import date
+        from src.infrastructure.repository import get_nomad_candidates_repository
+        
+        repo = get_nomad_candidates_repository()
+        today = date.today().isoformat()
+        
+        # 오늘 데이터 확인
+        existing = repo.get_by_date(today)
+        if existing:
+            print(f"오늘({today}) 이미 {len(existing)}개 후보가 있습니다.")
+            return
+        
+        # TODO: 상한가/거래량천만 종목 수집
+        print(f"\n⚠️ 종목 수집 기능은 KIS API 연동이 필요합니다.")
+        print(f"   --run 명령으로 스크리닝 후 자동 수집됩니다.")
+        
+    except Exception as e:
+        logger.error(f"유목민 공부 실패: {e}")
+        print(f"\n❌ 오류: {e}")
+
+
+def run_news_collection_cli():
+    """유목민 뉴스 수집 CLI"""
+    logger = logging.getLogger(__name__)
+    print("\n📰 유목민 뉴스 수집 시작...")
+    
+    try:
+        from src.services.news_service import collect_news_for_candidates
+        
+        result = collect_news_for_candidates(limit=600)
+        
+        if 'error' in result:
+            print(f"\n❌ 오류: {result['error']}")
+            if result['error'] == 'no_naver_api_key':
+                print("   .env 파일에 NaverAPI_Client_ID, NaverAPI_Client_Secret 설정 필요")
+            return
+        
+        print(f"\n✅ 뉴스 수집 완료!")
+        print(f"   대상 종목: {result.get('total', 0)}개")
+        print(f"   수집 뉴스: {result.get('collected', 0)}개")
+        print(f"   저장 완료: {result.get('saved', 0)}개")
+        
+    except ImportError as e:
+        logger.error(f"모듈 임포트 실패: {e}")
+        print(f"\n❌ 필요한 패키지가 없습니다.")
+        print(f"   pip install google-genai")
+    except Exception as e:
+        logger.error(f"뉴스 수집 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_company_info_cli():
+    """기업정보 수집 CLI"""
+    logger = logging.getLogger(__name__)
+    print("\n🏢 기업정보 수집 시작...")
+    
+    try:
+        from src.services.company_service import collect_company_info_for_candidates
+        
+        result = collect_company_info_for_candidates(limit=600)
+        
+        print(f"\n✅ 기업정보 수집 완료!")
+        print(f"   대상 종목: {result.get('total', 0)}개")
+        print(f"   성공: {result.get('success', 0)}개")
+        
+    except Exception as e:
+        logger.error(f"기업정보 수집 실패: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

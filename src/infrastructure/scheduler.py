@@ -1,10 +1,21 @@
 """
-작업 스케줄러
+작업 스케줄러 v6.0
 
 책임:
 - Cron 스케줄 관리
 - 작업 등록/해제
 - 장 운영일 체크
+
+v6.0 스케줄:
+- 12:30 프리뷰 스크리닝
+- 15:00 메인 스크리닝 (→ closing_top5_history)
+- 16:35 OHLCV 갱신
+- 16:45 글로벌 데이터 갱신
+- 17:00 결과 수집 (→ top5_daily_prices)
+- 17:10 일일 학습
+- 17:20 유목민 공부법 (→ nomad_candidates)
+- 17:45 Git 커밋
+- 17:50 자동 종료
 
 의존성:
 - APScheduler
@@ -258,11 +269,12 @@ class ScreenerScheduler:
         logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
     
     def setup_default_schedules(self):
-        """기본 스케줄 설정 - v5.4 (종가매매 전용 + 글로벌 데이터 갱신)"""
+        """기본 스케줄 설정 - v6.0 (종가매매 + TOP5 20일 추적 + 유목민)"""
         from src.services.screener_service import (
             run_main_screening,
             run_preview_screening,
         )
+        from src.services.nomad_collector import run_nomad_collection
         
         # 12:30 프리뷰 스크리닝
         preview_time = settings.screening.screening_time_preview
@@ -274,7 +286,7 @@ class ScreenerScheduler:
             minute=preview_minute,
         )
         
-        # 15:00 메인 스크리닝
+        # 15:00 메인 스크리닝 (TOP5 → closing_top5_history 저장)
         main_time = settings.screening.screening_time_main
         main_hour, main_minute = map(int, main_time.split(':'))
         self.add_job(
@@ -287,23 +299,23 @@ class ScreenerScheduler:
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
-        # 16:30 OHLCV 데이터 갱신
+        # 16:35 OHLCV 데이터 갱신
         self.add_job(
             job_id='daily_data_update',
             func=run_data_update,
             hour=16,
-            minute=30,
+            minute=35,
         )
         
-        # v5.4: 16:40 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
+        # 16:45 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
         self.add_job(
             job_id='global_data_update',
             func=update_global_data,
             hour=16,
-            minute=40,
+            minute=45,
         )
         
-        # 17:00 익일 결과 수집 (승률 추적)
+        # 17:00 익일 결과 수집 (승률 추적 + v6.0 TOP5 20일 추적)
         self.add_job(
             job_id='result_collection',
             func=run_result_collection,
@@ -319,24 +331,57 @@ class ScreenerScheduler:
             minute=10,
         )
         
-        # 17:35 Git 자동 커밋
+        # v6.0: 17:20 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        # 장 종료 후 최종 데이터로 수집 (시간 여유 확보)
+        self.add_job(
+            job_id='nomad_collection',
+            func=run_nomad_collection,
+            hour=17,
+            minute=20,
+        )
+        
+        # v6.0: 17:30 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        try:
+            from src.services.news_service import run_news_collection
+            self.add_job(
+                job_id='news_collection',
+                func=run_news_collection,
+                hour=17,
+                minute=30,
+            )
+        except ImportError:
+            logger.warning("news_service 모듈 없음 - 뉴스 수집 스킵")
+        
+        # v6.0: 17:40 기업정보 수집 (네이버 금융 크롤링)
+        try:
+            from src.services.company_service import run_company_info_collection
+            self.add_job(
+                job_id='company_info_collection',
+                func=run_company_info_collection,
+                hour=17,
+                minute=40,
+            )
+        except ImportError:
+            logger.warning("company_service 모듈 없음 - 기업정보 수집 스킵")
+        
+        # 17:50 Git 자동 커밋
         self.add_job(
             job_id='git_commit',
             func=run_git_commit,
             hour=17,
-            minute=35,
+            minute=50,
         )
         
-        # 17:40 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        # 17:55 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
         self.add_job(
             job_id='auto_shutdown',
             func=self._auto_shutdown,
             hour=17,
-            minute=40,
+            minute=55,
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v5.4: 종가매매 + OHLCV/글로벌 갱신 + 학습)")
+        logger.info("기본 스케줄 설정 완료 (v6.0: 종가매매 + TOP5 + 유목민 + 뉴스 + 기업정보)")
     
     def start(self):
         """스케줄러 시작"""

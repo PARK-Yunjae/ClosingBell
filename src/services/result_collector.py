@@ -1,10 +1,11 @@
 """
-익일 결과 수집 서비스 v5.4 (종가매매 전용)
+익일 결과 수집 서비스 v6.0 (종가매매 전용 + TOP5 20일 추적)
 ==================================
 
 종가매매 TOP5의 익일 시고저종을 수집하고
 승률을 계산합니다.
 
+v6.0: closing_top5_history 20일 추적 추가
 v5.4: K값 전략 제거
 
 사용:
@@ -157,6 +158,7 @@ def run_result_collection() -> Dict:
     익일 결과 수집 실행 (스케줄러용)
     
     최근 7일간 누락된 결과를 수집합니다.
+    v6.0: TOP5 20일 추적도 함께 실행
     """
     logger.info("=" * 50)
     logger.info("📊 익일 결과 수집 시작")
@@ -178,6 +180,15 @@ def run_result_collection() -> Dict:
         total['failed'] += result['failed']
         total['skipped'] += result['skipped']
     
+    # ================================================
+    # v6.0: TOP5 20일 추적 업데이트
+    # ================================================
+    try:
+        v6_result = collect_top5_daily_prices()
+        logger.info(f"v6.0 TOP5 추적: {v6_result.get('collected', 0)}건 수집")
+    except Exception as e:
+        logger.error(f"v6.0 TOP5 추적 실패: {e}")
+    
     # 승률 통계 출력
     stats = get_win_rate_stats(30)
     
@@ -188,6 +199,118 @@ def run_result_collection() -> Dict:
     logger.info("=" * 50)
     
     return total
+
+
+def collect_top5_daily_prices() -> Dict:
+    """
+    v6.0: TOP5 20일 추적 - 일별 가격 수집
+    
+    closing_top5_history에서 tracking_status='active'인 항목들의
+    일별 가격을 수집하여 top5_daily_prices에 저장
+    """
+    from src.infrastructure.repository import (
+        get_top5_history_repository,
+        get_top5_prices_repository,
+    )
+    
+    logger.info("📈 v6.0 TOP5 20일 추적 시작...")
+    
+    history_repo = get_top5_history_repository()
+    prices_repo = get_top5_prices_repository()
+    kis = get_kis_client()
+    
+    # 활성 추적 항목 조회
+    active_items = history_repo.get_active_items()
+    
+    if not active_items:
+        logger.info("  추적할 활성 항목 없음")
+        return {'collected': 0, 'failed': 0, 'completed': 0}
+    
+    logger.info(f"  활성 추적 항목: {len(active_items)}개")
+    
+    result = {'collected': 0, 'failed': 0, 'completed': 0}
+    today = date.today()
+    
+    for item in active_items:
+        try:
+            code = item['stock_code']
+            name = item['stock_name']
+            screen_date = date.fromisoformat(item['screen_date'])
+            screen_price = item['screen_price']
+            history_id = item['id']
+            
+            # 이미 수집된 일수 확인
+            collected_days = prices_repo.get_collected_days(history_id)
+            
+            # 일봉 데이터 조회 (최근 25일)
+            prices = kis.get_daily_prices(code, count=25)
+            
+            if not prices:
+                logger.warning(f"  ⚠️ {code} {name}: 데이터 없음")
+                result['failed'] += 1
+                continue
+            
+            # 스크리닝 날짜 이후의 거래일 수집
+            days_after = 0
+            last_date = None
+            
+            for price in prices:
+                if price.date <= screen_date:
+                    continue
+                
+                days_after += 1
+                
+                if days_after > 20:
+                    break
+                
+                # 이미 수집된 날짜 스킵
+                if days_after in collected_days:
+                    continue
+                
+                # 수익률 계산
+                return_from_screen = ((price.close - screen_price) / screen_price) * 100
+                gap_rate = ((price.open - screen_price) / screen_price) * 100
+                high_return = ((price.high - screen_price) / screen_price) * 100
+                low_return = ((price.low - screen_price) / screen_price) * 100
+                
+                # DB 저장
+                price_data = {
+                    'top5_history_id': history_id,
+                    'trade_date': price.date.isoformat(),
+                    'days_after': days_after,
+                    'open_price': price.open,
+                    'high_price': price.high,
+                    'low_price': price.low,
+                    'close_price': price.close,
+                    'volume': price.volume,
+                    'return_from_screen': return_from_screen,
+                    'gap_rate': gap_rate,
+                    'high_return': high_return,
+                    'low_return': low_return,
+                    'data_source': 'realtime',
+                }
+                
+                prices_repo.insert(price_data)
+                result['collected'] += 1
+                last_date = price.date
+            
+            # 추적 상태 업데이트
+            if days_after > 0 and last_date:
+                history_repo.update_tracking_days(history_id, days_after, last_date.isoformat())
+                
+                if days_after >= 20:
+                    history_repo.update_status(history_id, 'completed')
+                    result['completed'] += 1
+                    logger.info(f"  ✅ {code} {name}: 20일 추적 완료")
+            
+            time.sleep(0.3)
+            
+        except Exception as e:
+            logger.error(f"  ✗ {item.get('stock_code', '?')}: {e}")
+            result['failed'] += 1
+    
+    logger.info(f"📈 v6.0 TOP5 추적 완료: 수집 {result['collected']}, 완료 {result['completed']}, 실패 {result['failed']}")
+    return result
 
 
 if __name__ == "__main__":

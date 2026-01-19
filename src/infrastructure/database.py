@@ -1,11 +1,17 @@
 """
-SQLite 데이터베이스 연결 관리
+SQLite 데이터베이스 연결 관리 (v6.0)
 
 책임:
 - 연결 풀 관리 (단일 연결)
 - WAL 모드 설정
 - 트랜잭션 관리
 - 마이그레이션
+
+v6.0 추가 테이블:
+- closing_top5_history: TOP5 20일 추적 마스터
+- top5_daily_prices: D+1~D+20 일별 가격
+- nomad_candidates: 유목민 후보 종목
+- nomad_news: 유목민 뉴스
 
 의존성:
 - sqlite3
@@ -342,6 +348,128 @@ MIGRATIONS = {
     """,
 }
 
+# ========================================================================
+# v6.0 마이그레이션: TOP5 20일 추적 + 유목민 공부법
+# ========================================================================
+SCHEMA_VERSION = "6.0"
+
+MIGRATIONS_V6 = """
+-- closing_top5_history: TOP5 20일 추적 마스터 테이블
+CREATE TABLE IF NOT EXISTS closing_top5_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    screen_date DATE NOT NULL,
+    rank INTEGER NOT NULL CHECK(rank BETWEEN 1 AND 5),
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    screen_price INTEGER NOT NULL,
+    screen_score REAL NOT NULL,
+    grade TEXT NOT NULL CHECK(grade IN ('S', 'A', 'B', 'C', 'D')),
+    cci REAL,
+    rsi REAL,
+    change_rate REAL,
+    disparity_20 REAL,
+    consecutive_up INTEGER DEFAULT 0,
+    volume_ratio_5 REAL,
+    tracking_days INTEGER NOT NULL DEFAULT 0,
+    last_tracked_date DATE,
+    tracking_status TEXT NOT NULL DEFAULT 'active' 
+        CHECK(tracking_status IN ('active', 'completed', 'cancelled')),
+    data_source TEXT NOT NULL DEFAULT 'realtime' 
+        CHECK(data_source IN ('realtime', 'backfill')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(screen_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_top5_history_date ON closing_top5_history(screen_date);
+CREATE INDEX IF NOT EXISTS idx_top5_history_status ON closing_top5_history(tracking_status);
+CREATE INDEX IF NOT EXISTS idx_top5_history_code ON closing_top5_history(stock_code);
+CREATE INDEX IF NOT EXISTS idx_top5_history_rank ON closing_top5_history(screen_date, rank);
+
+-- top5_daily_prices: D+1 ~ D+20 일별 가격
+CREATE TABLE IF NOT EXISTS top5_daily_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    top5_history_id INTEGER NOT NULL,
+    trade_date DATE NOT NULL,
+    days_after INTEGER NOT NULL CHECK(days_after BETWEEN 1 AND 20),
+    open_price INTEGER NOT NULL,
+    high_price INTEGER NOT NULL,
+    low_price INTEGER NOT NULL,
+    close_price INTEGER NOT NULL,
+    volume INTEGER,
+    return_from_screen REAL NOT NULL,
+    gap_rate REAL,
+    high_return REAL,
+    low_return REAL,
+    data_source TEXT NOT NULL DEFAULT 'realtime' 
+        CHECK(data_source IN ('realtime', 'backfill')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (top5_history_id) REFERENCES closing_top5_history(id) ON DELETE CASCADE,
+    UNIQUE(top5_history_id, trade_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_top5_prices_history ON top5_daily_prices(top5_history_id);
+CREATE INDEX IF NOT EXISTS idx_top5_prices_date ON top5_daily_prices(trade_date);
+CREATE INDEX IF NOT EXISTS idx_top5_prices_days ON top5_daily_prices(days_after);
+
+-- nomad_candidates: 유목민 공부법 후보 종목
+CREATE TABLE IF NOT EXISTS nomad_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    study_date DATE NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    reason_flag TEXT NOT NULL CHECK(reason_flag IN ('상한가', '거래량폭발', '상한가+거래량')),
+    close_price INTEGER NOT NULL,
+    change_rate REAL NOT NULL,
+    volume INTEGER NOT NULL,
+    trading_value REAL NOT NULL,
+    market TEXT,
+    sector TEXT,
+    market_cap REAL,
+    per REAL,
+    pbr REAL,
+    eps REAL,
+    roe REAL,
+    business_summary TEXT,
+    establishment_date TEXT,
+    ceo_name TEXT,
+    revenue REAL,
+    operating_profit REAL,
+    news_count INTEGER DEFAULT 0,
+    news_status TEXT DEFAULT 'pending' 
+        CHECK(news_status IN ('pending', 'collected', 'failed', 'skipped')),
+    ai_summary TEXT,
+    data_source TEXT NOT NULL DEFAULT 'realtime' 
+        CHECK(data_source IN ('realtime', 'backfill')),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(study_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nomad_date ON nomad_candidates(study_date);
+CREATE INDEX IF NOT EXISTS idx_nomad_code ON nomad_candidates(stock_code);
+CREATE INDEX IF NOT EXISTS idx_nomad_reason ON nomad_candidates(reason_flag);
+CREATE INDEX IF NOT EXISTS idx_nomad_date_reason ON nomad_candidates(study_date, reason_flag);
+
+-- nomad_news: 유목민 뉴스 기사
+CREATE TABLE IF NOT EXISTS nomad_news (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    study_date DATE NOT NULL,
+    stock_code TEXT NOT NULL,
+    title TEXT NOT NULL,
+    publisher TEXT,
+    published_at DATETIME,
+    url TEXT NOT NULL,
+    snippet TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(study_date, stock_code, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nomad_news_date ON nomad_news(study_date);
+CREATE INDEX IF NOT EXISTS idx_nomad_news_stock ON nomad_news(stock_code);
+CREATE INDEX IF NOT EXISTS idx_nomad_news_composite ON nomad_news(study_date, stock_code);
+"""
+
 
 class Database:
     """SQLite 데이터베이스 관리자"""
@@ -464,6 +592,9 @@ class Database:
         # 마이그레이션 실행
         self.run_migrations()
         
+        # v6.0 마이그레이션 실행
+        self.run_migration_v6()
+        
         logger.info("데이터베이스 초기화 완료")
     
     def run_migrations(self):
@@ -502,6 +633,42 @@ class Database:
                 
             except Exception as e:
                 logger.warning(f"마이그레이션 실패 (무시): {name} - {e}")
+    
+    def run_migration_v6(self):
+        """v6.0 마이그레이션 실행 (TOP5 20일 추적 + 유목민 공부법)"""
+        try:
+            # 테이블 존재 여부 확인
+            tables = self.fetch_all(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?, ?)",
+                ('closing_top5_history', 'top5_daily_prices', 'nomad_candidates', 'nomad_news')
+            )
+            existing_tables = {t['name'] for t in tables}
+            
+            if len(existing_tables) == 4:
+                logger.debug("v6.0 마이그레이션 스킵 (이미 적용됨)")
+                return True
+            
+            logger.info("v6.0 마이그레이션 시작...")
+            
+            # 마이그레이션 실행
+            self.execute_script(MIGRATIONS_V6)
+            
+            # 검증
+            tables = self.fetch_all(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?, ?)",
+                ('closing_top5_history', 'top5_daily_prices', 'nomad_candidates', 'nomad_news')
+            )
+            
+            if len(tables) == 4:
+                logger.info(f"v6.0 마이그레이션 완료: {SCHEMA_VERSION}")
+                return True
+            else:
+                logger.error(f"v6.0 마이그레이션 검증 실패: {len(tables)}/4 테이블")
+                return False
+                
+        except Exception as e:
+            logger.error(f"v6.0 마이그레이션 실패: {e}")
+            return False
     
     def update_next_day_is_top3(self):
         """기존 next_day_results 데이터의 is_top3 값 업데이트"""

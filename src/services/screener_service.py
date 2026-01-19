@@ -1,12 +1,16 @@
 """
-스크리닝 서비스 v5.4
+스크리닝 서비스 v6.0
 
 책임:
 - 스크리닝 플로우 제어
 - 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
 - 최소한의 하드필터 (데이터부족, 하락종목만 제외)
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
-- 글로벌 지표 필터 (나스닥/환율) v5.4
+- 글로벌 지표 필터 (나스닥/환율)
+
+v6.0 변경사항:
+- TOP5 결과를 closing_top5_history 테이블에도 저장
+- 대시보드에서 20일 추적 데이터 표시 지원
 
 v5.4 변경사항:
 - K값 전략 제거
@@ -283,7 +287,7 @@ class ScreenerService:
         }
     
     def _save_result(self, result: Dict):
-        """DB 저장"""
+        """DB 저장 (기존 테이블 + v6.0 TOP5 테이블)"""
         try:
             from src.domain.models import StockScore, ScoreDetail
             
@@ -323,8 +327,55 @@ class ScreenerService:
             
             screening_id = self.screening_repo.save_screening(legacy_result)
             logger.info(f"DB 저장: ID={screening_id}")
+            
+            # ================================================
+            # v6.0: closing_top5_history 테이블에도 저장
+            # ================================================
+            self._save_top5_history(result)
+            
         except Exception as e:
             logger.error(f"DB 저장 실패: {e}")
+    
+    def _save_top5_history(self, result: Dict):
+        """v6.0: TOP5를 closing_top5_history에 저장"""
+        try:
+            from src.infrastructure.repository import get_top5_history_repository
+            
+            top5_repo = get_top5_history_repository()
+            top_n = result.get("top_n", [])
+            screen_date = result["screen_date"]
+            
+            if not top_n:
+                logger.info("TOP5 비어있음 - 저장 스킵")
+                return
+            
+            for score in top_n:
+                d = score.score_detail
+                
+                history_data = {
+                    'screen_date': screen_date.isoformat(),
+                    'rank': score.rank,
+                    'stock_code': score.stock_code,
+                    'stock_name': score.stock_name,
+                    'screen_price': score.current_price,
+                    'screen_score': score.score_total,
+                    'grade': score.grade.value,
+                    'cci': d.raw_cci,
+                    'rsi': getattr(d, 'raw_rsi', None),
+                    'change_rate': score.change_rate,
+                    'disparity_20': d.raw_distance,
+                    'consecutive_up': d.raw_consec_days,
+                    'volume_ratio_5': d.raw_volume_ratio,
+                    'data_source': 'realtime',
+                }
+                
+                history_id = top5_repo.upsert(history_data)
+                logger.debug(f"TOP5 저장: #{score.rank} {score.stock_name} (id={history_id})")
+            
+            logger.info(f"v6.0 TOP5 저장 완료: {len(top_n)}개")
+            
+        except Exception as e:
+            logger.error(f"v6.0 TOP5 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
         """알림 발송 (종가매매 TOP5) v5.4"""
