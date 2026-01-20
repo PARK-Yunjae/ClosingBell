@@ -1,170 +1,198 @@
-# 🔔 ClosingBell v5.4
+# 🔔 ClosingBell v6.0
 
-**종가매매 자동 스크리닝 & 학습 시스템 (백테스트 최적화 버전)**
+**종가매매 TOP5 20일 추적 + 유목민 공부법**
 
-한국투자증권 API를 활용한 종목 자동 스크리닝 시스템입니다.
-매일 장 마감 전 기술적 분석을 수행하고 TOP5 종목을 추천합니다.
-**실제 매매는 하지 않으며**, 알림 발송 + 익일 결과 학습 + 자동 최적화를 수행합니다.
+> _"차트가 모든 것을 반영한다"_ 📈
 
-## ✨ v5.4 주요 변경사항 (백테스트 기반)
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://closingbell.streamlit.app/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
 
-### 📊 백테스트 결과 (2016-2026, 6,999건)
-| 지표 | 결과 | 조치 |
-|------|------|------|
-| **D+1 시초가 매도** | 승률 54.5% | ✅ 최적 전략 확정 |
-| **CCI 150~170** | 승률 55.5% | ✅ 구간 하향 조정 |
-| **연속양봉 4일** | 승률 50.9% ⚠️ | ✅ 감점 강화 (13점→5점) |
-| **K값 전략** | 승률 49.0% ❌ | ❌ 제거 |
-| **나스닥 폭락(-2%↓)** | 승률 57.2% 🏆 | ✅ 역발상 보너스 |
+---
 
-### 🔧 변경 내역
-```diff
-+ CCI 최적 구간: 160~180 → 150~170 (승률 +0.4%p)
-+ 연속양봉 4일: 13점 → 5점 (백테스트 50.9% 급락 반영)
-+ 연속양봉 5일+: 7점 → 0~2점
-+ 글로벌 지표 필터 추가 (나스닥/환율)
-+ 나스닥 폭락(-2%↓) 시 +5점 보너스 (역발상)
-+ 나스닥↑ & 환율↓ 시 +3점 보너스
-- K값 전략 제거 (승률 49% 부적합)
-- --run-k 옵션 삭제
-```
+## ✨ v6.0 주요 기능
 
-## 📊 종가매매 점수 체계 (100점 만점)
+### 📊 종가매매 TOP5 20일 추적
+- 매일 장 종료 후 상위 5종목 선정
+- D+1 ~ D+20 수익률 자동 추적
+- 누적 수익률 & 승률 분석
 
-| 지표 | 배점 | 최적 구간 | v5.4 변경 |
-|------|------|----------|----------|
-| 거래량비 | 15점 | 1.5~3.0배 | - |
-| 등락률 | 15점 | 2~8% | - |
-| **연속양봉** | 15점 | 2~3일 | ⚠️ 4일 이상 강한 감점 |
-| **CCI** | 15점 | **150~170** | ✅ 구간 하향 |
-| 이격도 | 15점 | 2~8% | - |
-| 캔들품질 | 15점 | 윗꼬리 ≤40% | - |
-| 보너스 | 10점 | CCI상승/MA20/캔들 | - |
+### 📚 유목민 공부법
+- 상한가/거래량천만 종목 자동 수집
+- 네이버 뉴스 + Gemini AI 요약
+- 기업 정보 자동 수집 (시총, PER, 섹터 등)
 
-### 연속양봉 점수 (v5.4 수정)
-| 연속양봉 | 백테스트 승률 | v5.3 점수 | v5.4 점수 |
-|----------|--------------|-----------|-----------|
-| 2~3일 | 54.9% ✅ | 15점 | 15점 |
-| 4일 | **50.9%** ⚠️ | 13점 | **5점** |
-| 5일+ | ~50% | 7~1점 | **0~2점** |
+### 🎯 스코어링 시스템 (100점 만점)
 
-## 🌍 글로벌 지표 필터 (v5.4 신규)
+| 지표 | 배점 | 최적 구간 |
+|------|------|----------|
+| CCI | 25점 | 170~190 |
+| CCI 기울기 | 20점 | 양수 |
+| MA20 기울기 | 20점 | 양수 |
+| 연속양봉 | 15점 | 2일 |
+| 등락률 | 10점 | 2~5% |
+| 캔들 품질 | 10점 | 실체 비율 |
 
-| 조건 | 백테스트 승률 | 점수 조정 |
-|------|--------------|----------|
-| 나스닥 폭락(-2%↓) | **57.2%** 🏆 | **+5점** (역발상) |
-| 나스닥↑ & 환율↓ | 55.2% | +3점 |
-| 기본 | 54.5% | 0점 |
+---
 
-> ⚡ **예상과 다른 결과**: 나스닥 폭락 다음날 한국 종가매매 승률이 오히려 높음!
+## 🚀 빠른 시작
 
-## 📅 자동 스케줄
-
-| 시간 | 작업 | 설명 |
-|------|------|------|
-| 12:30 | 프리뷰 스크리닝 | TOP5 알림 (저장 안함) |
-| 15:00 | 메인 스크리닝 | TOP5 알림 + DB 저장 |
-| 16:30 | 데이터 갱신 | OHLCV 업데이트 |
-| 17:00 | 학습 | 익일 결과 수집 + 가중치 자동 조정 |
-| 17:35 | Git 자동 커밋 | 변경사항 백업 |
-| 17:40 | 자동 종료 | 프로그램 종료 |
-
-## 🚀 설치 및 실행
-
-### 1. 환경 설정
+### 1. 설치
 ```bash
+git clone https://github.com/your-repo/closingbell.git
+cd closingbell
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 ```
 
-### 2. API 설정 (.env)
-```env
-KIS_APP_KEY="your_app_key"
-KIS_APP_SECRET="your_app_secret"
-KIS_ACCOUNT_NO="12345678-01"
-DISCORD_WEBHOOK_URL="https://discord.com/..."
+### 2. 환경 설정
+```bash
+cp .env.example .env
+# .env 파일에 API 키 설정
 ```
 
-### 3. 실행
+### 3. 초기 데이터 백필
 ```bash
-# 스케줄러 모드 (17:40 자동 종료)
+python main.py --backfill 20
+```
+
+### 4. 실행
+```bash
+# 스케줄러 모드 (자동 실행)
 python main.py
 
-# 즉시 스크리닝 (테스트)
-python main.py --run-test
-
-# 특정 종목 점수 확인
-python main.py --check 005930
+# 즉시 실행
+python main.py --run
 
 # 대시보드
 streamlit run dashboard/app.py
 ```
 
+---
+
+## 📦 명령어
+
+```bash
+# 기본 실행
+python main.py              # 스케줄러 모드
+python main.py --run        # 즉시 실행
+python main.py --run-all    # 모든 서비스 순차 실행
+
+# 백필
+python main.py --backfill 20        # 과거 20일 데이터
+python main.py --backfill 60 --top5-only  # TOP5만
+
+# v6.0 신규
+python main.py --run-nomad          # 유목민 수집
+python main.py --run-news           # 뉴스 수집
+python main.py --run-company-info   # 기업정보 수집
+
+# 대시보드
+streamlit run dashboard/app.py
+```
+
+---
+
 ## 📁 프로젝트 구조
 
 ```
 ClosingBell/
+├── main.py                 # 메인 실행
+├── dashboard/              # Streamlit 대시보드
+│   ├── app.py              # 메인 페이지
+│   └── pages/
+│       ├── 1_종가매매_TOP5.py
+│       └── 2_유목민_공부법.py
+│
 ├── src/
-│   ├── adapters/           # 외부 API
-│   │   ├── kis_client.py
-│   │   └── discord_notifier.py
-│   ├── services/           # 비즈니스 로직
-│   │   ├── screener_service.py   # 스크리닝
-│   │   ├── learner_service.py    # 학습
-│   │   └── data_updater.py       # 데이터 갱신
+│   ├── adapters/           # 외부 연동 (KIS, Discord)
+│   ├── config/             # 설정
 │   ├── domain/             # 도메인 모델
-│   │   ├── score_calculator.py   # 점수 계산 (v5.4)
-│   │   └── models.py
-│   ├── data/               # 글로벌 지표
-│   │   └── index_monitor.py      # 나스닥/환율 조회 (v5.4)
-│   ├── infrastructure/     # 인프라
-│   │   ├── scheduler.py
+│   │   ├── models.py
+│   │   ├── indicators.py
+│   │   └── score_calculator.py
+│   ├── infrastructure/     # DB, 스케줄러
+│   │   ├── database.py
 │   │   ├── repository.py
-│   │   └── database.py
-│   └── config/             # 설정
-├── dashboard/              # Streamlit
-├── data/                   # SQLite DB
-└── logs/                   # 로그 파일
+│   │   └── scheduler.py
+│   └── services/           # 비즈니스 로직
+│       ├── screener_service.py
+│       ├── news_service.py
+│       ├── company_service.py
+│       ├── nomad_collector.py
+│       └── backfill/
+│
+├── data/
+│   └── screener.db         # SQLite DB
+│
+└── tests/                  # 테스트
 ```
 
-## 📝 버전 히스토리
+---
 
-### v5.4 (현재) - 백테스트 최적화
-- 📊 8년 백테스트 결과 반영 (2016-2026, 6,999건)
-- ✅ CCI 구간 조정 (160~180 → 150~170)
-- ✅ 연속양봉 4일 이상 강한 감점
-- ✅ 글로벌 지표 필터 추가 (나스닥/환율)
-- ❌ K값 전략 제거 (승률 49% 부적합)
+## ⚙️ 환경 변수
+
+```env
+# KIS API (필수)
+KIS_APP_KEY=your_app_key
+KIS_APP_SECRET=your_app_secret
+KIS_ACCOUNT_NO=your_account_no
+
+# Discord (선택)
+DISCORD_WEBHOOK_URL=your_webhook_url
+
+# Gemini API (뉴스 요약용)
+GEMINI_API_KEY=your_gemini_key
+
+# Naver API (뉴스 검색용)
+NAVER_CLIENT_ID=your_client_id
+NAVER_CLIENT_SECRET=your_client_secret
+```
+
+---
+
+## 📊 대시보드
+
+**🔗 Live Demo:** https://closingbell.streamlit.app/
+
+### 메인 페이지
+- 전체 승률 게이지
+- 누적 수익률 차트
+- 최근 결과 테이블
+
+### TOP5 20일 추적
+- 일자별 TOP5 목록
+- 종목별 20일 수익률 차트
+- D+1 갭률 통계
+
+### 유목민 공부법
+- 상한가/거래량천만 종목 목록
+- 관련 뉴스 + AI 요약
+- 기업 정보 (시총, PER, 섹터)
+
+---
+
+## 🔄 버전 히스토리
+
+### v6.0 (현재)
+- TOP5 20일 추적 시스템
+- 유목민 공부법 (뉴스/기업정보)
+- 멀티페이지 대시보드
+
+### v5.4
+- 백테스트 기반 최적화
+- 글로벌 지표 필터 (나스닥/환율)
 
 ### v5.3
-- K값 변동성 돌파 전략 추가
-
-### v5.2
-- 유목민 공부법 자동화
-- 그리드서치 최적 가중치 적용
-
-### v5.1
-- 100점 만점 정규화
-- 소프트 필터 방식 도입
+- 점수제 도입 (100점 만점)
+- CCI 중심 전략
 
 ---
 
-## 💡 백테스트 핵심 인사이트
+## 📝 라이선스
 
-```
-1. D+1 시초가 매도가 최적 (54.5%)
-   → 홀딩할수록 승률 하락 (D+3: 46.3%, D+5: 45.7%)
-
-2. 나스닥 폭락(-2%↓) 다음날 오히려 승률 최고 (57.2%)
-   → 역발상 매매 기회!
-
-3. TOP4~5는 통계적으로 유의미하게 나쁘지 않음
-   → TOP5 유지 (리스크 분산)
-
-4. 연속양봉 4일부터 급락 (54.9% → 50.9%)
-   → 과열 신호로 강한 감점
-```
+MIT License
 
 ---
-*ClosingBell v5.4 - 백테스트 최적화 버전* 🔔
+
+_Made with ❤️ for Korean Stock Market_

@@ -291,7 +291,6 @@ if results:
         display_df, 
         use_container_width=True, 
         hide_index=True,
-        height=min(len(display_df) * 35 + 38, 400)
     )
 
 else:

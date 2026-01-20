@@ -113,42 +113,51 @@ def fetch_naver_finance(stock_code: str) -> Dict:
         # 업종
         sector_match = re.search(r'<em class="t_nm">([^<]+)</em>', html)
         if sector_match:
-            info['sector'] = clean_text(sector_match.group(1))
+            sector_value = clean_text(sector_match.group(1))
+            # 숫자만 있는 경우 무시 (잘못된 파싱)
+            if sector_value and not sector_value.replace(',', '').replace('.', '').isdigit():
+                info['sector'] = sector_value
         
-        # 시가총액 (억원)
-        cap_match = re.search(r'시가총액.*?<em>([0-9,]+)</em>.*?억원', html, re.DOTALL)
+        # 시가총액 (억원) - 더 정확한 패턴
+        cap_match = re.search(r'시가총액.{0,50}<em>([0-9,]+)</em>.{0,10}억원', html, re.DOTALL)
         if cap_match:
             info['market_cap'] = parse_number(cap_match.group(1))
         
-        # PER
-        per_match = re.search(r'PER.*?<em>([0-9,.]+)</em>', html, re.DOTALL)
+        # PER - 거리 제한 + 값 검증
+        per_match = re.search(r'PER.{0,50}<em>([0-9,.]+)</em>', html, re.DOTALL)
         if per_match:
             try:
-                info['per'] = float(per_match.group(1).replace(',', ''))
+                val = float(per_match.group(1).replace(',', ''))
+                if val < 1000:  # 비정상 값 필터링 (종목코드 잡힌 경우)
+                    info['per'] = val
             except:
                 pass
         
-        # PBR
-        pbr_match = re.search(r'PBR.*?<em>([0-9,.]+)</em>', html, re.DOTALL)
+        # PBR - 거리 제한 + 값 검증
+        pbr_match = re.search(r'PBR.{0,50}<em>([0-9,.]+)</em>', html, re.DOTALL)
         if pbr_match:
             try:
-                info['pbr'] = float(pbr_match.group(1).replace(',', ''))
+                val = float(pbr_match.group(1).replace(',', ''))
+                if val < 100:  # 비정상 값 필터링
+                    info['pbr'] = val
             except:
                 pass
         
-        # EPS
-        eps_match = re.search(r'EPS.*?<em>([0-9,.-]+)</em>', html, re.DOTALL)
+        # EPS - 거리 제한
+        eps_match = re.search(r'EPS.{0,50}<em>([0-9,.-]+)</em>', html, re.DOTALL)
         if eps_match:
             try:
                 info['eps'] = float(eps_match.group(1).replace(',', ''))
             except:
                 pass
         
-        # ROE
-        roe_match = re.search(r'ROE.*?<em>([0-9,.-]+)</em>', html, re.DOTALL)
+        # ROE - 거리 제한 + 값 검증
+        roe_match = re.search(r'ROE.{0,50}<em>([0-9,.-]+)</em>', html, re.DOTALL)
         if roe_match:
             try:
-                info['roe'] = float(roe_match.group(1).replace(',', ''))
+                val = float(roe_match.group(1).replace(',', ''))
+                if abs(val) < 1000:  # 비정상 값 필터링
+                    info['roe'] = val
             except:
                 pass
         
