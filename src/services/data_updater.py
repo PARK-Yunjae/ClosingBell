@@ -46,10 +46,25 @@ def is_market_open(check_date: date = None) -> bool:
 def get_last_date_in_csv(file_path: Path) -> Optional[date]:
     """CSV 파일의 마지막 거래일 반환"""
     try:
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+        
+        # date 컬럼 찾기
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            return df['date'].max().date()
+        
+        # 첫 번째 컬럼이 날짜인 경우 (Unnamed: 0 또는 인덱스)
+        first_col = df.columns[0]
+        if first_col in ['', 'Unnamed: 0'] or 'date' in first_col.lower():
+            df[first_col] = pd.to_datetime(df[first_col])
+            return df[first_col].max().date()
+        
+        # 인덱스가 날짜인 경우
         df = pd.read_csv(file_path, index_col=0, parse_dates=True)
         if len(df) == 0:
             return None
         return df.index[-1].date()
+        
     except Exception as e:
         logger.warning(f"CSV 읽기 실패 {file_path.name}: {e}")
         return None
@@ -61,6 +76,42 @@ def get_business_days_between(start: date, end: date) -> int:
     weeks = days // 7
     remainder = days % 7
     return weeks * 5 + min(remainder, 5)
+
+
+def load_csv_with_date(file_path: Path) -> Optional[pd.DataFrame]:
+    """CSV 파일 로드 (date 컬럼/인덱스 모두 지원)
+    
+    Returns:
+        DataFrame with date as index, lowercase columns
+    """
+    try:
+        df = pd.read_csv(file_path, encoding='utf-8-sig')
+        
+        # 컬럼명 소문자 통일
+        df.columns = df.columns.str.lower()
+        
+        # date 컬럼 찾기
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.set_index('date')
+        else:
+            # 첫 번째 컬럼이 날짜인 경우
+            first_col = df.columns[0]
+            if first_col in ['', 'unnamed: 0']:
+                df = df.rename(columns={first_col: 'date'})
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.set_index('date')
+            else:
+                # 인덱스로 다시 읽기
+                df = pd.read_csv(file_path, index_col=0, parse_dates=True, encoding='utf-8-sig')
+                df.columns = df.columns.str.lower()
+        
+        df.index.name = 'date'
+        return df
+        
+    except Exception as e:
+        logger.warning(f"CSV 로드 실패 {file_path.name}: {e}")
+        return None
 
 
 def update_single_stock(code: str, last_date: date, today: date) -> bool:
@@ -75,30 +126,40 @@ def update_single_stock(code: str, last_date: date, today: date) -> bool:
             return False
         
         file_path = DATA_DIR / f"{code}.csv"
-        df_existing = pd.read_csv(file_path, index_col=0, parse_dates=True)
+        df_existing = load_csv_with_date(file_path)
+        
+        if df_existing is None:
+            logger.warning(f"  {code}: 기존 파일 로드 실패")
+            return False
         
         new_rows = []
         for price in prices:
             price_date = pd.Timestamp(price.date)
             if price_date not in df_existing.index and price.date > last_date:
                 new_rows.append({
-                    'Date': price_date,
-                    'Open': price.open,
-                    'High': price.high,
-                    'Low': price.low,
-                    'Close': price.close,
-                    'Volume': price.volume,
-                    'Change': (price.close / df_existing.iloc[-1]['Close'] - 1) if len(df_existing) > 0 else 0,
-                    'TradingValue': price.trading_value,
+                    'date': price_date,
+                    'open': price.open,
+                    'high': price.high,
+                    'low': price.low,
+                    'close': price.close,
+                    'volume': price.volume,
+                    'trading_value': price.trading_value,
                 })
         
         if new_rows:
             df_new = pd.DataFrame(new_rows)
-            df_new.set_index('Date', inplace=True)
+            df_new.set_index('date', inplace=True)
+            
             df_combined = pd.concat([df_existing, df_new])
             df_combined.sort_index(inplace=True)
             df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
-            df_combined.to_csv(file_path)
+            
+            # A안: OHLCV만 저장 (trading_value는 계산 가능)
+            keep_cols = ['open', 'high', 'low', 'close', 'volume']
+            save_cols = [c for c in keep_cols if c in df_combined.columns]
+            df_combined = df_combined[save_cols]
+            
+            df_combined.to_csv(file_path, index_label='date')
             logger.info(f"  ✓ {code}: {len(new_rows)}일 추가 (마지막: {df_combined.index[-1].date()})")
             return True
         else:
@@ -211,17 +272,21 @@ def update_global_data() -> dict:
         try:
             # 기존 데이터 확인
             if file_path.exists():
-                df_existing = pd.read_csv(file_path, index_col=0, parse_dates=True)
-                last_date = df_existing.index[-1].date()
-                
-                # 이미 최신이면 스킵
-                if last_date >= today - timedelta(days=1):
-                    logger.debug(f"  {name}: 이미 최신 ({last_date})")
-                    results['updated'] += 1
-                    continue
-                
-                # 부족한 기간만 조회
-                start_date = last_date + timedelta(days=1)
+                df_existing = load_csv_with_date(file_path)
+                if df_existing is not None and len(df_existing) > 0:
+                    last_date = df_existing.index[-1].date()
+                    
+                    # 이미 최신이면 스킵
+                    if last_date >= today - timedelta(days=1):
+                        logger.debug(f"  {name}: 이미 최신 ({last_date})")
+                        results['updated'] += 1
+                        continue
+                    
+                    # 부족한 기간만 조회
+                    start_date = last_date + timedelta(days=1)
+                else:
+                    df_existing = None
+                    start_date = date(2016, 6, 1)
             else:
                 # 신규: 2016년부터
                 df_existing = None
@@ -235,20 +300,29 @@ def update_global_data() -> dict:
                 results['updated'] += 1
                 continue
             
-            # 컬럼 정리
+            # 컬럼 정리 (소문자 통일, date 컬럼 명시)
             df_new = df_new[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
-            df_new.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            df_new.columns = ['open', 'high', 'low', 'close', 'volume']
+            df_new.index.name = 'date'
             
             # 기존 데이터와 병합
             if df_existing is not None:
+                # 기존 파일도 소문자로 정규화
+                df_existing.columns = df_existing.columns.str.lower()
+                df_existing.index.name = 'date'
                 df_combined = pd.concat([df_existing, df_new])
                 df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
                 df_combined.sort_index(inplace=True)
             else:
                 df_combined = df_new
             
-            # 저장
-            df_combined.to_csv(file_path)
+            # A안: 필요한 컬럼만 저장
+            keep_cols = ['open', 'high', 'low', 'close', 'volume']
+            save_cols = [c for c in keep_cols if c in df_combined.columns]
+            df_combined = df_combined[save_cols]
+            
+            # 저장 (date 컬럼 명시)
+            df_combined.to_csv(file_path, index_label='date')
             
             new_count = len(df_new)
             logger.info(f"  ✓ {name}: {new_count}일 추가 (마지막: {df_combined.index[-1].date()})")
@@ -280,7 +354,20 @@ def update_global_merged():
         logger.warning("kospi.csv 없음 - global_merged 스킵")
         return
     
-    kospi = pd.read_csv(kospi_path, index_col=0, parse_dates=True)
+    kospi = pd.read_csv(kospi_path)
+    
+    # date 컬럼 처리
+    if 'date' in kospi.columns:
+        kospi['date'] = pd.to_datetime(kospi['date'])
+        kospi = kospi.set_index('date')
+    else:
+        # 첫 번째 컬럼이 날짜
+        first_col = kospi.columns[0]
+        kospi[first_col] = pd.to_datetime(kospi[first_col])
+        kospi = kospi.set_index(first_col)
+    
+    # 컬럼 소문자 통일
+    kospi.columns = kospi.columns.str.lower()
     
     # 각 지표 로드 및 병합
     merged = pd.DataFrame(index=kospi.index)
@@ -289,17 +376,29 @@ def update_global_merged():
     for name in GLOBAL_SYMBOLS.keys():
         file_path = GLOBAL_DIR / f"{name}.csv"
         if file_path.exists():
-            df = pd.read_csv(file_path, index_col=0, parse_dates=True)
+            df = pd.read_csv(file_path)
+            
+            # date 컬럼 처리
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.set_index('date')
+            else:
+                first_col = df.columns[0]
+                df[first_col] = pd.to_datetime(df[first_col])
+                df = df.set_index(first_col)
+            
+            # 컬럼 소문자 통일
+            df.columns = df.columns.str.lower()
             
             # 등락률 계산
-            df['change_pct'] = ((df['Close'] / df['Close'].shift(1)) - 1) * 100
+            df['change_pct'] = ((df['close'] / df['close'].shift(1)) - 1) * 100
             
             # 한국 날짜에 맞춰 병합 (미국 데이터는 +1일 매핑)
             if name in ['nasdaq', 'dow', 'sp500', 'usdkrw']:
                 # 미국 데이터: 다음 한국 영업일에 영향
                 df.index = df.index + pd.Timedelta(days=1)
             
-            merged[f'{name}_close'] = df['Close']
+            merged[f'{name}_close'] = df['close']
             merged[f'{name}_change_pct'] = df['change_pct']
     
     # 나스닥 트렌드 분류
@@ -319,9 +418,9 @@ def update_global_merged():
     # NaN 제거
     merged = merged.dropna(subset=['kospi_close'])
     
-    # 저장
+    # 저장 (date 컬럼 명시)
     merged_path = GLOBAL_DIR / "global_merged.csv"
-    merged.to_csv(merged_path)
+    merged.to_csv(merged_path, index_label='date')
     
     logger.info(f"  ✓ global_merged.csv: {len(merged)}일 저장")
 

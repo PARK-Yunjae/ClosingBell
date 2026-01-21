@@ -228,11 +228,13 @@ class StockScoreV5:
     
     @property
     def grade(self) -> StockGrade:
-        return self.score_detail.grade
+        # score_total 기준 (글로벌 조정 반영)
+        return get_grade(self.score_total)
     
     @property
     def sell_strategy(self) -> SellStrategy:
-        return self.score_detail.sell_strategy
+        # score_total 기준 (글로벌 조정 반영)
+        return get_sell_strategy(self.score_total)
     
     def to_legacy_score(self) -> StockScore:
         """기존 StockScore 모델로 변환 (호환성)"""
@@ -266,18 +268,24 @@ class StockScoreV5:
 def calc_cci_score(cci: float) -> float:
     """CCI 점수 (15점 만점)
     
-    v5.4 개선: 150~170 최적 구간 (백테스트 기반)
-    - 백테스트: 150~170 승률 55.5% > 160~180 승률 55.1%
+    v6.2 개선: 220+ 감점 강화, 250+ 하드필터와 연계
+    - 하드필터: CCI 250+ → TOP5 제외
+    - 점수: 220+ 부터 강한 감점
     
     최적: 150~170 → 15점 (전 구간 만점)
     양호: 130~150, 170~190 → 12~15점
-    보통: 100~130, 190~250 → 5~12점
-    위험: 그 외 → 0~5점
+    보통: 100~130, 190~220 → 5~12점
+    위험: 220~250 → 2~5점 (v6.2: 강한 감점)
+    과열: 250+ → 하드필터 제외
     """
     if cci is None:
         return 7.5  # 중간값
     
-    # v5.4: 최적 구간 150~170 (백테스트 기반)
+    # v6.2: 250+ 는 하드필터에서 제외되므로 여기선 낮은 점수만 부여
+    if cci > 250:
+        return 0.0
+    
+    # v6.2: 최적 구간 150~170 (백테스트 기반)
     if 150 <= cci <= 170:
         return 15.0  # 전 구간 만점!
     
@@ -287,20 +295,18 @@ def calc_cci_score(cci: float) -> float:
     elif 170 < cci <= 190:
         return 15.0 - ((cci - 170) / 20) * 3.0  # 15~12점
     
-    # 보통 구간 (100~130, 190~250)
+    # 보통 구간 (100~130, 190~220)
     elif 100 <= cci < 130:
         return 5.0 + ((cci - 100) / 30) * 7.0  # 5~12점
-    elif 190 < cci <= 250:
-        return 12.0 - ((cci - 190) / 60) * 7.0  # 12~5점
+    elif 190 < cci <= 220:
+        return 12.0 - ((cci - 190) / 30) * 7.0  # 12~5점
     
-    # 위험 구간
-    elif cci > 250:
-        # 과열: 250 이상은 급격히 감점
-        if cci > 350:
-            return 0.0
-        return 5.0 - ((cci - 250) / 100) * 5.0  # 5~0점
+    # v6.2: 위험 구간 (220~250) - 강한 감점
+    elif 220 < cci <= 250:
+        return 5.0 - ((cci - 220) / 30) * 3.0  # 5~2점
+    
+    # 모멘텀 부족: 100 미만
     else:
-        # 모멘텀 부족: 100 미만
         if cci < 0:
             return 2.0
         return 2.0 + (cci / 100) * 3.0  # 2~5점
@@ -739,6 +745,14 @@ class ScoreCalculatorV5:
     ) -> List[StockScoreV5]:
         """TOP N 종목 선정"""
         return scores[:n]
+    
+    def _determine_grade(self, score: float) -> StockGrade:
+        """점수에 따른 등급 결정"""
+        return get_grade(score)
+    
+    def _get_sell_strategy(self, grade: StockGrade) -> SellStrategy:
+        """등급에 따른 매도 전략 반환"""
+        return SELL_STRATEGIES[grade]
 
 
 # ============================================================

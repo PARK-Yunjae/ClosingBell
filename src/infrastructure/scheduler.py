@@ -1,21 +1,24 @@
 """
-작업 스케줄러 v6.0
+작업 스케줄러 v6.2
 
 책임:
 - Cron 스케줄 관리
 - 작업 등록/해제
 - 장 운영일 체크
 
-v6.0 스케줄:
+v6.2 스케줄:
 - 12:30 프리뷰 스크리닝
 - 15:00 메인 스크리닝 (→ closing_top5_history)
 - 16:35 OHLCV 갱신
 - 16:45 글로벌 데이터 갱신
 - 17:00 결과 수집 (→ top5_daily_prices)
 - 17:10 일일 학습
-- 17:20 유목민 공부법 (→ nomad_candidates)
-- 17:45 Git 커밋
-- 17:50 자동 종료
+- 17:20 유목민 종목 수집 (→ nomad_candidates)
+- 17:30 뉴스 수집 (→ nomad_news)
+- 17:40 기업정보 크롤링
+- 17:50 AI 분석 (Gemini 2.0 Flash)
+- 18:00 Git 커밋
+- 18:05 자동 종료
 
 의존성:
 - APScheduler
@@ -364,24 +367,36 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("company_service 모듈 없음 - 기업정보 수집 스킵")
         
-        # 17:50 Git 자동 커밋
+        # v6.2: 17:50 AI 분석 (Gemini 2.0 Flash)
+        try:
+            from src.services.ai_service import run_ai_analysis
+            self.add_job(
+                job_id='ai_analysis',
+                func=run_ai_analysis,
+                hour=17,
+                minute=50,
+            )
+        except ImportError:
+            logger.warning("ai_service 모듈 없음 - AI 분석 스킵")
+        
+        # 18:00 Git 자동 커밋
         self.add_job(
             job_id='git_commit',
             func=run_git_commit,
-            hour=17,
-            minute=50,
+            hour=18,
+            minute=0,
         )
         
-        # 17:55 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        # 18:05 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
         self.add_job(
             job_id='auto_shutdown',
             func=self._auto_shutdown,
-            hour=17,
-            minute=55,
+            hour=18,
+            minute=5,
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v6.0: 종가매매 + TOP5 + 유목민 + 뉴스 + 기업정보)")
+        logger.info("기본 스케줄 설정 완료 (v6.2: 종가매매 + TOP5 + 유목민 + 뉴스 + 기업정보 + AI분석)")
     
     def start(self):
         """스케줄러 시작"""

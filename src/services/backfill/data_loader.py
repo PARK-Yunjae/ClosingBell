@@ -54,14 +54,18 @@ def load_single_ohlcv(file_path: Path) -> Optional[pd.DataFrame]:
     try:
         df = pd.read_csv(file_path, encoding='utf-8-sig')
         
-        # 컬럼명 정규화
+        # 컬럼명 정규화 (소문자 통일)
+        df.columns = df.columns.str.lower()
+        
         column_map = {
-            '날짜': 'date', '일자': 'date', 'Date': 'date',
-            '시가': 'open', 'Open': 'open',
-            '고가': 'high', 'High': 'high',
-            '저가': 'low', 'Low': 'low',
-            '종가': 'close', 'Close': 'close',
-            '거래량': 'volume', 'Volume': 'volume',
+            '날짜': 'date', '일자': 'date',
+            '시가': 'open',
+            '고가': 'high',
+            '저가': 'low',
+            '종가': 'close',
+            '거래량': 'volume',
+            '거래대금': 'trading_value',
+            'tradingvalue': 'trading_value',
         }
         df = df.rename(columns=column_map)
         
@@ -79,6 +83,13 @@ def load_single_ohlcv(file_path: Path) -> Optional[pd.DataFrame]:
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
         
+        # 거래대금 (있으면 사용, 없으면 계산)
+        if 'trading_value' in df.columns:
+            df['trading_value'] = pd.to_numeric(df['trading_value'], errors='coerce')
+        else:
+            # 거래대금 = 종가 × 거래량 (근사값)
+            df['trading_value'] = df['close'] * df['volume']
+        
         # 종목코드 추출 (파일명에서)
         code = file_path.stem
         if len(code) == 6 and code.isdigit():
@@ -91,7 +102,7 @@ def load_single_ohlcv(file_path: Path) -> Optional[pd.DataFrame]:
             else:
                 df['code'] = file_path.stem
         
-        return df[['date', 'code', 'open', 'high', 'low', 'close', 'volume']]
+        return df[['date', 'code', 'open', 'high', 'low', 'close', 'volume', 'trading_value']]
         
     except Exception as e:
         logger.error(f"파일 로드 실패 {file_path}: {e}")
@@ -202,6 +213,11 @@ def load_global_index(
             try:
                 df = pd.read_csv(file_path, encoding='utf-8-sig')
                 
+                # 첫 번째 컬럼이 인덱스(날짜)인 경우 처리
+                first_col = df.columns[0]
+                if first_col == '' or first_col == 'Unnamed: 0':
+                    df = df.rename(columns={first_col: 'date'})
+                
                 # 컬럼명 정규화
                 column_map = {
                     '날짜': 'date', '일자': 'date', 'Date': 'date',
@@ -209,11 +225,17 @@ def load_global_index(
                 }
                 df = df.rename(columns=column_map)
                 
+                # date 컬럼이 없으면 인덱스 사용
+                if 'date' not in df.columns:
+                    df = df.reset_index()
+                    df = df.rename(columns={'index': 'date'})
+                
                 df['date'] = pd.to_datetime(df['date'])
                 df = df.sort_values('date')
                 
                 if 'close' in df.columns:
                     df['change_rate'] = df['close'].pct_change() * 100
+                    logger.info(f"지수 로드 성공: {index_name} ({len(df)}일)")
                     return df[['date', 'close', 'change_rate']]
                     
             except Exception as e:

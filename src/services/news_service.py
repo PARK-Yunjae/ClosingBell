@@ -48,7 +48,7 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 # 상수
 NEWS_PER_STOCK = 10      # 종목당 뉴스 수
 API_DELAY = 0.5          # API 호출 간격 (초)
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # VI 관련 제외 키워드 (최근 이슈 제외)
 EXCLUDE_KEYWORDS = [
@@ -390,15 +390,13 @@ def collect_news_for_candidate(candidate: Dict) -> Dict:
     for news in filtered_news:
         try:
             news_data = {
-                'candidate_id': candidate_id,
+                'study_date': study_date,
+                'stock_code': stock_code,
                 'news_date': news.get('news_date', study_date),
                 'news_title': news.get('title', '')[:200],
                 'news_source': news.get('source', ''),
                 'news_url': news.get('originallink') or news.get('link', ''),
                 'summary': news.get('summary', '')[:500],
-                'sentiment': news.get('sentiment', 'neutral'),
-                'relevance_score': news.get('relevance', 0.5),
-                'category': news.get('category', '기타'),
             }
             
             news_repo.insert(news_data)

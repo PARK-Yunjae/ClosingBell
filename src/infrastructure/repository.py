@@ -1485,8 +1485,8 @@ class NomadCandidatesRepository:
             (status, count, study_date, stock_code)
         )
     
-    def update_ai_summary(self, study_date: str, stock_code: str, summary: str):
-        """AI 요약 업데이트"""
+    def update_ai_summary_by_date(self, study_date: str, stock_code: str, summary: str):
+        """AI 요약 업데이트 (날짜+종목코드 기준)"""
         self.db.execute(
             "UPDATE nomad_candidates SET ai_summary = ? WHERE study_date = ? AND stock_code = ?",
             (summary, study_date, stock_code)
@@ -1534,23 +1534,90 @@ class NomadCandidatesRepository:
         return [dict(row) for row in rows]
     
     def update_company_info_by_id(self, candidate_id: int, info: dict):
-        """기업 정보 업데이트 (ID 기준)"""
+        """기업 정보 업데이트 (ID 기준) - v6.1 확장"""
         self.db.execute(
             """
             UPDATE nomad_candidates SET
-                market = ?, sector = ?, market_cap = ?, per = ?, pbr = ?,
-                eps = ?, roe = ?, business_summary = ?, establishment_date = ?,
+                -- 기본 정보
+                market = ?, sector = ?, market_cap = ?, market_cap_rank = ?,
+                -- 밸류에이션
+                per = ?, pbr = ?, eps = ?, bps = ?, roe = ?,
+                -- 컨센서스
+                consensus_per = ?, consensus_eps = ?,
+                -- 외국인
+                foreign_rate = ?, foreign_shares = ?,
+                -- 투자의견
+                analyst_opinion = ?, analyst_recommend = ?, target_price = ?,
+                -- 52주
+                high_52w = ?, low_52w = ?,
+                -- 배당
+                dividend_yield = ?,
+                -- 기업상세
+                business_summary = ?, establishment_date = ?,
                 ceo_name = ?, revenue = ?, operating_profit = ?,
+                -- 메타
                 company_info_collected = 1, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
-                info.get('market'), info.get('sector'), info.get('market_cap'),
-                info.get('per'), info.get('pbr'), info.get('eps'), info.get('roe'),
+                # 기본 정보
+                info.get('market'), info.get('sector'), info.get('market_cap'), info.get('market_cap_rank'),
+                # 밸류에이션
+                info.get('per'), info.get('pbr'), info.get('eps'), info.get('bps'), info.get('roe'),
+                # 컨센서스
+                info.get('consensus_per'), info.get('consensus_eps'),
+                # 외국인
+                info.get('foreign_rate'), info.get('foreign_shares'),
+                # 투자의견
+                info.get('analyst_opinion'), info.get('analyst_recommend'), info.get('target_price'),
+                # 52주
+                info.get('high_52w'), info.get('low_52w'),
+                # 배당
+                info.get('dividend_yield'),
+                # 기업상세
                 info.get('business_summary'), info.get('establishment_date'),
                 info.get('ceo_name'), info.get('revenue'), info.get('operating_profit'),
+                # ID
                 candidate_id
             )
+        )
+    
+    def update_company_info_by_code(self, stock_code: str, info: dict):
+        """기업 정보 업데이트 (종목코드 기준) - v6.2"""
+        self.db.execute(
+            """
+            UPDATE nomad_candidates SET
+                market = ?, sector = ?, market_cap = ?, market_cap_rank = ?,
+                per = ?, pbr = ?, eps = ?, bps = ?, roe = ?,
+                consensus_per = ?, consensus_eps = ?,
+                foreign_rate = ?, foreign_shares = ?,
+                analyst_opinion = ?, analyst_recommend = ?, target_price = ?,
+                high_52w = ?, low_52w = ?,
+                dividend_yield = ?,
+                business_summary = ?, establishment_date = ?,
+                ceo_name = ?, revenue = ?, operating_profit = ?,
+                company_info_collected = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE stock_code = ?
+            """,
+            (
+                info.get('market'), info.get('sector'), info.get('market_cap'), info.get('market_cap_rank'),
+                info.get('per'), info.get('pbr'), info.get('eps'), info.get('bps'), info.get('roe'),
+                info.get('consensus_per'), info.get('consensus_eps'),
+                info.get('foreign_rate'), info.get('foreign_shares'),
+                info.get('analyst_opinion'), info.get('analyst_recommend'), info.get('target_price'),
+                info.get('high_52w'), info.get('low_52w'),
+                info.get('dividend_yield'),
+                info.get('business_summary'), info.get('establishment_date'),
+                info.get('ceo_name'), info.get('revenue'), info.get('operating_profit'),
+                stock_code
+            )
+        )
+    
+    def update_ai_summary(self, candidate_id: int, summary: str):
+        """AI 요약 업데이트 (ID 기준) - v6.2"""
+        self.db.execute(
+            "UPDATE nomad_candidates SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (summary, candidate_id)
         )
 
 
@@ -1561,11 +1628,19 @@ class NomadNewsRepository:
         self.db = db or get_database()
     
     def insert(self, data: dict) -> int:
-        """뉴스 삽입"""
-        # 중복 체크 (candidate_id + news_url)
+        """뉴스 삽입 (study_date + stock_code 사용)"""
+        # study_date, stock_code 필수
+        study_date = data.get('study_date') or data.get('news_date')
+        stock_code = data.get('stock_code')
+        news_url = data.get('news_url') or data.get('url', '')
+        
+        if not study_date or not stock_code:
+            raise ValueError("study_date, stock_code 필수")
+        
+        # 중복 체크 (study_date + stock_code + url)
         existing = self.db.fetch_one(
-            "SELECT id FROM nomad_news WHERE candidate_id = ? AND news_url = ?",
-            (data['candidate_id'], data.get('news_url', ''))
+            "SELECT id FROM nomad_news WHERE study_date = ? AND stock_code = ? AND url = ?",
+            (study_date, stock_code, news_url)
         )
         
         if existing:
@@ -1574,49 +1649,63 @@ class NomadNewsRepository:
         cursor = self.db.execute(
             """
             INSERT INTO nomad_news
-            (candidate_id, news_date, news_title, news_source, news_url, summary, sentiment, relevance_score, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (study_date, stock_code, title, publisher, published_at, url, snippet)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                data['candidate_id'],
-                data.get('news_date'),
-                data.get('news_title', '')[:200],
-                data.get('news_source', ''),
-                data.get('news_url', ''),
-                data.get('summary', ''),
-                data.get('sentiment', 'neutral'),
-                data.get('relevance_score', 0.5),
-                data.get('category', '기타'),
+                study_date,
+                stock_code,
+                data.get('news_title') or data.get('title', '')[:200],
+                data.get('news_source') or data.get('publisher', ''),
+                data.get('published_at') or data.get('news_date'),
+                news_url,
+                data.get('summary') or data.get('snippet', ''),
             )
         )
         return cursor.lastrowid
     
     def get_by_candidate_id(self, candidate_id: int) -> List[dict]:
-        """후보 ID로 뉴스 조회"""
-        rows = self.db.fetch_all(
-            "SELECT * FROM nomad_news WHERE candidate_id = ? ORDER BY news_date DESC",
+        """후보 ID로 뉴스 조회 (deprecated - get_by_candidate 사용)"""
+        # candidate_id로 study_date, stock_code 조회
+        candidate = self.db.fetch_one(
+            "SELECT study_date, stock_code FROM nomad_candidates WHERE id = ?",
             (candidate_id,)
         )
-        return [dict(row) for row in rows]
+        if not candidate:
+            return []
+        return self.get_by_candidate(candidate['study_date'], candidate['stock_code'])
     
     def get_by_candidate(self, study_date: str, stock_code: str) -> List[dict]:
         """후보의 뉴스 조회 (날짜+종목코드)"""
-        # candidate_id 찾기
-        candidate = self.db.fetch_one(
-            "SELECT id FROM nomad_candidates WHERE study_date = ? AND stock_code = ?",
+        # nomad_news 테이블에서 직접 조회 (candidate_id 없이)
+        rows = self.db.fetch_all(
+            "SELECT * FROM nomad_news WHERE study_date = ? AND stock_code = ? ORDER BY published_at DESC",
             (study_date, stock_code)
         )
         
-        if not candidate:
+        if not rows:
             return []
         
-        return self.get_by_candidate_id(candidate['id'])
+        # 필드명 호환 매핑 (대시보드용)
+        result = []
+        for row in rows:
+            item = dict(row)
+            # 호환성 필드 추가
+            item['news_title'] = item.get('title', '')
+            item['news_url'] = item.get('url', '')
+            item['news_source'] = item.get('publisher', '')
+            item['news_date'] = item.get('published_at', '')
+            item['summary'] = item.get('snippet', '')
+            item['sentiment'] = '중립'  # 기본값
+            result.append(item)
+        
+        return result
     
-    def count_by_candidate(self, candidate_id: int) -> int:
+    def count_by_candidate(self, study_date: str, stock_code: str) -> int:
         """후보의 뉴스 개수"""
         row = self.db.fetch_one(
-            "SELECT COUNT(*) as cnt FROM nomad_news WHERE candidate_id = ?",
-            (candidate_id,)
+            "SELECT COUNT(*) as cnt FROM nomad_news WHERE study_date = ? AND stock_code = ?",
+            (study_date, stock_code)
         )
         return row['cnt'] if row else 0
     

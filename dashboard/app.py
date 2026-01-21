@@ -1,13 +1,14 @@
 """
-ClosingBell 대시보드 v6.0
+ClosingBell 대시보드 v6.2
 ==========================
 
 📊 종가매매 TOP5 20일 추적 + 유목민 공부법
 
-v6.0 변경사항:
-- TOP5 20일 추적 대시보드
-- 유목민 공부법 대시보드
-- 멀티페이지 구조
+v6.2 변경사항:
+- CCI 하드 필터 (250+)
+- 대기업 표시 (점수 가산 없음)
+- 네이버 금융 기업정보
+- Gemini 2.0 Flash AI 분석
 
 기능:
 - 전체 승률 요약
@@ -32,14 +33,14 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 st.set_page_config(
-    page_title="ClosingBell v6.0",
+    page_title="ClosingBell v6.2",
     page_icon="🔔",
     layout="wide",
 )
 
 # ==================== 헤더 ====================
-st.title("🔔 ClosingBell v6.0")
-st.markdown("**종가매매 TOP5 20일 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
+st.title("🔔 ClosingBell v6.2")
+st.markdown("**종가매매 TOP5 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
 st.markdown("---")
 
 
@@ -115,16 +116,12 @@ def create_cumulative_chart(results, title):
     df = pd.DataFrame(results)
     df['screen_date'] = pd.to_datetime(df['screen_date'])
     
-    # 날짜별 평균 수익률
     daily = df.groupby('screen_date')['gap_rate'].mean().reset_index()
     daily = daily.sort_values('screen_date')
     daily['gap_rate'] = daily['gap_rate'].fillna(0)
-    
-    # 누적 수익률
     daily['cumulative'] = (1 + daily['gap_rate'] / 100).cumprod() - 1
     daily['cumulative_pct'] = daily['cumulative'] * 100
     
-    # 승패 색상
     colors = ['#4CAF50' if x > 0 else '#F44336' for x in daily['gap_rate']]
     
     fig = make_subplots(
@@ -134,7 +131,6 @@ def create_cumulative_chart(results, title):
         vertical_spacing=0.05,
     )
     
-    # 누적 수익률 라인
     fig.add_trace(
         go.Scatter(
             x=daily['screen_date'],
@@ -149,7 +145,6 @@ def create_cumulative_chart(results, title):
         row=1, col=1
     )
     
-    # 일별 수익률 바
     fig.add_trace(
         go.Bar(
             x=daily['screen_date'],
@@ -183,7 +178,7 @@ def create_gauge(value, title):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=value,
-        number={'suffix': '%', 'font': {'size': 36}},
+        number={'suffix': '%', 'font': {'size': 36}, 'valueformat': '.1f'},
         gauge={
             'axis': {'range': [0, 100], 'tickwidth': 1},
             'bar': {'color': color},
@@ -200,36 +195,35 @@ def create_gauge(value, title):
     return fig
 
 
-# ==================== v6.0 기능 요약 카드 ====================
-st.subheader("🆕 v6.0 새로운 기능")
+# ==================== 기능 요약 카드 ====================
+st.subheader("📌 주요 기능")
 
 col1, col2 = st.columns(2)
 
 with col1:
     top5_summary = load_top5_summary()
-    st.markdown("### 📈 종가매매 TOP5 20일 추적")
-    st.markdown(f"""
-    - **수집 기간**: {top5_summary['dates_count']}일
-    - **최신 데이터**: {top5_summary['latest_date'] or '없음'}
-    - **기능**: D+1 ~ D+20 수익률 추적
-    """)
-    st.info("👈 사이드바에서 **📊 종가매매_TOP5** 페이지로 이동하세요")
+    st.markdown("### 📈 종가매매 TOP5")
+    if top5_summary['dates_count'] > 0:
+        st.success(f"✅ {top5_summary['dates_count']}일 데이터 | 최신: {top5_summary['latest_date']}")
+    else:
+        st.warning("⚠️ 데이터 없음")
+    st.caption("D+1 ~ D+20 수익률 추적, CCI 하드필터(250+)")
 
 with col2:
     nomad_summary = load_nomad_summary()
     st.markdown("### 📚 유목민 공부법")
-    st.markdown(f"""
-    - **수집 기간**: {nomad_summary['dates_count']}일
-    - **최신 데이터**: {nomad_summary['latest_date'] or '없음'}
-    - **기능**: 상한가/거래량천만 종목 뉴스 분석
-    """)
-    st.info("👈 사이드바에서 **📚 유목민_공부법** 페이지로 이동하세요")
+    if nomad_summary['dates_count'] > 0:
+        st.success(f"✅ {nomad_summary['dates_count']}일 데이터 | 최신: {nomad_summary['latest_date']}")
+    else:
+        st.warning("⚠️ 데이터 없음")
+    st.caption("상한가/거래량천만 종목, 네이버 기업정보, AI 분석")
 
+st.info("👈 **사이드바에서 페이지를 선택하세요**")
 st.markdown("---")
 
 
-# ==================== 메인 컨텐츠 (기존 D+1 성과) ====================
-st.subheader("📊 기존 D+1 성과 요약")
+# ==================== 메인 컨텐츠 (D+1 성과) ====================
+st.subheader("📊 D+1 성과 요약 (최근 60일)")
 
 results = load_all_results(60)
 
@@ -242,8 +236,8 @@ if results:
     col2.metric("✅ 승리", f"{stats['wins']}건")
     col3.metric("📊 승률", f"{stats['win_rate']:.1f}%", 
                 delta="Good" if stats['win_rate'] >= 60 else None)
-    col4.metric("💰 평균 갭", f"{stats['avg_gap']:+.2f}%")
-    col5.metric("📈 평균 고가", f"{stats['avg_high']:+.2f}%")
+    col4.metric("💰 평균 갭", f"{stats['avg_gap']:+.1f}%")
+    col5.metric("📈 평균 고가", f"{stats['avg_high']:+.1f}%")
     
     st.markdown("---")
     
@@ -253,18 +247,10 @@ if results:
     with col1:
         st.plotly_chart(create_gauge(stats['win_rate'], "전체 승률"), use_container_width=True)
         
-        # 추가 통계
         st.markdown("##### 📋 상세 통계")
         st.write(f"• 승리: {stats['wins']}건 / {stats['total']}건")
-        st.write(f"• 평균 갭수익률: {stats['avg_gap']:+.2f}%")
-        st.write(f"• 평균 고가수익률: {stats['avg_high']:+.2f}%")
-        
-        if stats['win_rate'] >= 60:
-            st.success("✅ 승률이 60% 이상입니다!")
-        elif stats['win_rate'] >= 50:
-            st.warning("⚠️ 승률 50~60% 구간입니다.")
-        else:
-            st.error("❌ 승률이 50% 미만입니다.")
+        st.write(f"• 평균 갭수익률: {stats['avg_gap']:+.1f}%")
+        st.write(f"• 평균 고가수익률: {stats['avg_high']:+.1f}%")
     
     with col2:
         fig = create_cumulative_chart(results, "📈 누적 수익률 & 일별 갭수익률")
@@ -280,18 +266,13 @@ if results:
     df['screen_date'] = pd.to_datetime(df['screen_date'])
     df = df.sort_values('screen_date', ascending=False)
     
-    # 보기 좋게 포맷
     display_df = df[['screen_date', 'stock_code', 'stock_name', 'gap_rate', 'high_change_rate']].head(10)
     display_df.columns = ['날짜', '종목코드', '종목명', '갭수익률(%)', '고가수익률(%)']
     display_df['날짜'] = display_df['날짜'].dt.strftime('%m/%d')
-    display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
-    display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.2f}" if pd.notna(x) else "-")
+    display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
+    display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
     
-    st.dataframe(
-        display_df, 
-        use_container_width=True, 
-        hide_index=True,
-    )
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 else:
     st.info("📭 아직 수집된 데이터가 없습니다.")
@@ -314,22 +295,21 @@ else:
 
 # ==================== 사이드바 ====================
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔔 ClosingBell v6.0")
-st.sidebar.markdown("_차트가 모든 것을 반영한다_ 📈")
+st.sidebar.markdown("### 🔔 ClosingBell v6.2")
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
-**v6.0 새 기능:**
-- 📈 TOP5 20일 추적
-- 📚 유목민 공부법
+**v6.2 업데이트:**
+- CCI 하드필터 (250+)
+- 대기업 표시
+- 네이버 기업정보
+- Gemini 2.0 Flash AI
 
 **전략:**
 - 종가매매 TOP5 (점수제)
-
-**매도:**
 - 익일 시가 매도
 """)
 
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v6.0 | 종가매매 TOP5 20일 추적 + 유목민 공부법")
+st.caption("ClosingBell v6.2 | CCI 하드필터 + 대기업 표시 + AI 분석")

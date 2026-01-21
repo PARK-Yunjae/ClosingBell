@@ -391,7 +391,9 @@ def main():
     parser.add_argument('--run-nomad', action='store_true', help='유목민 공부 실행')
     parser.add_argument('--run-news', action='store_true', help='유목민 뉴스 수집 (네이버+Gemini)')
     parser.add_argument('--run-company-info', action='store_true', help='유목민 기업정보 수집 (네이버금융)')
-    parser.add_argument('--version', action='version', version='ClosingBell v6.0')
+    parser.add_argument('--run-ai-analysis', action='store_true', help='유목민 AI 분석 - 오늘만 (Gemini)')
+    parser.add_argument('--run-ai-analysis-all', action='store_true', help='유목민 AI 분석 - 전체 미분석 (백필 포함)')
+    parser.add_argument('--version', action='version', version='ClosingBell v6.2')
     
     args = parser.parse_args()
     
@@ -456,6 +458,14 @@ def main():
     
     if args.run_company_info:
         run_company_info_cli()
+        return
+    
+    if args.run_ai_analysis:
+        run_ai_analysis_cli()
+        return
+    
+    if args.run_ai_analysis_all:
+        run_ai_analysis_all_cli()
         return
     
     # 실행
@@ -645,6 +655,50 @@ def run_company_info_cli():
         
     except Exception as e:
         logger.error(f"기업정보 수집 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_ai_analysis_cli():
+    """AI 분석 CLI (오늘 날짜만)"""
+    logger = logging.getLogger(__name__)
+    print("\n🤖 AI 분석 시작 (Gemini 2.0 Flash)...")
+    
+    try:
+        from src.services.ai_service import analyze_candidates_with_ai
+        
+        result = analyze_candidates_with_ai(limit=50)
+        
+        print(f"\n✅ AI 분석 완료!")
+        print(f"   대상 종목: {result.get('total', 0)}개")
+        print(f"   분석 완료: {result.get('analyzed', 0)}개")
+        if result.get('failed', 0) > 0:
+            print(f"   실패: {result.get('failed', 0)}개")
+        
+    except Exception as e:
+        logger.error(f"AI 분석 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_ai_analysis_all_cli():
+    """AI 분석 CLI (전체 미분석 - 백필 포함)"""
+    logger = logging.getLogger(__name__)
+    print("\n🤖 전체 AI 분석 시작 (백필 데이터 포함)...")
+    
+    try:
+        from src.services.ai_service import analyze_all_pending
+        
+        result = analyze_all_pending(limit=500)
+        
+        print(f"\n✅ 전체 AI 분석 완료!")
+        print(f"   대상 종목: {result.get('total', 0)}개")
+        print(f"   분석 완료: {result.get('analyzed', 0)}개")
+        if result.get('failed', 0) > 0:
+            print(f"   실패: {result.get('failed', 0)}개")
+        
+    except Exception as e:
+        logger.error(f"AI 분석 실패: {e}")
         import traceback
         traceback.print_exc()
 
