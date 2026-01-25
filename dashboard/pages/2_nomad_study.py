@@ -78,6 +78,49 @@ def load_nomad_news(study_date, stock_code):
         return []
 
 
+@st.cache_data(ttl=300)
+def get_occurrence_count(stock_code, days=30):
+    """최근 N일간 유목민 등장 횟수 조회"""
+    try:
+        from src.infrastructure.repository import get_nomad_candidates_repository
+        repo = get_nomad_candidates_repository()
+        results = repo.search_occurrences(stock_code, limit=100)
+        
+        if not results:
+            return 0, []
+        
+        # 최근 N일 필터
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).date()
+        
+        recent = []
+        for r in results:
+            try:
+                d = r.get('study_date')
+                if isinstance(d, str):
+                    d = datetime.strptime(d, '%Y-%m-%d').date()
+                if d >= cutoff:
+                    recent.append(r)
+            except:
+                pass
+        
+        return len(recent), recent
+    except Exception:
+        return 0, []
+
+
+def occurrence_badge(count):
+    """등장 횟수에 따른 배지 색상"""
+    if count >= 13:
+        return "🔥", "#FF5722", "모멘텀 강력"
+    elif count >= 8:
+        return "⭐", "#FF9800", "주목"
+    elif count >= 4:
+        return "📈", "#4CAF50", "상승세"
+    else:
+        return "🔹", "#9E9E9E", "초기"
+
+
 def reason_emoji(reason):
     if '상한가' in reason and '거래량' in reason:
         return '🔥'
@@ -297,6 +340,10 @@ for i, candidate in enumerate(candidates):
         if candidate.get('ai_summary'):
             status_icons += "🤖"
         
+        # 최근 30일 등장 횟수
+        occ_count, _ = get_occurrence_count(candidate['stock_code'], days=30)
+        occ_emoji, occ_color, occ_label = occurrence_badge(occ_count)
+        
         st.markdown(f"""
         <div style="
             background: linear-gradient(135deg, {reason_color(candidate['reason_flag'])}22, {reason_color(candidate['reason_flag'])}11);
@@ -304,7 +351,7 @@ for i, candidate in enumerate(candidates):
             padding: 10px;
             border-radius: 5px;
             margin-bottom: 10px;
-            min-height: 110px;
+            min-height: 130px;
         ">
             <div style="font-size: 11px; color: #888;">
                 {reason_emoji(candidate['reason_flag'])} {candidate['reason_flag']} {status_icons}
@@ -316,6 +363,9 @@ for i, candidate in enumerate(candidates):
             </div>
             <div style="font-size: 11px; color: #888;">
                 거래대금: {candidate['trading_value']:.0f}억
+            </div>
+            <div style="font-size: 11px; color: {occ_color}; font-weight: bold;">
+                {occ_emoji} 30일 {occ_count}회 등장 ({occ_label})
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -331,6 +381,28 @@ selected_stock_str = st.selectbox("종목 선택", stock_options)
 if selected_stock_str:
     selected_idx = stock_options.index(selected_stock_str)
     selected_candidate = candidates[selected_idx]
+    
+    # 등장 횟수 정보
+    detail_occ_count, detail_occ_history = get_occurrence_count(selected_candidate['stock_code'], days=30)
+    detail_emoji, detail_color, detail_label = occurrence_badge(detail_occ_count)
+    
+    # 등장 횟수 요약 박스
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, {detail_color}22, {detail_color}11);
+        border-left: 4px solid {detail_color};
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+    ">
+        <span style="font-size: 18px; font-weight: bold; color: {detail_color};">
+            {detail_emoji} 최근 30일 {detail_occ_count}회 등장 - {detail_label}
+        </span>
+        <span style="font-size: 12px; color: #666; margin-left: 10px;">
+            (4~7회: 상승세, 8~12회: 주목, 13회+: 모멘텀 강력)
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
     
     tab1, tab2, tab3 = st.tabs(["🏢 기업정보", "📰 뉴스", "🤖 AI 분석"])
     

@@ -135,6 +135,41 @@ def load_nomad_summary():
         return {'dates_count': 0, 'latest_date': None}
 
 
+@st.cache_data(ttl=300)
+def load_nomad_occurrence_ranking(days=30, top_n=15):
+    """유목민 등장 횟수 랭킹 (최근 N일)"""
+    try:
+        import sqlite3
+        from pathlib import Path
+        
+        db_path = Path(__file__).parent.parent / "data" / "screener.db"
+        if not db_path.exists():
+            return pd.DataFrame()
+        
+        conn = sqlite3.connect(db_path)
+        
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        
+        df = pd.read_sql_query(f"""
+            SELECT 
+                stock_code,
+                stock_name,
+                COUNT(*) as count,
+                MAX(change_rate) as max_change,
+                MAX(study_date) as last_date
+            FROM nomad_candidates
+            WHERE study_date >= '{cutoff}'
+            GROUP BY stock_code, stock_name
+            ORDER BY count DESC
+            LIMIT {top_n}
+        """, conn)
+        
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 # ==================== 통계 함수 ====================
 def calc_stats(results):
     """승률 통계 계산"""
@@ -331,22 +366,62 @@ if results:
     st.dataframe(display_df, width="stretch", hide_index=True)
 
 else:
-    st.info("📭 아직 수집된 데이터가 없습니다.")
+    st.info("📭 D+1 성과 데이터가 없습니다. 백필 후 데이터가 쌓이면 표시됩니다.")
+
+# ==================== 유목민 등장 횟수 랭킹 ====================
+st.markdown("---")
+st.subheader("🔥 유목민 등장 횟수 TOP 15 (최근 30일)")
+st.caption("많이 등장할수록 모멘텀 강력! (13회+ 승률 90%)")
+
+ranking_df = load_nomad_occurrence_ranking(days=30, top_n=15)
+
+if not ranking_df.empty and PLOTLY_AVAILABLE:
+    # 역순 정렬 (아래에서 위로 증가)
+    ranking_df = ranking_df.sort_values('count', ascending=True)
     
-    st.markdown("""
-    ### 🚀 시작하기
+    # 색상 지정 (등장 횟수에 따라)
+    colors = []
+    for cnt in ranking_df['count']:
+        if cnt >= 13:
+            colors.append('#FF5722')  # 모멘텀 강력
+        elif cnt >= 8:
+            colors.append('#FF9800')  # 주목
+        elif cnt >= 4:
+            colors.append('#4CAF50')  # 상승세
+        else:
+            colors.append('#9E9E9E')  # 초기
     
-    ```bash
-    # 1. 과거 데이터 백필 (최초 1회)
-    python main.py --backfill 20
+    fig = go.Figure(go.Bar(
+        x=ranking_df['count'],
+        y=ranking_df['stock_name'],
+        orientation='h',
+        marker_color=colors,
+        text=ranking_df['count'].astype(str) + '회',
+        textposition='outside',
+    ))
     
-    # 2. 스크리닝 실행
-    python main.py --run
+    fig.update_layout(
+        height=450,
+        margin=dict(l=10, r=50, t=10, b=10),
+        xaxis_title="등장 횟수",
+        yaxis_title="",
+        showlegend=False,
+    )
     
-    # 3. 대시보드 확인
-    streamlit run dashboard/app.py
-    ```
-    """)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 범례 설명
+    col1, col2, col3, col4 = st.columns(4)
+    col1.markdown("🔴 **13회+**: 모멘텀 강력 (승률 90%)")
+    col2.markdown("🟠 **8~12회**: 주목 (승률 61%)")
+    col3.markdown("🟢 **4~7회**: 상승세 (승률 59%)")
+    col4.markdown("⚪ **1~3회**: 초기 (승률 37%)")
+    
+elif not ranking_df.empty:
+    # plotly 없을 때 테이블로 표시
+    st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+else:
+    st.info("📭 유목민 데이터가 없습니다. 백필 후 표시됩니다.")
 
 
 # ==================== 사이드바 ====================

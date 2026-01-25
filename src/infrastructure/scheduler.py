@@ -306,104 +306,115 @@ class ScreenerScheduler:
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
-        # 16:35 KIS OHLCV 데이터 수집 (정규장 기준 - 운영용)
+        # 16:00 KIS OHLCV 데이터 수집 (정규장 기준 - 운영용)
         self.add_job(
             job_id='kis_data_update',
             func=run_kis_data_update,
             hour=16,
-            minute=35,
+            minute=0,
         )
         
-        # 16:40 FDR OHLCV 데이터 갱신 (프리장 포함 - 백테스팅용)
+        # 16:05 FDR OHLCV 데이터 갱신 (프리장 포함 - 백테스팅용)
         self.add_job(
             job_id='daily_data_update',
             func=run_data_update,
             hour=16,
-            minute=40,
+            minute=5,
         )
         
-        # 16:45 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
+        # 16:10 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
         self.add_job(
             job_id='global_data_update',
             func=update_global_data,
             hour=16,
-            minute=45,
-        )
-        
-        # 17:00 익일 결과 수집 (승률 추적 + v6.0 TOP5 20일 추적)
-        self.add_job(
-            job_id='result_collection',
-            func=run_result_collection,
-            hour=17,
-            minute=0,
-        )
-        
-        # 17:10 일일 학습 (상관관계 분석 + 가중치 조정)
-        self.add_job(
-            job_id='daily_learning',
-            func=run_daily_learning,
-            hour=17,
             minute=10,
         )
         
-        # v6.0: 17:20 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
-        # 장 종료 후 최종 데이터로 수집 (시간 여유 확보)
+        # 16:15 익일 결과 수집 (승률 추적 + v6.0 TOP5 20일 추적)
         self.add_job(
-            job_id='nomad_collection',
-            func=run_nomad_collection,
-            hour=17,
+            job_id='result_collection',
+            func=run_result_collection,
+            hour=16,
+            minute=15,
+        )
+        
+        # 16:20 일일 학습 (상관관계 분석 + 가중치 조정)
+        self.add_job(
+            job_id='daily_learning',
+            func=run_daily_learning,
+            hour=16,
             minute=20,
         )
         
-        # v6.0: 17:30 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        # 16:25 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        self.add_job(
+            job_id='nomad_collection',
+            func=run_nomad_collection,
+            hour=16,
+            minute=25,
+        )
+        
+        # 16:30 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
         try:
             from src.services.news_service import run_news_collection
             self.add_job(
                 job_id='news_collection',
                 func=run_news_collection,
-                hour=17,
+                hour=16,
                 minute=30,
             )
         except ImportError:
             logger.warning("news_service 모듈 없음 - 뉴스 수집 스킵")
         
-        # v6.0: 17:40 기업정보 수집 (네이버 금융 크롤링)
+        # 16:35 기업정보 수집 (네이버 금융 크롤링)
         try:
             from src.services.company_service import run_company_info_collection
             self.add_job(
                 job_id='company_info_collection',
                 func=run_company_info_collection,
-                hour=17,
-                minute=40,
+                hour=16,
+                minute=35,
             )
         except ImportError:
             logger.warning("company_service 모듈 없음 - 기업정보 수집 스킵")
         
-        # v6.2: 17:50 AI 분석 (Gemini 2.0 Flash)
+        # 16:40 AI 분석 - 유목민 (Gemini 2.5 Flash)
         try:
             from src.services.ai_service import run_ai_analysis
             self.add_job(
                 job_id='ai_analysis',
                 func=run_ai_analysis,
-                hour=17,
-                minute=50,
+                hour=16,
+                minute=40,
             )
         except ImportError:
             logger.warning("ai_service 모듈 없음 - AI 분석 스킵")
         
-        # 18:00 Git 자동 커밋
+        # 16:45 AI 분석 - 종가매매 TOP5 (Gemini 2.5 Flash)
+        try:
+            from src.services.top5_ai_service import run_top5_ai_analysis
+            self.add_job(
+                job_id='top5_ai_analysis',
+                func=run_top5_ai_analysis,
+                hour=16,
+                minute=45,
+            )
+        except ImportError:
+            logger.warning("top5_ai_service 모듈 없음 - TOP5 AI 분석 스킵")
+        
+        # 17:00 Git 자동 커밋
         self.add_job(
             job_id='git_commit',
             func=run_git_commit,
-            hour=18,
+            hour=17,
             minute=0,
         )
         
-        # 18:05 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        # 17:05 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
         self.add_job(
             job_id='auto_shutdown',
             func=self._auto_shutdown,
-            hour=18,
+            hour=17,
             minute=5,
             check_market_day=False,  # 휴장일에도 종료
         )

@@ -339,6 +339,130 @@ def analyze_trading_value(df_history, df_prices):
             print(f"  {group:<15}: 평균 {avg:+.2f}%, 승률 {win_rate:.1f}% (n={len(returns)})")
 
 
+def analyze_nomad_occurrence(ohlcv_path: Path = None):
+    """유목민 등장 횟수별 이후 수익률 분석"""
+    
+    print("\n" + "="*60)
+    print("📊 유목민 등장 횟수별 수익률 분석")
+    print("="*60)
+    
+    if ohlcv_path is None:
+        ohlcv_path = Path("C:/Coding/data/ohlcv_kis")
+    
+    if not ohlcv_path.exists():
+        print(f"❌ OHLCV 경로 없음: {ohlcv_path}")
+        return
+    
+    conn = sqlite3.connect(DB_PATH)
+    
+    # 유목민 데이터 로드
+    df_nomad = pd.read_sql_query("""
+        SELECT 
+            id,
+            study_date,
+            stock_code,
+            stock_name,
+            reason_flag,
+            close_price,
+            change_rate
+        FROM nomad_candidates
+        ORDER BY stock_code, study_date
+    """, conn)
+    conn.close()
+    
+    if df_nomad.empty:
+        print("❌ 유목민 데이터 없음")
+        return
+    
+    print(f"📊 유목민 데이터: {len(df_nomad)}건")
+    
+    # 종목별 등장 횟수
+    occurrence_count = df_nomad.groupby('stock_code').size().reset_index(name='total_count')
+    
+    # 각 출현에 순번 부여
+    df_nomad = df_nomad.sort_values(['stock_code', 'study_date'])
+    df_nomad['occurrence_num'] = df_nomad.groupby('stock_code').cumcount() + 1
+    
+    # OHLCV에서 D+N 수익률 계산
+    def calc_return(stock_code, base_date, days_after):
+        try:
+            csv_path = ohlcv_path / f"{stock_code}.csv"
+            if not csv_path.exists():
+                return None
+            
+            df = pd.read_csv(csv_path)
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date')
+            
+            base = pd.to_datetime(base_date)
+            base_row = df[df['date'] == base]
+            if base_row.empty:
+                # 가장 가까운 날짜 찾기
+                df_after = df[df['date'] >= base]
+                if df_after.empty:
+                    return None
+                base_row = df_after.iloc[[0]]
+            
+            base_close = base_row['close'].values[0]
+            
+            # D+N 찾기
+            future_df = df[df['date'] > base_row['date'].values[0]]
+            if len(future_df) < days_after:
+                return None
+            
+            future_close = future_df.iloc[days_after - 1]['close']
+            return (future_close / base_close - 1) * 100
+        except Exception:
+            return None
+    
+    # 샘플링 (전체 계산하면 오래 걸림)
+    print("\n⏳ D+N 수익률 계산 중...")
+    
+    results = []
+    for _, row in df_nomad.iterrows():
+        d5 = calc_return(row['stock_code'], row['study_date'], 5)
+        d10 = calc_return(row['stock_code'], row['study_date'], 10)
+        
+        results.append({
+            'stock_code': row['stock_code'],
+            'study_date': row['study_date'],
+            'occurrence_num': row['occurrence_num'],
+            'd5': d5,
+            'd10': d10,
+        })
+    
+    df_results = pd.DataFrame(results)
+    df_results = df_results.merge(occurrence_count, on='stock_code')
+    
+    # N번째 출현별 D+5 수익률
+    print("\n📈 N번째 출현 시 D+5 수익률:")
+    print("-" * 50)
+    
+    for n in range(1, 15):
+        subset = df_results[df_results['occurrence_num'] == n]
+        valid = subset['d5'].dropna()
+        if len(valid) >= 5:
+            avg = valid.mean()
+            win_rate = (valid > 0).mean() * 100
+            print(f"  {n:2d}번째 출현: 평균 {avg:+.2f}%, 승률 {win_rate:.1f}% (n={len(valid)})")
+    
+    # 총 출현 횟수 그룹별 D+5 수익률
+    print("\n📊 총 등장 횟수별 D+5 수익률:")
+    print("-" * 50)
+    
+    bins = [0, 3, 7, 12, 20, 100]
+    labels = ['1~3회', '4~7회', '8~12회', '13~20회', '20회+']
+    df_results['count_group'] = pd.cut(df_results['total_count'], bins=bins, labels=labels)
+    
+    for group in labels:
+        subset = df_results[df_results['count_group'] == group]
+        valid = subset['d5'].dropna()
+        if len(valid) >= 3:
+            avg = valid.mean()
+            win_rate = (valid > 0).mean() * 100
+            print(f"  {group:<10}: 평균 {avg:+.2f}%, 승률 {win_rate:.1f}% (n={len(valid)})")
+
+
 def main():
     print("="*60)
     print("🔔 ClosingBell v6.5 - 출현 횟수 & 매수 타이밍 분석")
@@ -366,6 +490,9 @@ def main():
     analyze_grade_timing(df_history, df_prices)
     analyze_price_range(df_history, df_prices)
     analyze_trading_value(df_history, df_prices)
+    
+    # 유목민 등장 횟수 분석
+    analyze_nomad_occurrence()
     
     print("\n" + "="*60)
     print("✅ 분석 완료")
