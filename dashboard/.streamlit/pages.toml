@@ -1,0 +1,19 @@
+[[pages]]
+path = "app.py"
+name = "홈"
+icon = "🏠"
+
+[[pages]]
+path = "pages/1_top5_tracker.py"
+name = "종가매매 TOP5"
+icon = "📊"
+
+[[pages]]
+path = "pages/2_nomad_study.py"
+name = "유목민 공부법"
+icon = "📚"
+
+[[pages]]
+path = "pages/3_stock_search.py"
+name = "종목 검색"
+icon = "🔍"

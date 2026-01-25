@@ -1,0 +1,697 @@
+"""
+종가매매 TOP5 20일 추적 대시보드 v6.3.2.3
+=======================================
+
+OHLCV 파일 기반 차트 + 가독성 개선
+- 달력 UI
+- 시가총액 필터 (대기업/중형주/소형주)
+- 업종(섹터) 표시
+- D+20 캔들차트 (OHLCV 파일 기반)
+"""
+
+import os
+os.environ["DASHBOARD_ONLY"] = "true"  # Streamlit Cloud: API 키 검증 스킵
+
+import streamlit as st
+import sys
+from pathlib import Path
+from datetime import date, timedelta, datetime
+import pandas as pd
+
+# plotly import (Streamlit Cloud 호환)
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
+# 프로젝트 루트 추가
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# 업종 정보 조회
+try:
+    from src.services.company_service import get_sector_from_mapping
+    SECTOR_AVAILABLE = True
+except ImportError:
+    SECTOR_AVAILABLE = False
+    def get_sector_from_mapping(code):
+        return None
+
+# OHLCV 파일 경로 (Windows)
+OHLCV_PATH = Path("C:/Coding/data/ohlcv")
+
+st.set_page_config(
+    page_title="종가매매 TOP5",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ==================== 사이드바 네비게이션 ====================
+with st.sidebar:
+    st.markdown("## 🔔 ClosingBell")
+    st.page_link("app.py", label="홈")
+    st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
+    st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
+    st.page_link("pages/3_stock_search.py", label="종목 검색")
+    st.markdown("---")
+
+st.title("📊 종가매매 TOP5 20일 추적")
+st.markdown("**D+1 ~ D+20 수익률 분석** | _v6.5 구간 최적화 점수제_")
+st.markdown("---")
+
+
+# ==================== 데이터 로드 ====================
+@st.cache_data(ttl=300)
+def load_top5_dates(limit=60):
+    """TOP5 데이터가 있는 날짜 목록"""
+    try:
+        from src.infrastructure.repository import get_top5_history_repository
+        repo = get_top5_history_repository()
+        return repo.get_dates_with_data(limit)
+    except Exception as e:
+        st.error(f"날짜 로드 실패: {e}")
+        return []
+
+
+@st.cache_data(ttl=300)
+def load_top5_data(screen_date):
+    """특정 날짜의 TOP5 + 일별 가격"""
+    try:
+        from src.infrastructure.repository import (
+            get_top5_history_repository,
+            get_top5_prices_repository
+        )
+        
+        history_repo = get_top5_history_repository()
+        prices_repo = get_top5_prices_repository()
+        
+        top5 = history_repo.get_by_date(screen_date)
+        
+        for item in top5:
+            item['daily_prices'] = prices_repo.get_by_history(item['id'])
+        
+        return top5
+    except Exception as e:
+        st.error(f"데이터 로드 실패: {e}")
+        return []
+
+
+@st.cache_data(ttl=300)
+def load_market_cap_data():
+    """시가총액 데이터 로드"""
+    try:
+        import sqlite3
+        db_path = project_root / 'data' / 'screener.db'
+        conn = sqlite3.connect(str(db_path))
+        df = pd.read_sql("""
+            SELECT stock_code, market_cap 
+            FROM nomad_candidates 
+            WHERE market_cap > 0
+        """, conn)
+        conn.close()
+        return dict(zip(df['stock_code'], df['market_cap']))
+    except:
+        return {}
+
+
+@st.cache_data(ttl=3600)
+def load_ohlcv_data(stock_code, start_date, days=25):
+    """OHLCV 데이터 로드 (FinanceDataReader 우선, 로컬 파일 폴백)"""
+    
+    # 1. FinanceDataReader로 시도 (Streamlit Cloud 호환)
+    try:
+        import FinanceDataReader as fdr
+        from datetime import timedelta
+        
+        start = pd.to_datetime(start_date)
+        end = start + timedelta(days=days + 15)  # 영업일 고려해서 여유있게
+        
+        df = fdr.DataReader(stock_code, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        
+        if df is not None and not df.empty:
+            df = df.reset_index()
+            df = df.rename(columns={'index': 'Date', 'date': 'Date'})
+            
+            # 컬럼명 표준화
+            df.columns = [col.title() if col.lower() in ['date', 'open', 'high', 'low', 'close', 'volume'] else col for col in df.columns]
+            
+            # 필요한 컬럼만 선택
+            required_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+            available_cols = [col for col in required_cols if col in df.columns]
+            df = df[available_cols].head(days)
+            
+            if not df.empty:
+                return df
+    except Exception as e:
+        pass  # FinanceDataReader 실패시 로컬 파일 시도
+    
+    # 2. 로컬 파일 폴백 (로컬 개발용)
+    try:
+        csv_path = OHLCV_PATH / f"{stock_code}.csv"
+        if not csv_path.exists():
+            return None
+        
+        df = pd.read_csv(csv_path)
+        
+        # 컬럼명 소문자 통일
+        df.columns = df.columns.str.lower()
+        
+        # date 컬럼 찾기
+        if 'date' not in df.columns:
+            first_col = df.columns[0]
+            if first_col in ['', 'unnamed: 0']:
+                df = df.rename(columns={first_col: 'date'})
+        
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # start_date 이후 days일 데이터
+        start = pd.to_datetime(start_date)
+        mask = df['date'] >= start
+        df = df[mask].head(days)
+        
+        if df.empty:
+            return None
+        
+        # 컬럼명 대문자로 변환 (차트 호환용)
+        df = df.rename(columns={
+            'date': 'Date',
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume',
+        })
+        
+        return df
+    except Exception as e:
+        return None
+
+
+def create_candlestick_chart(stock_name, stock_code, screen_date, screen_price):
+    """캔들스틱 차트 생성 (OHLCV 기반)"""
+    if not PLOTLY_AVAILABLE:
+        return None
+    
+    df = load_ohlcv_data(stock_code, screen_date, 25)
+    
+    if df is None or df.empty:
+        return None
+    
+    # 수익률 계산
+    df['return_pct'] = (df['Close'] - screen_price) / screen_price * 100
+    
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+    )
+    
+    # 캔들스틱
+    fig.add_trace(
+        go.Candlestick(
+            x=df['Date'],
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            name='OHLC',
+            increasing_line_color='#F44336',  # 한국식: 상승=빨강
+            decreasing_line_color='#2196F3',  # 하락=파랑
+        ),
+        row=1, col=1
+    )
+    
+    # 스크리닝 기준가 라인
+    fig.add_hline(
+        y=screen_price, 
+        line_dash="dash", 
+        line_color="orange", 
+        annotation_text=f"기준가 {screen_price:,}원",
+        row=1, col=1
+    )
+    
+    # 거래량
+    colors = ['#F44336' if c >= o else '#2196F3' for o, c in zip(df['Open'], df['Close'])]
+    fig.add_trace(
+        go.Bar(
+            x=df['Date'],
+            y=df['Volume'],
+            name='거래량',
+            marker_color=colors,
+            opacity=0.7,
+        ),
+        row=2, col=1
+    )
+    
+    fig.update_layout(
+        title=dict(text=f"{stock_name} ({stock_code}) D+20 차트", font=dict(size=14)),
+        height=400,
+        margin=dict(l=10, r=10, t=40, b=10),
+        xaxis_rangeslider_visible=False,
+        showlegend=False,
+        yaxis_title="가격 (원)",
+        yaxis2_title="거래량",
+    )
+    
+    return fig
+
+
+def create_return_chart(stock_name, daily_prices, screen_price):
+    """20일 수익률 라인 차트"""
+    if not daily_prices or not PLOTLY_AVAILABLE:
+        return None
+    
+    df = pd.DataFrame(daily_prices)
+    
+    fig = go.Figure()
+    
+    # 종가 수익률
+    fig.add_trace(go.Scatter(
+        x=df['days_after'],
+        y=df['return_from_screen'],
+        mode='lines+markers',
+        name='종가 수익률',
+        line=dict(color='#2196F3', width=2),
+        marker=dict(size=6),
+    ))
+    
+    # 고가 수익률
+    if 'high_return' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df['days_after'],
+            y=df['high_return'],
+            mode='lines',
+            name='고가 수익률',
+            line=dict(color='#4CAF50', width=1, dash='dot'),
+        ))
+    
+    # 저가 수익률
+    if 'low_return' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df['days_after'],
+            y=df['low_return'],
+            mode='lines',
+            name='저가 수익률',
+            line=dict(color='#F44336', width=1, dash='dot'),
+        ))
+    
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    
+    fig.update_layout(
+        title=dict(text=f"{stock_name} 20일 수익률", font=dict(size=14)),
+        height=300,
+        margin=dict(l=10, r=10, t=40, b=10),
+        xaxis_title="D+N",
+        yaxis_title="수익률 (%)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    
+    return fig
+
+
+def grade_color(grade):
+    """등급 색상"""
+    colors = {
+        'S': '#FFD700',
+        'A': '#4CAF50',
+        'B': '#2196F3',
+        'C': '#FFC107',
+        'D': '#F44336',
+    }
+    return colors.get(grade, '#9E9E9E')
+
+
+def format_market_cap(cap):
+    """시가총액 포맷 (소수점 1자리)"""
+    if cap is None or cap <= 0:
+        return "-"
+    if cap >= 10000:
+        return f"{cap/10000:.1f}조"
+    return f"{cap:,.0f}억"
+
+
+# ==================== 사이드바 ====================
+dates = load_top5_dates(60)
+market_caps = load_market_cap_data()
+
+if not dates:
+    st.warning("📭 아직 수집된 TOP5 데이터가 없습니다.")
+    st.markdown("""
+    ### 🚀 데이터 수집 방법
+    
+    ```bash
+    python main.py --backfill 20
+    ```
+    """)
+    st.stop()
+
+st.sidebar.markdown("### 📅 날짜 선택")
+
+# v6.3.2: query param으로 날짜 받기 지원
+query_date = st.query_params.get("date", None)
+default_date = None
+
+if query_date and query_date in dates:
+    default_date = datetime.strptime(query_date, "%Y-%m-%d")
+elif dates:
+    default_date = datetime.strptime(dates[0], "%Y-%m-%d")
+else:
+    default_date = date.today()
+
+selected_date = st.sidebar.date_input(
+    "스크리닝 날짜",
+    value=default_date,
+    min_value=datetime.strptime(dates[-1], "%Y-%m-%d") if dates else date.today() - timedelta(days=60),
+    max_value=datetime.strptime(dates[0], "%Y-%m-%d") if dates else date.today(),
+)
+selected_date_str = selected_date.strftime("%Y-%m-%d")
+
+if selected_date_str not in dates:
+    available = [d for d in dates if d <= selected_date_str]
+    if available:
+        selected_date_str = available[0]
+        st.sidebar.warning(f"→ {selected_date_str}로 표시")
+    else:
+        st.sidebar.error("데이터 없음")
+        st.stop()
+
+st.sidebar.markdown("---")
+
+st.sidebar.markdown("### 🏢 시가총액 필터")
+cap_filter = st.sidebar.selectbox(
+    "시가총액 기준",
+    ["전체", "대기업 (1조+)", "중형주 (3천억~1조)", "소형주 (3천억 미만)"],
+    index=0
+)
+
+st.sidebar.markdown("### 📊 점수제")
+st.sidebar.success("v6.3.2.3: 단순 선형 점수제 (하드필터 없음)")
+
+st.sidebar.markdown("---")
+st.sidebar.caption(f"선택: {selected_date_str}")
+
+
+# ==================== 메인 컨텐츠 ====================
+top5_data = load_top5_data(selected_date_str)
+
+if not top5_data:
+    st.warning(f"📭 {selected_date_str} 날짜에 TOP5 데이터가 없습니다.")
+    st.stop()
+
+# 시가총액 정보 추가
+for item in top5_data:
+    item['market_cap'] = market_caps.get(item['stock_code'], 0)
+
+# 시가총액 필터 적용
+if cap_filter == "대기업 (1조+)":
+    top5_data = [item for item in top5_data if item['market_cap'] >= 10000]
+elif cap_filter == "중형주 (3천억~1조)":
+    top5_data = [item for item in top5_data if 3000 <= item['market_cap'] < 10000]
+elif cap_filter == "소형주 (3천억 미만)":
+    top5_data = [item for item in top5_data if item['market_cap'] < 3000]
+
+if not top5_data:
+    st.warning(f"📭 {cap_filter} 조건에 맞는 종목이 없습니다.")
+    st.stop()
+
+# 요약 카드
+st.subheader(f"📈 {selected_date_str} TOP5")
+
+cols = st.columns(min(5, len(top5_data)))
+for i, item in enumerate(top5_data[:5]):
+    with cols[i]:
+        d1_gap = None
+        if item.get('daily_prices'):
+            d1 = next((p for p in item['daily_prices'] if p['days_after'] == 1), None)
+            if d1:
+                d1_gap = d1.get('gap_rate')
+        
+        cap_str = format_market_cap(item['market_cap'])
+        cap_badge = "🏢" if item['market_cap'] >= 10000 else ""
+        
+        cci = item.get('cci') or 0
+        cci_warning = "⚠️" if cci > 220 else ""
+        
+        # v6.3.2: 거래대금/거래량
+        trading_value = item.get('trading_value') or 0
+        if trading_value >= 1000:
+            tv_str = f"{trading_value/1000:.1f}조"
+        elif trading_value >= 1:
+            tv_str = f"{trading_value:.0f}억"
+        else:
+            tv_str = "-"
+        
+        # v6.3.2: AI 위험도 배지
+        ai_risk = item.get('ai_risk_level', '')
+        risk_badge = {'낮음': '✅', '보통': '⚠️', '높음': '🚫'}.get(ai_risk, '')
+        
+        # v6.3: DB에서 섹터 정보 (없으면 company_service에서 조회)
+        sector = item.get('sector') or get_sector_from_mapping(item['stock_code']) or "-"
+        is_leading = item.get('is_leading_sector', 0)
+        sector_rank = item.get('sector_rank', 99)
+        
+        # 주도섹터 배지
+        if is_leading:
+            sector_display = f"🔥 {sector} (#{sector_rank})"
+        else:
+            sector_display = f"🏭 {sector}"
+        
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, {grade_color(item['grade'])}22, {grade_color(item['grade'])}11);
+            border-left: 4px solid {grade_color(item['grade'])};
+            padding: 10px;
+            border-radius: 5px;
+        ">
+            <div style="font-size: 12px; color: #888;">#{item['rank']} {cap_badge} {risk_badge}</div>
+            <div style="font-size: 16px; font-weight: bold;">{item['stock_name']}</div>
+            <div style="font-size: 11px; color: {'#FF6B6B' if is_leading else '#666'}; margin-bottom: 2px;">{sector_display}</div>
+            <div style="font-size: 14px;">
+                <span style="color: {grade_color(item['grade'])}; font-weight: bold;">{item['grade']}</span>
+                ({item['screen_score']:.1f}점)
+            </div>
+            <div style="font-size: 12px; color: #666;">{item['screen_price']:,}원</div>
+            <div style="font-size: 11px; color: #888;">{cap_str} | 거래 {tv_str}</div>
+            <div style="font-size: 12px; color: #888;">CCI: {cci:.0f} {cci_warning}</div>
+            <div style="font-size: 14px; color: {'#4CAF50' if d1_gap and d1_gap > 0 else '#F44336'}; font-weight: bold;">
+                D+1: {f"{d1_gap:+.1f}%" if d1_gap is not None else "-"}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# 종목별 상세
+st.subheader("📋 종목별 상세 분석")
+
+for item in top5_data:
+    cap_str = format_market_cap(item['market_cap'])
+    cci = item.get('cci') or 0
+    cci_badge = " ⚠️과열" if cci > 220 else ""
+    
+    # v6.3.1: 거래대금 표시
+    trading_value = item.get('trading_value') or 0
+    if trading_value >= 1000:
+        tv_str = f"{trading_value/1000:.1f}조"
+    elif trading_value >= 1:
+        tv_str = f"{trading_value:.0f}억"
+    else:
+        tv_str = "-"
+    
+    # v6.3: DB에서 섹터 정보
+    sector = item.get('sector') or get_sector_from_mapping(item['stock_code']) or ""
+    is_leading = item.get('is_leading_sector', 0)
+    sector_rank = item.get('sector_rank', 99)
+    
+    if sector:
+        if is_leading:
+            sector_str = f" | 🔥 {sector} (#{sector_rank})"
+        else:
+            sector_str = f" | 🏭 {sector}"
+    else:
+        sector_str = ""
+    
+    with st.expander(
+        f"**#{item['rank']} {item['stock_name']}** - {item['grade']}등급 ({item['screen_score']:.1f}점) | {tv_str}{sector_str}{cci_badge}", 
+        expanded=(item['rank'] == 1)
+    ):
+        # 차트 선택 (캔들차트 기본)
+        chart_type = st.radio(
+            "차트 종류",
+            ["🕯️ 캔들차트 (OHLCV)", "📈 수익률 라인"],
+            key=f"chart_{item['stock_code']}",
+            horizontal=True
+        )
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            if not PLOTLY_AVAILABLE:
+                st.warning("📊 차트를 표시하려면 plotly가 필요합니다.")
+            elif chart_type == "🕯️ 캔들차트 (OHLCV)":
+                fig = create_candlestick_chart(
+                    item['stock_name'], 
+                    item['stock_code'], 
+                    selected_date_str,
+                    item['screen_price']
+                )
+                if fig:
+                    st.plotly_chart(fig, width="stretch")
+                else:
+                    st.info(f"📊 {item['stock_name']} OHLCV 데이터를 불러올 수 없습니다. 수익률 라인 차트를 이용해주세요.")
+            else:  # 수익률 라인
+                if item.get('daily_prices'):
+                    fig = create_return_chart(item['stock_name'], item['daily_prices'], item['screen_price'])
+                    if fig:
+                        st.plotly_chart(fig, width="stretch")
+                else:
+                    st.info("아직 일별 가격 데이터가 없습니다.")
+        
+        with col2:
+            st.markdown("##### 📊 스크리닝 지표")
+            
+            # 업종 표시
+            st.write(f"• 업종: **{sector if sector else '-'}**")
+            
+            cci_display = f"{cci:.0f}"
+            if cci > 250:
+                cci_display += " 🚫"
+            elif cci > 220:
+                cci_display += " ⚠️"
+            elif 150 <= cci <= 170:
+                cci_display += " ✅"
+            
+            st.write(f"• CCI: **{cci_display}**")
+            st.write(f"• RSI: {item.get('rsi', '-'):.1f}" if item.get('rsi') else "• RSI: -")
+            st.write(f"• 등락률: {item.get('change_rate', 0):.1f}%")
+            st.write(f"• 이격도(20): {item.get('disparity_20', '-'):.1f}%" if item.get('disparity_20') else "• 이격도(20): -")
+            st.write(f"• 연속양봉: {item.get('consecutive_up', 0)}일")
+            st.write(f"• 거래대금: **{tv_str}**")
+            
+            # v6.3.2: 거래량 (만주 단위)
+            volume = item.get('volume') or 0
+            if volume >= 100_000_000:
+                vol_str = f"{volume/100_000_000:.1f}억주"
+            elif volume >= 10_000:
+                vol_str = f"{volume/10_000:.0f}만주"
+            else:
+                vol_str = f"{volume:,}주" if volume else "-"
+            st.write(f"• 거래량: **{vol_str}**")
+            
+            st.markdown("---")
+            
+            if item.get('daily_prices'):
+                st.markdown("##### 📈 성과 요약")
+                
+                prices = item['daily_prices']
+                max_return = max((p.get('high_return') or 0 for p in prices), default=0)
+                min_return = min((p.get('low_return') or 0 for p in prices), default=0)
+                final_return = prices[-1]['return_from_screen'] if prices else 0
+                
+                col_a, col_b = st.columns(2)
+                col_a.metric("최대 수익", f"{max_return:+.1f}%")
+                col_b.metric("최대 손실", f"{min_return:+.1f}%")
+                st.metric("최종 수익", f"{final_return:+.1f}%")
+        
+        # v6.3.2: AI 분석 섹션
+        if item.get('ai_summary'):
+            st.markdown("---")
+            
+            ai_risk = item.get('ai_risk_level', '보통')
+            ai_rec = item.get('ai_recommendation', '관망')
+            risk_color = {'낮음': '#4CAF50', '보통': '#FF9800', '높음': '#F44336'}.get(ai_risk, '#888')
+            risk_emoji = {'낮음': '✅', '보통': '⚠️', '높음': '🚫'}.get(ai_risk, '')
+            rec_emoji = {'매수': '📈', '관망': '👀', '매도': '📉'}.get(ai_rec, '')
+            
+            st.markdown(f"""
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid {risk_color};">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-size: 16px; font-weight: bold;">🤖 AI 분석</span>
+                    <span style="color: {risk_color}; font-weight: bold;">위험도: {ai_risk} {risk_emoji}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            try:
+                import json
+                ai_data = json.loads(item['ai_summary']) if isinstance(item['ai_summary'], str) else item['ai_summary']
+                
+                col_ai1, col_ai2 = st.columns(2)
+                
+                with col_ai1:
+                    st.markdown("**⭐ 핵심 요약**")
+                    st.info(ai_data.get('summary', '-'))
+                    
+                    st.markdown("**📈 주가 움직임 원인**")
+                    st.write(ai_data.get('price_reason', '-'))
+                    
+                    if ai_data.get('investment_points'):
+                        st.markdown("**✅ 투자 포인트**")
+                        for point in ai_data['investment_points'][:3]:
+                            st.write(f"• {point}")
+                
+                with col_ai2:
+                    if ai_data.get('risk_factors'):
+                        st.markdown("**⚠️ 리스크 요인**")
+                        for risk in ai_data['risk_factors'][:3]:
+                            st.write(f"• {risk}")
+                    
+                    st.markdown("**💰 밸류에이션**")
+                    st.write(ai_data.get('valuation_comment', '-'))
+                    
+                    st.markdown(f"**🎯 추천: {rec_emoji} {ai_rec}**")
+            
+            except Exception as e:
+                st.warning(f"AI 분석 표시 오류: {e}")
+
+
+# ==================== 순위별 통계 ====================
+st.markdown("---")
+st.subheader("📊 순위별 성과 비교")
+
+try:
+    import sqlite3
+    db_path = project_root / 'data' / 'screener.db'
+    conn = sqlite3.connect(str(db_path))
+    
+    rank_stats = pd.read_sql("""
+        SELECT 
+            h.rank as 순위,
+            COUNT(*) as 샘플수,
+            ROUND(AVG(p.return_from_screen), 1) as 'D+1 종가수익률',
+            ROUND(AVG(p.gap_rate), 1) as 'D+1 갭률',
+            ROUND(AVG(p.high_return), 1) as 'D+1 고가수익률'
+        FROM closing_top5_history h
+        JOIN top5_daily_prices p ON h.id = p.top5_history_id
+        WHERE p.days_after = 1
+        GROUP BY h.rank
+        ORDER BY h.rank
+    """, conn)
+    conn.close()
+    
+    if not rank_stats.empty:
+        st.dataframe(rank_stats, width="stretch", hide_index=True)
+        
+        # TOP1 vs TOP2-3 비교
+        top1 = rank_stats[rank_stats['순위'] == 1]
+        top23 = rank_stats[rank_stats['순위'].isin([2, 3])]
+        
+        if not top1.empty and not top23.empty:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("TOP1 평균 갭률", f"{top1['D+1 갭률'].values[0]:+.1f}%")
+            with col2:
+                avg_23 = top23['D+1 갭률'].mean()
+                delta = avg_23 - top1['D+1 갭률'].values[0]
+                st.metric("TOP2-3 평균 갭률", f"{avg_23:+.1f}%", delta=f"{delta:+.1f}% vs TOP1")
+except Exception as e:
+    st.warning(f"순위별 통계 로드 실패: {e}")
+
+
+# ==================== 푸터 ====================
+st.markdown("---")
+st.caption("ClosingBell v6.3 | 단순 선형 점수제 + 주도섹터 | OHLCV 차트")

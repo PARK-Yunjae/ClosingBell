@@ -1,0 +1,595 @@
+"""
+작업 스케줄러 v6.3
+
+책임:
+- Cron 스케줄 관리
+- 작업 등록/해제
+- 장 운영일 체크
+
+v6.3 스케줄:
+- 12:30 프리뷰 스크리닝
+- 15:00 메인 스크리닝 (→ closing_top5_history)
+- 16:35 KIS OHLCV 수집 (정규장 기준 - 운영용)
+- 16:40 FDR OHLCV 갱신 (프리장 포함 - 백테스팅용)
+- 16:45 글로벌 데이터 갱신
+- 17:00 결과 수집 (→ top5_daily_prices)
+- 17:10 일일 학습
+- 17:20 유목민 종목 수집 (→ nomad_candidates)
+- 17:30 뉴스 수집 (→ nomad_news)
+- 17:40 기업정보 크롤링
+- 17:50 AI 분석 (Gemini 2.0 Flash)
+- 18:00 Git 커밋
+- 18:05 자동 종료
+
+의존성:
+- APScheduler
+- services.*
+"""
+
+import logging
+import time
+import traceback
+from datetime import date, datetime, timedelta
+from typing import Callable, Optional
+
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
+
+from src.config.settings import settings
+from src.services.data_updater import run_data_update, update_global_data, run_kis_data_update
+from src.services.result_collector import run_result_collection
+from src.services.learner_service import run_daily_learning
+
+logger = logging.getLogger(__name__)
+
+
+# 한국 공휴일 (2025~2026년, 필요시 추가)
+HOLIDAYS_2025_2026 = {
+    # 2025년
+    date(2025, 1, 1),    # 신정
+    date(2025, 1, 28),   # 설날 연휴
+    date(2025, 1, 29),   # 설날
+    date(2025, 1, 30),   # 설날 연휴
+    date(2025, 3, 1),    # 삼일절
+    date(2025, 5, 5),    # 어린이날
+    date(2025, 5, 6),    # 대체공휴일
+    date(2025, 6, 6),    # 현충일
+    date(2025, 8, 15),   # 광복절
+    date(2025, 10, 3),   # 개천절
+    date(2025, 10, 5),   # 추석 연휴
+    date(2025, 10, 6),   # 추석
+    date(2025, 10, 7),   # 추석 연휴
+    date(2025, 10, 8),   # 대체공휴일
+    date(2025, 10, 9),   # 한글날
+    date(2025, 12, 25),  # 크리스마스
+    # 2026년
+    date(2026, 1, 1),    # 신정
+    date(2026, 2, 16),   # 설날 연휴
+    date(2026, 2, 17),   # 설날
+    date(2026, 2, 18),   # 설날 연휴
+    date(2026, 3, 1),    # 삼일절
+    date(2026, 3, 2),    # 대체공휴일
+    date(2026, 5, 5),    # 어린이날
+    date(2026, 5, 25),   # 부처님오신날
+    date(2026, 6, 6),    # 현충일
+    date(2026, 8, 15),   # 광복절
+    date(2026, 8, 17),   # 대체공휴일
+    date(2026, 9, 24),   # 추석 연휴
+    date(2026, 9, 25),   # 추석
+    date(2026, 9, 26),   # 추석 연휴
+    date(2026, 10, 3),   # 개천절
+    date(2026, 10, 5),   # 대체공휴일
+    date(2026, 10, 9),   # 한글날
+    date(2026, 12, 25),  # 크리스마스
+}
+
+
+def is_market_open(check_date: Optional[date] = None) -> bool:
+    """장 운영일 체크
+    
+    Args:
+        check_date: 확인할 날짜 (기본: 오늘)
+        
+    Returns:
+        장 운영 여부
+    """
+    if check_date is None:
+        check_date = date.today()
+    
+    # 주말 체크
+    if check_date.weekday() >= 5:  # 토(5), 일(6)
+        return False
+    
+    # 공휴일 체크
+    if check_date in HOLIDAYS_2025_2026:
+        return False
+    
+    return True
+
+
+def market_day_wrapper(func: Callable) -> Callable:
+    """장 운영일에만 실행하는 래퍼"""
+    def wrapper(*args, **kwargs):
+        if is_market_open():
+            logger.info(f"장 운영일 - {func.__name__} 실행")
+            return func(*args, **kwargs)
+        else:
+            logger.info(f"휴장일 - {func.__name__} 건너뜀")
+            return None
+    return wrapper
+
+
+def _job_listener(event):
+    """APScheduler 작업 이벤트 리스너"""
+    if hasattr(event, 'job_id'):
+        job_id = event.job_id
+    else:
+        job_id = "unknown"
+    
+    if event.code == EVENT_JOB_EXECUTED:
+        logger.info(f"✅ 작업 실행 완료: {job_id}")
+    elif event.code == EVENT_JOB_ERROR:
+        logger.error(f"❌ 작업 실행 오류: {job_id}")
+        if hasattr(event, 'exception') and event.exception:
+            logger.error(f"   예외: {event.exception}")
+            logger.error(f"   트레이스백: {traceback.format_exc()}")
+    elif event.code == EVENT_JOB_MISSED:
+        logger.warning(f"⚠️ 작업 놓침 (missed): {job_id}")
+
+
+class ScreenerScheduler:
+    """스크리너 스케줄러"""
+    
+    # Heartbeat 간격 (분)
+    HEARTBEAT_INTERVAL_MINUTES = 5
+    
+    def __init__(self, blocking: bool = True):
+        """
+        Args:
+            blocking: True면 BlockingScheduler, False면 BackgroundScheduler
+        """
+        if blocking:
+            self.scheduler = BlockingScheduler(timezone='Asia/Seoul')
+        else:
+            self.scheduler = BackgroundScheduler(timezone='Asia/Seoul')
+        
+        self._jobs = {}
+        self._start_time = None
+        
+        # 이벤트 리스너 등록
+        self.scheduler.add_listener(
+            _job_listener,
+            EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED
+        )
+    
+    def add_job(
+        self,
+        job_id: str,
+        func: Callable,
+        hour: int,
+        minute: int,
+        check_market_day: bool = True,
+    ):
+        """작업 추가
+        
+        Args:
+            job_id: 작업 ID
+            func: 실행할 함수
+            hour: 실행 시각 (시)
+            minute: 실행 시각 (분)
+            check_market_day: 장 운영일 체크 여부
+        """
+        # 장 운영일 체크 래퍼
+        if check_market_day:
+            wrapped_func = market_day_wrapper(func)
+        else:
+            wrapped_func = func
+        
+        # Cron 트리거 (평일만)
+        trigger = CronTrigger(
+            day_of_week='mon-fri',
+            hour=hour,
+            minute=minute,
+            timezone='Asia/Seoul',
+        )
+        
+        job = self.scheduler.add_job(
+            wrapped_func,
+            trigger=trigger,
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,           # 동시 실행 방지
+            coalesce=True,             # 누적된 실행 병합
+            misfire_grace_time=300,    # 5분 내 미스파이어 허용
+        )
+        
+        self._jobs[job_id] = job
+        logger.info(f"작업 등록: {job_id} ({hour:02d}:{minute:02d})")
+    
+    def remove_job(self, job_id: str):
+        """작업 제거"""
+        if job_id in self._jobs:
+            self.scheduler.remove_job(job_id)
+            del self._jobs[job_id]
+            logger.info(f"작업 제거: {job_id}")
+    
+    def _heartbeat(self):
+        """Heartbeat 로그 출력 - 스케줄러가 살아있는지 확인"""
+        now = datetime.now()
+        uptime = now - self._start_time if self._start_time else timedelta(0)
+        uptime_str = str(uptime).split('.')[0]  # 마이크로초 제거
+        
+        # 다음 작업 시간 계산
+        next_jobs = []
+        for job in self.scheduler.get_jobs():
+            if job.id == 'heartbeat':
+                continue
+            next_time = getattr(job, 'next_run_time', None)
+            if next_time:
+                next_jobs.append(f"{job.id}({next_time.strftime('%H:%M')})")
+        
+        next_jobs_str = ', '.join(next_jobs) if next_jobs else '없음'
+        logger.info(f"💓 Heartbeat: 가동시간 {uptime_str}, 대기 작업: {next_jobs_str}")
+    
+    def _auto_shutdown(self):
+        """자동 종료 - 모든 일일 작업 완료 후"""
+        import threading
+        
+        now = datetime.now()
+        uptime = now - self._start_time if self._start_time else timedelta(0)
+        uptime_str = str(uptime).split('.')[0]
+        
+        logger.info("=" * 50)
+        logger.info("🔴 자동 종료 시작")
+        logger.info(f"   종료 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"   총 가동시간: {uptime_str}")
+        logger.info("=" * 50)
+        logger.info("✅ 오늘의 모든 작업 완료. 프로그램을 종료합니다.")
+        
+        # 별도 스레드에서 종료 (APScheduler가 exception으로 잡지 않도록)
+        def delayed_shutdown():
+            import time
+            import os
+            time.sleep(1)
+            self.scheduler.shutdown(wait=False)
+            os._exit(0)  # 강제 종료 (sys.exit보다 깔끔)
+        
+        shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=True)
+        shutdown_thread.start()
+    
+    def _add_heartbeat_job(self):
+        """Heartbeat 작업 추가"""
+        trigger = IntervalTrigger(
+            minutes=self.HEARTBEAT_INTERVAL_MINUTES,
+            timezone='Asia/Seoul',
+        )
+        
+        self.scheduler.add_job(
+            self._heartbeat,
+            trigger=trigger,
+            id='heartbeat',
+            replace_existing=True,
+        )
+        logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
+    
+    def setup_default_schedules(self):
+        """기본 스케줄 설정 - v6.0 (종가매매 + TOP5 20일 추적 + 유목민)"""
+        from src.services.screener_service import (
+            run_main_screening,
+            run_preview_screening,
+        )
+        from src.services.nomad_collector import run_nomad_collection
+        
+        # 12:30 프리뷰 스크리닝
+        preview_time = settings.screening.screening_time_preview
+        preview_hour, preview_minute = map(int, preview_time.split(':'))
+        self.add_job(
+            job_id='preview_screening',
+            func=run_preview_screening,
+            hour=preview_hour,
+            minute=preview_minute,
+        )
+        
+        # 15:00 메인 스크리닝 (TOP5 → closing_top5_history 저장)
+        main_time = settings.screening.screening_time_main
+        main_hour, main_minute = map(int, main_time.split(':'))
+        self.add_job(
+            job_id='main_screening',
+            func=run_main_screening,
+            hour=main_hour,
+            minute=main_minute,
+        )
+        
+        # Heartbeat 작업 추가 (5분마다)
+        self._add_heartbeat_job()
+        
+        # 16:35 KIS OHLCV 데이터 수집 (정규장 기준 - 운영용)
+        self.add_job(
+            job_id='kis_data_update',
+            func=run_kis_data_update,
+            hour=16,
+            minute=35,
+        )
+        
+        # 16:40 FDR OHLCV 데이터 갱신 (프리장 포함 - 백테스팅용)
+        self.add_job(
+            job_id='daily_data_update',
+            func=run_data_update,
+            hour=16,
+            minute=40,
+        )
+        
+        # 16:45 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
+        self.add_job(
+            job_id='global_data_update',
+            func=update_global_data,
+            hour=16,
+            minute=45,
+        )
+        
+        # 17:00 익일 결과 수집 (승률 추적 + v6.0 TOP5 20일 추적)
+        self.add_job(
+            job_id='result_collection',
+            func=run_result_collection,
+            hour=17,
+            minute=0,
+        )
+        
+        # 17:10 일일 학습 (상관관계 분석 + 가중치 조정)
+        self.add_job(
+            job_id='daily_learning',
+            func=run_daily_learning,
+            hour=17,
+            minute=10,
+        )
+        
+        # v6.0: 17:20 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        # 장 종료 후 최종 데이터로 수집 (시간 여유 확보)
+        self.add_job(
+            job_id='nomad_collection',
+            func=run_nomad_collection,
+            hour=17,
+            minute=20,
+        )
+        
+        # v6.0: 17:30 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        try:
+            from src.services.news_service import run_news_collection
+            self.add_job(
+                job_id='news_collection',
+                func=run_news_collection,
+                hour=17,
+                minute=30,
+            )
+        except ImportError:
+            logger.warning("news_service 모듈 없음 - 뉴스 수집 스킵")
+        
+        # v6.0: 17:40 기업정보 수집 (네이버 금융 크롤링)
+        try:
+            from src.services.company_service import run_company_info_collection
+            self.add_job(
+                job_id='company_info_collection',
+                func=run_company_info_collection,
+                hour=17,
+                minute=40,
+            )
+        except ImportError:
+            logger.warning("company_service 모듈 없음 - 기업정보 수집 스킵")
+        
+        # v6.2: 17:50 AI 분석 (Gemini 2.0 Flash)
+        try:
+            from src.services.ai_service import run_ai_analysis
+            self.add_job(
+                job_id='ai_analysis',
+                func=run_ai_analysis,
+                hour=17,
+                minute=50,
+            )
+        except ImportError:
+            logger.warning("ai_service 모듈 없음 - AI 분석 스킵")
+        
+        # 18:00 Git 자동 커밋
+        self.add_job(
+            job_id='git_commit',
+            func=run_git_commit,
+            hour=18,
+            minute=0,
+        )
+        
+        # 18:05 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        self.add_job(
+            job_id='auto_shutdown',
+            func=self._auto_shutdown,
+            hour=18,
+            minute=5,
+            check_market_day=False,  # 휴장일에도 종료
+        )
+        
+        logger.info("기본 스케줄 설정 완료 (v6.3: 종가매매 + TOP5 + KIS/FDR OHLCV + 유목민 + 뉴스 + 기업정보 + AI분석)")
+    
+    def start(self):
+        """스케줄러 시작"""
+        self._start_time = datetime.now()
+        logger.info("=" * 50)
+        logger.info("🚀 스케줄러 시작")
+        logger.info(f"   시작 시간: {self._start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 50)
+        
+        # 등록된 작업 출력
+        jobs = self.scheduler.get_jobs()
+        for job in jobs:
+            try:
+                next_time = getattr(job, 'next_run_time', None)
+                if next_time is None:
+                    # trigger에서 다음 실행 시간 계산
+                    next_time = job.trigger.get_next_fire_time(None, datetime.now())
+                logger.info(f"  - {job.id}: 다음 실행 {next_time}")
+            except Exception as e:
+                logger.info(f"  - {job.id}: 등록됨 (다음 실행 시간 계산 불가)")
+        
+        try:
+            self.scheduler.start()
+        except KeyboardInterrupt:
+            logger.info("스케줄러 중지 (Ctrl+C)")
+            self.shutdown()
+        except Exception as e:
+            logger.error(f"❌ 스케줄러 비정상 종료: {e}")
+            logger.error(traceback.format_exc())
+            self.shutdown()
+            raise
+    
+    def shutdown(self):
+        """스케줄러 종료"""
+        self.scheduler.shutdown()
+        logger.info("스케줄러 종료")
+    
+    def get_next_run_times(self) -> dict:
+        """다음 실행 시각 조회"""
+        result = {}
+        for job_id, job in self._jobs.items():
+            try:
+                next_time = getattr(job, 'next_run_time', None)
+                if next_time is None:
+                    next_time = job.trigger.get_next_fire_time(None, datetime.now())
+                result[job_id] = next_time
+            except Exception:
+                result[job_id] = None
+        return result
+
+
+def create_scheduler(blocking: bool = True) -> ScreenerScheduler:
+    """스케줄러 생성 및 기본 설정"""
+    scheduler = ScreenerScheduler(blocking=blocking)
+    scheduler.setup_default_schedules()
+    return scheduler
+
+
+if __name__ == "__main__":
+    # 테스트
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    )
+    
+    print("=== 장 운영일 테스트 ===")
+    today = date.today()
+    print(f"오늘 ({today}): {'운영' if is_market_open() else '휴장'}")
+    
+    # 다음 7일 체크
+    for i in range(7):
+        check_date = today + timedelta(days=i)
+        status = '운영' if is_market_open(check_date) else '휴장'
+        weekday = ['월', '화', '수', '목', '금', '토', '일'][check_date.weekday()]
+        print(f"  {check_date} ({weekday}): {status}")
+    
+    print("\n=== 스케줄러 설정 테스트 ===")
+    scheduler = create_scheduler(blocking=False)
+    
+    next_runs = scheduler.get_next_run_times()
+    for job_id, next_time in next_runs.items():
+        print(f"  {job_id}: {next_time}")
+    
+    # 실제 스케줄러 시작은 하지 않음
+    print("\n스케줄러 테스트 완료 (실행하지 않음)")
+
+
+# ============================================================
+# Git 자동 커밋 기능
+# ============================================================
+
+def git_auto_commit() -> bool:
+    """Git 자동 커밋 및 푸시
+    
+    Returns:
+        성공 여부
+    """
+    import subprocess
+    import os
+    import sqlite3
+    
+    logger = logging.getLogger(__name__)
+    
+    # 프로젝트 루트 경로
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    try:
+        os.chdir(project_root)
+        
+        # WAL 모드 데이터를 메인 DB로 병합 (Streamlit Cloud 호환)
+        db_path = os.path.join(project_root, 'data', 'screener.db')
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                conn.close()
+                logger.info("Git: DB WAL 병합 완료")
+            except Exception as e:
+                logger.warning(f"Git: DB WAL 병합 실패 (무시): {e}")
+        
+        # 변경사항 확인
+        status = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30 # 👈 수정
+        )
+        
+        if not status.stdout.strip():
+            logger.info("Git: 변경사항 없음")
+            return False
+        
+        # 커밋 메시지 생성
+        today = date.today().strftime('%Y-%m-%d')
+        commit_msg = f"📊 Daily update {today}"
+        
+        # git add
+        subprocess.run(['git', 'add', '.'], check=True, timeout=30)
+        logger.info("Git: 스테이징 완료")
+        
+        # git commit
+        result = subprocess.run(
+            ['git', 'commit', '-m', commit_msg],
+            capture_output=True, text=True, encoding='utf-8', timeout=30 # 👈 수정
+        )
+        
+        if result.returncode != 0:
+            logger.warning(f"Git commit 실패: {result.stderr}")
+            return False
+        
+        logger.info(f"Git: 커밋 완료 - {commit_msg}")
+        
+        # git push
+        push_result = subprocess.run(
+            ['git', 'push'],
+            capture_output=True, text=True, encoding='utf-8', timeout=60 # 👈 수정
+        )
+        
+        if push_result.returncode == 0:
+            logger.info("Git: 푸시 완료")
+            return True
+        else:
+            logger.warning(f"Git push 실패: {push_result.stderr}")
+            return False  # 실패 시 False 반환
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Git: 타임아웃")
+        return False
+    except Exception as e:
+        logger.error(f"Git 자동 커밋 실패: {e}")
+        return False
+
+
+def run_git_commit():
+    """스케줄러용 Git 커밋 래퍼"""
+    logger = logging.getLogger(__name__)
+    logger.info("=" * 40)
+    logger.info("📤 Git 자동 커밋 시작")
+    logger.info("=" * 40)
+    
+    result = git_auto_commit()
+    
+    if result:
+        logger.info("✅ Git 커밋/푸시 완료")
+    else:
+        logger.info("ℹ️ Git 커밋 스킵 (변경사항 없음 또는 실패)")
