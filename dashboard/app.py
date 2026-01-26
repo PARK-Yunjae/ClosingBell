@@ -170,6 +170,89 @@ def load_nomad_occurrence_ranking(days=30, top_n=15):
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=600)
+def calc_nomad_win_rates():
+    """유목민 등장 횟수 그룹별 승률 실시간 계산"""
+    try:
+        import sqlite3
+        from pathlib import Path
+        
+        db_path = Path(__file__).parent.parent / "data" / "screener.db"
+        ohlcv_path = Path("C:/Coding/data/ohlcv_kis")
+        
+        if not db_path.exists():
+            return None
+        
+        conn = sqlite3.connect(db_path)
+        
+        # 유목민 데이터 로드
+        df_nomad = pd.read_sql_query("""
+            SELECT stock_code, study_date
+            FROM nomad_candidates
+            ORDER BY stock_code, study_date
+        """, conn)
+        conn.close()
+        
+        if df_nomad.empty:
+            return None
+        
+        # 종목별 총 등장 횟수
+        occurrence_count = df_nomad.groupby('stock_code').size().reset_index(name='total_count')
+        df_nomad = df_nomad.merge(occurrence_count, on='stock_code')
+        
+        # D+5 수익률 계산 (샘플링 - 최대 300건)
+        sample = df_nomad.sample(n=min(300, len(df_nomad)), random_state=42)
+        
+        results = []
+        for _, row in sample.iterrows():
+            try:
+                csv_path = ohlcv_path / f"{row['stock_code']}.csv"
+                if not csv_path.exists():
+                    continue
+                
+                ohlcv = pd.read_csv(csv_path)
+                ohlcv['date'] = pd.to_datetime(ohlcv['date'])
+                ohlcv = ohlcv.sort_values('date')
+                
+                base_date = pd.to_datetime(row['study_date'])
+                future = ohlcv[ohlcv['date'] > base_date]
+                
+                if len(future) >= 5:
+                    base_row = ohlcv[ohlcv['date'] <= base_date].iloc[-1]
+                    d5_close = future.iloc[4]['close']
+                    d5_return = (d5_close / base_row['close'] - 1) * 100
+                    
+                    results.append({
+                        'total_count': row['total_count'],
+                        'd5_return': d5_return
+                    })
+            except:
+                pass
+        
+        if not results:
+            return None
+        
+        df_results = pd.DataFrame(results)
+        
+        # 그룹별 승률 계산
+        bins = [0, 3, 7, 12, 100]
+        labels = ['1~3회', '4~7회', '8~12회', '13회+']
+        df_results['group'] = pd.cut(df_results['total_count'], bins=bins, labels=labels)
+        
+        win_rates = {}
+        for group in labels:
+            subset = df_results[df_results['group'] == group]['d5_return']
+            if len(subset) >= 3:
+                win_rates[group] = {
+                    'win_rate': (subset > 0).mean() * 100,
+                    'n': len(subset)
+                }
+        
+        return win_rates
+    except Exception:
+        return None
+
+
 # ==================== 통계 함수 ====================
 def calc_stats(results):
     """승률 통계 계산"""
@@ -371,7 +454,7 @@ else:
 # ==================== 유목민 등장 횟수 랭킹 ====================
 st.markdown("---")
 st.subheader("🔥 유목민 등장 횟수 TOP 15 (최근 30일)")
-st.caption("많이 등장할수록 모멘텀 강력! (13회+ 승률 90%)")
+st.caption("많이 등장할수록 모멘텀 강력! 승률은 D+5 기준 실시간 계산")
 
 ranking_df = load_nomad_occurrence_ranking(days=30, top_n=15)
 
@@ -410,12 +493,27 @@ if not ranking_df.empty and PLOTLY_AVAILABLE:
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # 범례 설명
-    col1, col2, col3, col4 = st.columns(4)
-    col1.markdown("🔴 **13회+**: 모멘텀 강력 (승률 90%)")
-    col2.markdown("🟠 **8~12회**: 주목 (승률 61%)")
-    col3.markdown("🟢 **4~7회**: 상승세 (승률 59%)")
-    col4.markdown("⚪ **1~3회**: 초기 (승률 37%)")
+    # 실시간 승률 계산
+    win_rates = calc_nomad_win_rates()
+    
+    if win_rates:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        wr_13 = win_rates.get('13회+', {})
+        wr_8 = win_rates.get('8~12회', {})
+        wr_4 = win_rates.get('4~7회', {})
+        wr_1 = win_rates.get('1~3회', {})
+        
+        col1.markdown(f"🔴 **13회+**: 모멘텀 강력 (승률 {wr_13.get('win_rate', 0):.0f}%, n={wr_13.get('n', 0)})")
+        col2.markdown(f"🟠 **8~12회**: 주목 (승률 {wr_8.get('win_rate', 0):.0f}%, n={wr_8.get('n', 0)})")
+        col3.markdown(f"🟢 **4~7회**: 상승세 (승률 {wr_4.get('win_rate', 0):.0f}%, n={wr_4.get('n', 0)})")
+        col4.markdown(f"⚪ **1~3회**: 초기 (승률 {wr_1.get('win_rate', 0):.0f}%, n={wr_1.get('n', 0)})")
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        col1.markdown("🔴 **13회+**: 모멘텀 강력")
+        col2.markdown("🟠 **8~12회**: 주목")
+        col3.markdown("🟢 **4~7회**: 상승세")
+        col4.markdown("⚪ **1~3회**: 초기")
     
 elif not ranking_df.empty:
     # plotly 없을 때 테이블로 표시
