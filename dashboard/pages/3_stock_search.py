@@ -106,7 +106,7 @@ def load_ohlcv(stock_code: str, days: int = 60):
 
 
 def create_candlestick_chart(df: pd.DataFrame, stock_name: str, highlight_dates: list = None):
-    """캔들스틱 차트 생성"""
+    """캔들스틱 차트 생성 (한국식: 상승=빨강, 하락=파랑)"""
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -118,7 +118,7 @@ def create_candlestick_chart(df: pd.DataFrame, stock_name: str, highlight_dates:
             vertical_spacing=0.05,
         )
         
-        # 캔들스틱
+        # 캔들스틱 (한국식: 상승=빨강, 하락=파랑)
         fig.add_trace(
             go.Candlestick(
                 x=df['date'],
@@ -127,6 +127,10 @@ def create_candlestick_chart(df: pd.DataFrame, stock_name: str, highlight_dates:
                 low=df['low'],
                 close=df['close'],
                 name='가격',
+                increasing_line_color='#F44336',  # 상승=빨강
+                increasing_fillcolor='#F44336',
+                decreasing_line_color='#2196F3',  # 하락=파랑
+                decreasing_fillcolor='#2196F3',
             ),
             row=1, col=1
         )
@@ -142,8 +146,8 @@ def create_candlestick_chart(df: pd.DataFrame, stock_name: str, highlight_dates:
                     row=1, col=1
                 )
         
-        # 거래량
-        colors = ['red' if c < o else 'blue' 
+        # 거래량 (한국식: 양봉=빨강, 음봉=파랑)
+        colors = ['#F44336' if c >= o else '#2196F3' 
                   for c, o in zip(df['close'], df['open'])]
         fig.add_trace(
             go.Bar(x=df['date'], y=df['volume'], name='거래량', marker_color=colors),
