@@ -1563,6 +1563,10 @@ class NomadCandidatesRepository:
             )
             return cursor.lastrowid
     
+    def insert(self, data: dict) -> int:
+        """후보 삽입 (upsert 별칭) - nomad_collector 호환용"""
+        return self.upsert(data)
+    
     def get_by_date(self, study_date: str) -> List[dict]:
         """특정 날짜의 후보"""
         rows = self.db.fetch_all(

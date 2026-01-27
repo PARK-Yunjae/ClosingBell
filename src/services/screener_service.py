@@ -691,32 +691,51 @@ class ScreenerService:
             logger.error(f"v6.0 TOP5 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
-        """알림 발송 (종가매매 TOP5) v6.3"""
+        """알림 발송 (종가매매 TOP5) v6.4 - AI 추천 포함"""
         try:
             top_n = result["top_n"]
             cci_filtered = result.get("cci_filtered_out", 0)
             large_cap_top5 = result.get("large_cap_top5", [])
-            leading_sectors_text = result.get("leading_sectors_text", "")  # v6.3
+            leading_sectors_text = result.get("leading_sectors_text", "")
             
             # 종가매매 TOP5 발송
             if not top_n:
                 self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
             else:
-                # v6.2: 필터링 정보 추가
+                # v6.4: AI 분석 실행 (종목당 5~10초, 총 30초~1분)
+                ai_results = {}
+                try:
+                    from src.services.webhook_ai_helper import analyze_top5_for_webhook
+                    logger.info("🤖 웹훅용 AI 분석 시작...")
+                    ai_results = analyze_top5_for_webhook(top_n)
+                    logger.info(f"🤖 AI 분석 완료: {len(ai_results)}개")
+                except Exception as e:
+                    logger.warning(f"AI 분석 실패 (웹훅은 계속 발송): {e}")
+                
+                # v6.4: AI 결과 포함 Embed 생성
                 title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
                 if cci_filtered > 0:
                     title += f" (CCI과열 {cci_filtered}개 제외)"
                 
-                # v6.3: 주도섹터 정보 전달
-                embed = format_discord_embed(
-                    top_n, 
-                    title=title,
-                    leading_sectors_text=leading_sectors_text,
-                )
+                # AI 결과가 있으면 AI 포함 버전, 없으면 기존 버전
+                if ai_results:
+                    from src.domain.score_calculator_patch import format_discord_embed_with_ai
+                    embed = format_discord_embed_with_ai(
+                        top_n, 
+                        title=title,
+                        leading_sectors_text=leading_sectors_text,
+                        ai_results=ai_results,
+                    )
+                else:
+                    embed = format_discord_embed(
+                        top_n, 
+                        title=title,
+                        leading_sectors_text=leading_sectors_text,
+                    )
                 
                 success = self.discord_notifier.send_embed(embed)
                 if success:
-                    logger.info("종가매매 Discord 발송 완료")
+                    logger.info("종가매매 Discord 발송 완료" + (" (AI 포함)" if ai_results else ""))
                 else:
                     logger.warning("종가매매 Discord 발송 실패")
                 
