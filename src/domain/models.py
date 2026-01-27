@@ -268,6 +268,14 @@ class ScreeningResult:
     def top_n(self) -> List[StockScore]:
         """TOP N 종목 (top3의 alias, 실제로는 TOP_N_COUNT개)"""
         return self.top3
+    
+    @property
+    def top_items(self) -> List[StockScore]:
+        """TOP N 종목 (읽기 전용, top3의 명확한 alias)
+        
+        Note: top3는 DB 호환성을 위해 유지하지만, 실제로는 TOP5(또는 설정된 TOP_N_COUNT)를 담음
+        """
+        return self.top3
 
 
 # ============================================================

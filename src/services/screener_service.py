@@ -1,5 +1,5 @@
 """
-스크리닝 서비스 v6.4
+스크리닝 서비스 v6.5
 
 책임:
 - 스크리닝 플로우 제어
@@ -7,6 +7,12 @@
 - 최소한의 하드필터 (데이터부족, 하락종목만 제외)
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
 - 글로벌 지표 필터 (나스닥/환율)
+
+v6.5 변경사항:
+- Top5Pipeline 연동 (Enrichment + AI 배치)
+- DART 기업정보/재무/위험공시 통합
+- AI 배치 호출 (5회 → 1회)
+- 기존 방식 fallback 유지
 
 v6.4 변경사항:
 - TV200 조건검색 유지 (HTS와 동일)
@@ -27,7 +33,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 
 from src.config.settings import settings
-from src.config.constants import TOP_N_COUNT, MIN_DAILY_DATA_COUNT
+from src.config.constants import get_top_n_count, MIN_DAILY_DATA_COUNT
 from src.utils.stock_filters import filter_universe_stocks
 from src.domain.models import StockData, ScreeningResult, ScreeningStatus
 from src.domain.score_calculator import (
@@ -193,12 +199,15 @@ class ScreenerService:
             # ================================================
             market_cap_info = self._load_market_cap_info(scores_filtered)
             
+            # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
+            top_n_count = get_top_n_count()
+            
             # TOP5 선정 (필터링된 목록에서)
-            top_n = self.calculator.select_top_n(scores_filtered, TOP_N_COUNT)
+            top_n = self.calculator.select_top_n(scores_filtered, top_n_count)
             
             # v6.2: 대기업 TOP5 별도 추출
             large_cap_top5 = [s for s in scores_filtered 
-                            if getattr(s, '_market_cap', 0) >= LARGE_CAP_THRESHOLD][:TOP_N_COUNT]
+                            if getattr(s, '_market_cap', 0) >= LARGE_CAP_THRESHOLD][:top_n_count]
             
             # ================================================
             # v6.3: 주도섹터 계산
@@ -338,57 +347,30 @@ class ScreenerService:
         return stocks
     
     def _save_tv200_result(self, stocks: List, stage: str = "raw"):
-        """TV200 결과 파일 및 DB 스냅샷 저장 (v6.3.3)
+        """TV200 결과 DB 스냅샷 저장 (v6.4 - JSON 파일 저장 제거)
         
         Args:
             stocks: 종목 리스트
             stage: 저장 단계 (before_filter, after_filter)
         """
         from datetime import datetime
-        import json
         
         try:
             # v6.3.3: 실제 거래일 기준 날짜 사용 (휴일 대응)
             screen_date = self._get_actual_trading_date()
             today_str = screen_date.isoformat() if hasattr(screen_date, 'isoformat') else str(screen_date)
             
-            filepath = Path(f"logs/tv200_{today_str}_{stage}.json")
-            filepath.parent.mkdir(exist_ok=True)
-            
             # 코드/이름 추출
             codes = []
             names_dict = {}
-            stock_list = []
             
             for s in stocks:
                 code = s.code if hasattr(s, 'code') else str(s)
                 name = getattr(s, 'name', '')
                 codes.append(code)
                 names_dict[code] = name
-                
-                stock_info = {
-                    'code': code,
-                    'name': name,
-                    'price': getattr(s, 'price', 0),
-                    'change_rate': getattr(s, 'change_rate', 0),
-                    'trading_value': getattr(s, 'trading_value', 0),
-                }
-                stock_list.append(stock_info)
             
-            # JSON 파일 저장
-            data = {
-                'date': today_str,
-                'stage': stage,
-                'count': len(stocks),
-                'stocks': stock_list
-            }
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"TV200 결과 저장: {filepath} ({len(stocks)}개)")
-            
-            # v6.3.3: DB 스냅샷 저장 (after_filter만, 또는 둘 다)
+            # v6.3.3: DB 스냅샷 저장 (JSON 파일 저장 제거)
             if stage == 'after_filter':
                 filter_stage = 'after'
             elif stage == 'before_filter':
@@ -406,6 +388,7 @@ class ScreenerService:
                     filter_stage=filter_stage,
                     source='TV200',
                 )
+                logger.info(f"TV200 스냅샷 저장: {today_str} {filter_stage} ({len(stocks)}개)")
             except Exception as e:
                 logger.warning(f"TV200 스냅샷 DB 저장 실패: {e}")
             
@@ -691,7 +674,7 @@ class ScreenerService:
             logger.error(f"v6.0 TOP5 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
-        """알림 발송 (종가매매 TOP5) v6.4 - AI 추천 포함"""
+        """알림 발송 (종가매매 TOP5) v6.5 - DART+AI 배치 통합"""
         try:
             top_n = result["top_n"]
             cci_filtered = result.get("cci_filtered_out", 0)
@@ -701,50 +684,114 @@ class ScreenerService:
             # 종가매매 TOP5 발송
             if not top_n:
                 self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
-            else:
-                # v6.4: AI 분석 실행 (종목당 5~10초, 총 30초~1분)
-                ai_results = {}
-                try:
-                    from src.services.webhook_ai_helper import analyze_top5_for_webhook
-                    logger.info("🤖 웹훅용 AI 분석 시작...")
-                    ai_results = analyze_top5_for_webhook(top_n)
-                    logger.info(f"🤖 AI 분석 완료: {len(ai_results)}개")
-                except Exception as e:
-                    logger.warning(f"AI 분석 실패 (웹훅은 계속 발송): {e}")
+                return
+            
+            # ============================================================
+            # v6.5: 새 파이프라인 시도 (Enrichment + AI 배치)
+            # ============================================================
+            try:
+                from src.services.top5_pipeline import Top5Pipeline
                 
-                # v6.4: AI 결과 포함 Embed 생성
-                title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
+                run_type = "preview" if is_preview else "main"
+                pipeline = Top5Pipeline(
+                    use_enrichment=True,
+                    use_ai=True,
+                    save_to_db=not is_preview,  # 메인만 DB 저장
+                )
+                
+                # 파이프라인에서 Discord 발송하지 않고 Embed만 생성
+                pipeline._discord_notifier = None  # 직접 발송할 것이므로 비활성화
+                
+                logger.info(f"🚀 v6.5 파이프라인 시작 ({run_type})")
+                
+                pipeline_result = pipeline.process_top5(
+                    scores=top_n,
+                    run_type=run_type,
+                    leading_sectors_text=leading_sectors_text,
+                )
+                
+                ai_results = pipeline_result.get('ai_results', {})
+                
+                # CCI 필터 정보 추가
+                title = "[프리뷰] 종가매매 TOP5" if is_preview else "종가매매 TOP5"
                 if cci_filtered > 0:
                     title += f" (CCI과열 {cci_filtered}개 제외)"
                 
-                # AI 결과가 있으면 AI 포함 버전, 없으면 기존 버전
-                if ai_results:
-                    from src.domain.score_calculator_patch import format_discord_embed_with_ai
-                    embed = format_discord_embed_with_ai(
-                        top_n, 
-                        title=title,
-                        leading_sectors_text=leading_sectors_text,
-                        ai_results=ai_results,
-                    )
-                else:
-                    embed = format_discord_embed(
-                        top_n, 
-                        title=title,
-                        leading_sectors_text=leading_sectors_text,
-                    )
+                # v6.5 Embed Builder 사용
+                from src.services.discord_embed_builder import DiscordEmbedBuilder
+                embed_builder = DiscordEmbedBuilder()
+                embed = embed_builder.build_top5_embed(
+                    stocks=top_n,
+                    title=title,
+                    leading_sectors_text=leading_sectors_text,
+                    ai_results=ai_results if ai_results else None,
+                    run_type=run_type,
+                )
                 
                 success = self.discord_notifier.send_embed(embed)
                 if success:
-                    logger.info("종가매매 Discord 발송 완료" + (" (AI 포함)" if ai_results else ""))
+                    ai_count = len(ai_results) if ai_results else 0
+                    enriched_count = len(pipeline_result.get('enriched_stocks', []))
+                    logger.info(f"✅ v6.5 Discord 발송 완료 (Enriched: {enriched_count}, AI: {ai_count})")
                 else:
-                    logger.warning("종가매매 Discord 발송 실패")
+                    logger.warning("Discord 발송 실패")
                 
-                # v6.2: 대기업 TOP5 별도 발송 (있는 경우)
-                if large_cap_top5 and not is_preview:
-                    self._send_large_cap_alert(large_cap_top5)
+            except ImportError as e:
+                logger.warning(f"v6.5 파이프라인 미설치, 기존 방식으로 fallback: {e}")
+                self._send_alert_legacy(top_n, cci_filtered, leading_sectors_text, is_preview)
+            except Exception as e:
+                logger.warning(f"v6.5 파이프라인 실패, 기존 방식으로 fallback: {e}")
+                self._send_alert_legacy(top_n, cci_filtered, leading_sectors_text, is_preview)
+            
+            # v6.2: 대기업 TOP5 별도 발송 (있는 경우)
+            if large_cap_top5 and not is_preview:
+                self._send_large_cap_alert(large_cap_top5)
                 
         except Exception as e:
             logger.error(f"알림 에러: {e}")
+    
+    def _send_alert_legacy(self, top_n: list, cci_filtered: int, leading_sectors_text: str, is_preview: bool):
+        """v6.4 방식 알림 (fallback용)"""
+        try:
+            # v6.4: AI 분석 실행 (종목당 5~10초, 총 30초~1분)
+            ai_results = {}
+            try:
+                from src.services.webhook_ai_helper import analyze_top5_for_webhook
+                logger.info("🤖 웹훅용 AI 분석 시작 (legacy)...")
+                ai_results = analyze_top5_for_webhook(top_n)
+                logger.info(f"🤖 AI 분석 완료: {len(ai_results)}개")
+            except Exception as e:
+                logger.warning(f"AI 분석 실패 (웹훅은 계속 발송): {e}")
+            
+            # v6.4: AI 결과 포함 Embed 생성
+            title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
+            if cci_filtered > 0:
+                title += f" (CCI과열 {cci_filtered}개 제외)"
+            
+            # AI 결과가 있으면 AI 포함 버전, 없으면 기존 버전
+            if ai_results:
+                from src.domain.score_calculator_patch import format_discord_embed_with_ai
+                embed = format_discord_embed_with_ai(
+                    top_n, 
+                    title=title,
+                    leading_sectors_text=leading_sectors_text,
+                    ai_results=ai_results,
+                )
+            else:
+                embed = format_discord_embed(
+                    top_n, 
+                    title=title,
+                    leading_sectors_text=leading_sectors_text,
+                )
+            
+            success = self.discord_notifier.send_embed(embed)
+            if success:
+                logger.info("종가매매 Discord 발송 완료 (legacy)" + (" (AI 포함)" if ai_results else ""))
+            else:
+                logger.warning("종가매매 Discord 발송 실패")
+                
+        except Exception as e:
+            logger.error(f"Legacy 알림 에러: {e}")
     
     def _send_large_cap_alert(self, large_cap_stocks: list):
         """v6.2: 대기업 TOP5 별도 알림"""

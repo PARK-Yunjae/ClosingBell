@@ -1,10 +1,15 @@
 """
-기업 정보 수집 서비스 v6.1
+기업 정보 수집 서비스 v6.5
 ===========================
 
-네이버 금융에서 기업 정보를 수집합니다. (2026.01.20 검증)
+v6.5: DART API 기반으로 변경 (네이버 크롤링은 fallback)
 
-## 수집 항목 (coinfo + main 페이지)
+## 수집 항목 (DART)
+- 기업개황: 회사명, 대표자, 업종코드, 설립일
+- 재무요약: 매출액, 영업이익, 순이익, 자본총계
+- 위험공시: 정리매매, 유상증자 등 자동 탐지
+
+## 기존 네이버 수집 항목 (fallback용)
 
 | 항목 | 소스 | 패턴 |
 |------|------|------|
@@ -489,6 +494,102 @@ def collect_company_info_for_candidates(limit: int = 600) -> Dict:
 def run_company_info_collection() -> Dict:
     """
     기업 정보 수집 실행 (스케줄러용)
+    
+    v6.5: DART 기반으로 변경 (네이버 크롤링 대체)
+    """
+    return collect_company_info_with_dart(limit=100)
+
+
+def collect_company_info_with_dart(limit: int = 100) -> Dict:
+    """
+    v6.5: DART API 기반 기업정보 수집
+    
+    Args:
+        limit: 최대 종목 수
+        
+    Returns:
+        수집 결과 통계
+    """
+    logger.info("=" * 60)
+    logger.info("🏢 기업 정보 수집 시작 (DART)")
+    logger.info("=" * 60)
+    
+    try:
+        from src.services.dart_service import get_dart_service
+        from src.infrastructure.repository import get_company_profile_repository
+        
+        dart = get_dart_service()
+        profile_repo = get_company_profile_repository()
+        
+    except ImportError as e:
+        logger.warning(f"DART 서비스 미설치: {e}")
+        # Fallback: 기존 네이버 방식
+        return collect_company_info_for_candidates(limit=limit)
+    
+    repo = get_nomad_candidates_repository()
+    
+    # 기업정보 미수집 후보 조회
+    candidates = repo.get_uncollected_company_info(limit=limit)
+    
+    if not candidates:
+        logger.info("📭 기업정보 수집할 후보 없음")
+        return {'total': 0, 'success': 0, 'source': 'DART'}
+    
+    logger.info(f"📋 DART 기업정보 수집 대상: {len(candidates)}개 종목")
+    
+    stats = {'total': len(candidates), 'success': 0, 'source': 'DART'}
+    
+    for i, candidate in enumerate(candidates[:limit]):
+        stock_code = candidate['stock_code']
+        stock_name = candidate['stock_name']
+        
+        try:
+            # DART 전체 프로필 조회 (캐시 저장 포함)
+            profile = dart.get_full_company_profile(
+                stock_code, 
+                stock_name,
+                include_risk=True,
+                cache_to_db=True,
+            )
+            
+            if profile.get('success'):
+                # nomad_candidates 테이블에 기업정보 플래그 업데이트
+                basic = profile.get('basic') or {}
+                financial = profile.get('financial') or {}
+                
+                repo.update_company_info(
+                    candidate_id=candidate.get('id'),
+                    company_info={
+                        'market': basic.get('corp_cls', ''),
+                        'sector': basic.get('induty_code', ''),
+                        'ceo': basic.get('ceo_nm', ''),
+                        'revenue': financial.get('revenue'),
+                        'operating_profit': financial.get('operating_profit'),
+                        'net_income': financial.get('net_income'),
+                        'data_source': 'DART',
+                    }
+                )
+                stats['success'] += 1
+                logger.debug(f"✅ {stock_name} DART 수집 완료")
+            else:
+                logger.debug(f"⚠️ {stock_name} DART 정보 없음")
+                
+        except Exception as e:
+            logger.warning(f"❌ {stock_name} DART 수집 실패: {e}")
+        
+        # API 호출 간격 (DART는 빠르지만 예의상)
+        time.sleep(0.2)
+    
+    logger.info("=" * 60)
+    logger.info(f"🏢 DART 기업정보 수집 완료: {stats['success']}/{stats['total']}")
+    logger.info("=" * 60)
+    
+    return stats
+
+
+def run_company_info_collection_legacy() -> Dict:
+    """
+    기존 네이버 크롤링 방식 (fallback용)
     """
     return collect_company_info_for_candidates(limit=600)
 

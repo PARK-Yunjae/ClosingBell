@@ -263,9 +263,14 @@ def summarize_with_gemini(stock_name: str, study_date: str, news_list: List[Dict
 """
     
     try:
+        # max_output_tokens 설정으로 JSON 잘림 방지
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=prompt,
+            config={
+                'max_output_tokens': 4096,  # 뉴스 요약용 (여유있게)
+                'temperature': 0.3,
+            },
         )
         
         result_text = response.text

@@ -175,9 +175,14 @@ RSI: {stock_data.get('rsi', '-')}
 중요: 정리매매, 관리종목, 상장폐지 위험이 있으면 반드시 risk_level을 "높음"으로, recommendation을 "매도"로 설정하세요.
 """
         
+        # max_output_tokens 설정으로 JSON 잘림 방지
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt
+            contents=prompt,
+            config={
+                'max_output_tokens': 4096,
+                'temperature': 0.3,
+            },
         )
         result_text = response.text
         
@@ -234,7 +239,7 @@ def analyze_top5_stocks(target_date: str = None, limit: int = 5) -> Dict:
             SELECT id, stock_code, stock_name, screen_score, grade,
                    cci, rsi, change_rate, disparity_20, consecutive_up,
                    volume_ratio_5, sector, trading_value, volume,
-                   ai_summary
+                   ai_summary, ai_recommendation
             FROM closing_top5_history
             WHERE screen_date = ?
             ORDER BY rank
@@ -247,9 +252,12 @@ def analyze_top5_stocks(target_date: str = None, limit: int = 5) -> Dict:
         for row in stocks:
             stock = dict(zip(columns, row))
             
-            # 이미 분석된 종목 스킵
-            if stock.get('ai_summary'):
-                logger.info(f"  ⏭️ {stock['stock_name']} - 이미 분석됨")
+            # 이미 분석된 종목 스킵 (ai_summary 또는 ai_recommendation이 있으면 스킵)
+            ai_summary_exists = stock.get('ai_summary') and stock.get('ai_summary').strip()
+            ai_recommendation_exists = stock.get('ai_recommendation') and stock.get('ai_recommendation').strip()
+            
+            if ai_summary_exists or ai_recommendation_exists:
+                logger.info(f"  ⏭️ {stock['stock_name']} - 이미 분석됨 (스킵)")
                 stats['skipped'] += 1
                 continue
             

@@ -104,10 +104,14 @@ ROE: {candidate.get('roe', '-')}%
 }}
 """
         
-        # 새 API 호출
+        # 새 API 호출 (max_output_tokens 설정으로 JSON 잘림 방지)
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt
+            contents=prompt,
+            config={
+                'max_output_tokens': 4096,
+                'temperature': 0.3,
+            },
         )
         result_text = response.text
         

@@ -445,9 +445,12 @@ for i, item in enumerate(top5_data[:5]):
         else:
             tv_str = "-"
         
-        # v6.3.2: AI 위험도 배지
+        # v6.4: AI 추천/위험도 배지 (강조)
         ai_risk = item.get('ai_risk_level', '')
+        ai_rec = item.get('ai_recommendation', '')
         risk_badge = {'낮음': '✅', '보통': '⚠️', '높음': '🚫'}.get(ai_risk, '')
+        rec_badge = {'매수': '🟢', '관망': '🟡', '매도': '🔴'}.get(ai_rec, '')
+        rec_color = {'매수': '#4CAF50', '관망': '#FF9800', '매도': '#F44336'}.get(ai_rec, '#888')
         
         # v6.3: DB에서 섹터 정보 (없으면 company_service에서 조회)
         sector = item.get('sector') or get_sector_from_mapping(item['stock_code']) or "-"
@@ -463,21 +466,33 @@ for i, item in enumerate(top5_data[:5]):
         st.markdown(f"""
         <div style="
             background: linear-gradient(135deg, {grade_color(item['grade'])}22, {grade_color(item['grade'])}11);
-            border-left: 4px solid {grade_color(item['grade'])};
-            padding: 10px;
-            border-radius: 5px;
+            border-left: 5px solid {grade_color(item['grade'])};
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         ">
-            <div style="font-size: 12px; color: #888;">#{item['rank']} {cap_badge} {risk_badge}</div>
-            <div style="font-size: 16px; font-weight: bold;">{item['stock_name']}</div>
-            <div style="font-size: 11px; color: {'#FF6B6B' if is_leading else '#666'}; margin-bottom: 2px;">{sector_display}</div>
-            <div style="font-size: 14px;">
+            <div style="font-size: 12px; color: #888; margin-bottom: 4px;">#{item['rank']} {cap_badge}</div>
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 4px;">{item['stock_name']}</div>
+            <div style="font-size: 12px; color: {'#FF6B6B' if is_leading else '#666'}; margin-bottom: 6px;">{sector_display}</div>
+            <div style="font-size: 16px; margin-bottom: 4px;">
                 <span style="color: {grade_color(item['grade'])}; font-weight: bold;">{item['grade']}</span>
-                ({item['screen_score']:.1f}점)
+                <span style="color: #666;">({item['screen_score']:.1f}점)</span>
             </div>
-            <div style="font-size: 12px; color: #666;">{item['screen_price']:,}원</div>
-            <div style="font-size: 11px; color: #888;">{cap_str} | 거래 {tv_str}</div>
-            <div style="font-size: 12px; color: #888;">CCI: {cci:.0f} {cci_warning}</div>
-            <div style="font-size: 14px; color: {'#4CAF50' if d1_gap and d1_gap > 0 else '#F44336'}; font-weight: bold;">
+            <div style="font-size: 14px; color: #444; margin-bottom: 2px;">{item['screen_price']:,}원</div>
+            <div style="font-size: 12px; color: #666; margin-bottom: 6px;">{cap_str} | 거래 {tv_str}</div>
+            <div style="font-size: 12px; color: #888; margin-bottom: 8px;">CCI: {cci:.0f} {cci_warning}</div>
+            <div style="
+                background: {rec_color}15;
+                border-radius: 4px;
+                padding: 6px;
+                margin-bottom: 6px;
+                text-align: center;
+            ">
+                <span style="font-size: 14px; font-weight: bold; color: {rec_color};">
+                    {rec_badge} {ai_rec if ai_rec else '-'} | {risk_badge} {ai_risk if ai_risk else '-'}
+                </span>
+            </div>
+            <div style="font-size: 16px; color: {'#4CAF50' if d1_gap and d1_gap > 0 else '#F44336'}; font-weight: bold; text-align: center;">
                 D+1: {f"{d1_gap:+.1f}%" if d1_gap is not None else "-"}
             </div>
         </div>
@@ -611,7 +626,9 @@ for item in top5_data:
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid {risk_color};">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                     <span style="font-size: 16px; font-weight: bold;">🤖 AI 분석</span>
-                    <span style="color: {risk_color}; font-weight: bold;">위험도: {ai_risk} {risk_emoji}</span>
+                    <span style="color: {risk_color}; font-weight: bold;">
+                        {rec_emoji} {ai_rec} | 위험도: {ai_risk} {risk_emoji}
+                    </span>
                 </div>
             </div>
             """, unsafe_allow_html=True)

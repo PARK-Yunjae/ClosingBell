@@ -235,7 +235,10 @@ class ScreenerScheduler:
         logger.info(f"💓 Heartbeat: 가동시간 {uptime_str}, 대기 작업: {next_jobs_str}")
     
     def _auto_shutdown(self):
-        """자동 종료 - 모든 일일 작업 완료 후"""
+        """자동 종료 - 모든 일일 작업 완료 후
+        
+        ★ 안전 종료: 실행 중인 작업이 있으면 대기
+        """
         import threading
         
         now = datetime.now()
@@ -243,21 +246,44 @@ class ScreenerScheduler:
         uptime_str = str(uptime).split('.')[0]
         
         logger.info("=" * 50)
-        logger.info("🔴 자동 종료 시작")
-        logger.info(f"   종료 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("🔴 자동 종료 요청")
+        logger.info(f"   요청 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"   총 가동시간: {uptime_str}")
         logger.info("=" * 50)
-        logger.info("✅ 오늘의 모든 작업 완료. 프로그램을 종료합니다.")
         
-        # 별도 스레드에서 종료 (APScheduler가 exception으로 잡지 않도록)
-        def delayed_shutdown():
+        # ★ 실행 중인 작업 체크 (최대 30분 대기)
+        def safe_shutdown():
             import time
             import os
-            time.sleep(1)
-            self.scheduler.shutdown(wait=False)
-            os._exit(0)  # 강제 종료 (sys.exit보다 깔끔)
+            
+            max_wait_minutes = 30
+            check_interval = 30  # 30초마다 체크
+            waited = 0
+            
+            while waited < max_wait_minutes * 60:
+                # 실행 중인 잡 확인
+                running_jobs = []
+                for job in self.scheduler.get_jobs():
+                    # next_run_time이 None이면 현재 실행 중일 수 있음
+                    if hasattr(job, 'next_run_time') and job.next_run_time is None:
+                        running_jobs.append(job.id)
+                
+                if not running_jobs:
+                    logger.info("✅ 실행 중인 작업 없음. 안전하게 종료합니다.")
+                    break
+                
+                logger.info(f"⏳ 실행 중인 작업 대기: {running_jobs} ({waited//60}분 경과)")
+                time.sleep(check_interval)
+                waited += check_interval
+            
+            if waited >= max_wait_minutes * 60:
+                logger.warning(f"⚠️ {max_wait_minutes}분 대기 후 강제 종료")
+            
+            logger.info("🔴 프로그램 종료")
+            self.scheduler.shutdown(wait=True)  # wait=True로 변경
+            os._exit(0)
         
-        shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=True)
+        shutdown_thread = threading.Thread(target=safe_shutdown, daemon=True)
         shutdown_thread.start()
     
     def _add_heartbeat_job(self):
@@ -319,7 +345,7 @@ class ScreenerScheduler:
             job_id='daily_data_update',
             func=run_data_update,
             hour=16,
-            minute=5,
+            minute=30,
         )
         
         # 16:10 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
@@ -410,12 +436,12 @@ class ScreenerScheduler:
             minute=0,
         )
         
-        # 17:05 자동 종료 (모든 작업 완료 후 - 휴장일에도 실행)
+        # 17:30 자동 종료 (안전 종료) (모든 작업 완료 후 - 휴장일에도 실행)
         self.add_job(
             job_id='auto_shutdown',
             func=self._auto_shutdown,
             hour=17,
-            minute=5,
+            minute=30,
             check_market_day=False,  # 휴장일에도 종료
         )
         

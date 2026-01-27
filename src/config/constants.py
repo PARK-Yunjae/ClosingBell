@@ -66,7 +66,18 @@ API_RETRY_DELAY = 1.0
 TOKEN_REFRESH_BUFFER = 3600
 
 # 시스템 상수
-TOP_N_COUNT = 5
+# ★ P0-B: TOP_N_COUNT는 settings.screening.top_n_count와 통일
+# 하위 호환성을 위해 상수로 유지하되, 기본값은 settings에서 오버라이드 가능
+TOP_N_COUNT = 5  # 기본값 (settings.screening.top_n_count로 오버라이드 권장)
+
+def get_top_n_count() -> int:
+    """TOP N 종목 수 반환 (settings 우선, 없으면 기본값 5)"""
+    try:
+        from src.config.settings import settings
+        return settings.screening.top_n_count
+    except Exception:
+        return TOP_N_COUNT
+
 MIN_DAILY_DATA_COUNT = 20
 MIN_LEARNING_SAMPLES = 30
 

@@ -1296,6 +1296,102 @@ class Top5HistoryRepository:
             )
             return cursor.lastrowid
     
+    def update_ai_fields(
+        self, 
+        screen_date: str, 
+        stock_code: str,
+        ai_summary: Optional[str] = None,
+        ai_risk_level: Optional[str] = None,
+        ai_recommendation: Optional[str] = None,
+    ) -> bool:
+        """AI 분석 결과만 업데이트 (기존 값 보존, 빈 값 덮어쓰기 방지)
+        
+        Args:
+            screen_date: 스크리닝 날짜 (YYYY-MM-DD)
+            stock_code: 종목코드
+            ai_summary: AI 요약 (None이면 기존 값 유지)
+            ai_risk_level: AI 위험도 (None이면 기존 값 유지)
+            ai_recommendation: AI 추천 (None이면 기존 값 유지)
+            
+        Returns:
+            업데이트 성공 여부
+            
+        Note:
+            - 전달값이 None이면 기존 값 유지 (COALESCE)
+            - 전달값이 ''(빈 문자열)이면 기존 값 유지 (빈 값 덮어쓰기 금지)
+            - record가 없으면 조용히 skip (False 반환)
+        """
+        # 레코드 존재 확인
+        existing = self.db.fetch_one(
+            "SELECT id, ai_summary, ai_risk_level, ai_recommendation FROM closing_top5_history WHERE screen_date = ? AND stock_code = ?",
+            (screen_date, stock_code)
+        )
+        
+        if not existing:
+            logger.debug(f"AI 업데이트 스킵 - 레코드 없음: {screen_date} {stock_code}")
+            return False
+        
+        # 빈 값 덮어쓰기 방지: None 또는 빈 문자열이면 기존 값 사용
+        final_summary = ai_summary if ai_summary else existing.get('ai_summary')
+        final_risk_level = ai_risk_level if ai_risk_level else existing.get('ai_risk_level')
+        final_recommendation = ai_recommendation if ai_recommendation else existing.get('ai_recommendation')
+        
+        self.db.execute(
+            """
+            UPDATE closing_top5_history SET
+                ai_summary = ?,
+                ai_risk_level = ?,
+                ai_recommendation = ?
+            WHERE id = ?
+            """,
+            (final_summary, final_risk_level, final_recommendation, existing['id'])
+        )
+        
+        logger.debug(f"AI 필드 업데이트 완료: {screen_date} {stock_code} - {final_recommendation}/{final_risk_level}")
+        return True
+    
+    def has_ai_analysis(self, screen_date: str, stock_code: str) -> bool:
+        """해당 종목의 AI 분석이 이미 완료되었는지 확인 (중복 호출 방지)
+        
+        Args:
+            screen_date: 스크리닝 날짜 (YYYY-MM-DD)
+            stock_code: 종목코드
+            
+        Returns:
+            AI 분석 완료 여부 (ai_recommendation이 있으면 True)
+        """
+        row = self.db.fetch_one(
+            "SELECT ai_recommendation FROM closing_top5_history WHERE screen_date = ? AND stock_code = ?",
+            (screen_date, stock_code)
+        )
+        
+        if not row:
+            return False
+        
+        # ai_recommendation이 NULL이 아니고 빈 문자열이 아니면 분석 완료
+        ai_rec = row.get('ai_recommendation')
+        return ai_rec is not None and ai_rec != ''
+    
+    def get_stocks_without_ai(self, screen_date: str) -> List[dict]:
+        """AI 분석이 없는 종목 목록 조회 (중복 호출 방지용)
+        
+        Args:
+            screen_date: 스크리닝 날짜 (YYYY-MM-DD)
+            
+        Returns:
+            AI 분석이 없는 종목 리스트
+        """
+        rows = self.db.fetch_all(
+            """
+            SELECT * FROM closing_top5_history 
+            WHERE screen_date = ? 
+              AND (ai_recommendation IS NULL OR ai_recommendation = '')
+            ORDER BY rank
+            """,
+            (screen_date,)
+        )
+        return [dict(row) for row in rows]
+    
     def get_active_items(self) -> List[dict]:
         """tracking_status='active'인 항목들"""
         rows = self.db.fetch_all(
@@ -2118,6 +2214,175 @@ class TV200SnapshotRepository:
 
 def get_tv200_snapshot_repository() -> TV200SnapshotRepository:
     return TV200SnapshotRepository()
+
+
+# ============================================================
+# v6.5 DART 연동: CompanyProfileRepository
+# ============================================================
+class CompanyProfileRepository:
+    """DART 기업 프로필 캐시 Repository
+    
+    company_profiles 테이블 관리
+    - 기업개황 (DART)
+    - 재무요약 (DART)
+    - 위험공시 요약
+    """
+    
+    def __init__(self, db: Optional[Database] = None):
+        self.db = db or get_database()
+        self._ensure_table()
+    
+    def _ensure_table(self):
+        """테이블 생성 확인"""
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS company_profiles (
+                stock_code TEXT PRIMARY KEY,
+                corp_code TEXT,
+                corp_name TEXT,
+                corp_name_eng TEXT,
+                ceo_nm TEXT,
+                corp_cls TEXT,
+                induty_code TEXT,
+                est_dt TEXT,
+                acc_mt TEXT,
+                fiscal_year TEXT,
+                revenue REAL,
+                operating_profit REAL,
+                net_income REAL,
+                total_equity REAL,
+                total_assets REAL,
+                has_critical_risk INTEGER DEFAULT 0,
+                has_high_risk INTEGER DEFAULT 0,
+                risk_level TEXT DEFAULT '낮음',
+                risk_summary TEXT,
+                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+                data_source TEXT DEFAULT 'DART'
+            )
+        """)
+    
+    def get_by_code(self, stock_code: str) -> Optional[Dict]:
+        """종목코드로 프로필 조회"""
+        row = self.db.fetch_one(
+            "SELECT * FROM company_profiles WHERE stock_code = ?",
+            (stock_code,)
+        )
+        return dict(row) if row else None
+    
+    def upsert(self, stock_code: str, profile: Dict) -> bool:
+        """프로필 저장/업데이트
+        
+        Args:
+            stock_code: 종목코드
+            profile: get_full_company_profile() 결과
+        """
+        try:
+            basic = profile.get('basic') or {}
+            financial = profile.get('financial') or {}
+            risk = profile.get('risk') or {}
+            
+            self.db.execute("""
+                INSERT INTO company_profiles (
+                    stock_code, corp_code, corp_name, corp_name_eng, ceo_nm,
+                    corp_cls, induty_code, est_dt, acc_mt,
+                    fiscal_year, revenue, operating_profit, net_income,
+                    total_equity, total_assets,
+                    has_critical_risk, has_high_risk, risk_level, risk_summary,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+                ON CONFLICT(stock_code) DO UPDATE SET
+                    corp_code = excluded.corp_code,
+                    corp_name = excluded.corp_name,
+                    corp_name_eng = excluded.corp_name_eng,
+                    ceo_nm = excluded.ceo_nm,
+                    corp_cls = excluded.corp_cls,
+                    induty_code = excluded.induty_code,
+                    est_dt = excluded.est_dt,
+                    acc_mt = excluded.acc_mt,
+                    fiscal_year = excluded.fiscal_year,
+                    revenue = excluded.revenue,
+                    operating_profit = excluded.operating_profit,
+                    net_income = excluded.net_income,
+                    total_equity = excluded.total_equity,
+                    total_assets = excluded.total_assets,
+                    has_critical_risk = excluded.has_critical_risk,
+                    has_high_risk = excluded.has_high_risk,
+                    risk_level = excluded.risk_level,
+                    risk_summary = excluded.risk_summary,
+                    updated_at = datetime('now', 'localtime')
+            """, (
+                stock_code,
+                basic.get('corp_code'),
+                basic.get('corp_name'),
+                basic.get('corp_name_eng'),
+                basic.get('ceo_nm'),
+                basic.get('corp_cls'),
+                basic.get('induty_code'),
+                basic.get('est_dt'),
+                basic.get('acc_mt'),
+                financial.get('fiscal_year'),
+                financial.get('revenue'),
+                financial.get('operating_profit'),
+                financial.get('net_income'),
+                financial.get('total_equity'),
+                financial.get('total_assets'),
+                1 if risk.get('has_critical_risk') else 0,
+                1 if risk.get('has_high_risk') else 0,
+                risk.get('risk_level', '낮음'),
+                risk.get('summary'),
+            ))
+            return True
+        except Exception as e:
+            logger.error(f"프로필 저장 실패 ({stock_code}): {e}")
+            return False
+    
+    def get_all(self, limit: int = 100) -> List[Dict]:
+        """전체 프로필 조회"""
+        rows = self.db.fetch_all(
+            "SELECT * FROM company_profiles ORDER BY updated_at DESC LIMIT ?",
+            (limit,)
+        )
+        return [dict(r) for r in rows]
+    
+    def get_cached_count(self) -> int:
+        """캐시된 프로필 수"""
+        row = self.db.fetch_one("SELECT COUNT(*) as cnt FROM company_profiles")
+        return row['cnt'] if row else 0
+    
+    def is_stale(self, stock_code: str, hours: int = 24) -> bool:
+        """캐시가 오래되었는지 확인
+        
+        Args:
+            stock_code: 종목코드
+            hours: TTL (시간)
+        """
+        row = self.db.fetch_one(
+            """
+            SELECT updated_at,
+                   (julianday('now', 'localtime') - julianday(updated_at)) * 24 as age_hours
+            FROM company_profiles
+            WHERE stock_code = ?
+            """,
+            (stock_code,)
+        )
+        if not row:
+            return True  # 캐시 없음 = stale
+        return row['age_hours'] > hours
+    
+    def delete(self, stock_code: str) -> bool:
+        """프로필 삭제"""
+        try:
+            self.db.execute(
+                "DELETE FROM company_profiles WHERE stock_code = ?",
+                (stock_code,)
+            )
+            return True
+        except Exception:
+            return False
+
+
+def get_company_profile_repository() -> CompanyProfileRepository:
+    """CompanyProfileRepository 인스턴스 반환"""
+    return CompanyProfileRepository()
 
 
 # v6.0 Repository 편의 함수들

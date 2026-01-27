@@ -187,7 +187,7 @@ def collect_nomad_candidates(target_date: date = None) -> Dict:
                 'change_rate': round(change_rate, 2),
                 'volume': volume,
                 'trading_value': round(trading_value, 2),
-                'data_source': 'csv',
+                'data_source': 'backfill',  # CSV에서 수집 = backfill
             }
             
             candidates.append(candidate_data)

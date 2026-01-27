@@ -329,9 +329,9 @@ st.markdown("---")
 # 종목 카드 그리드
 st.subheader("📋 종목 목록")
 
-cols = st.columns(4)
+cols = st.columns(3)  # v6.4: 4열 → 3열 (PC 가독성 개선)
 for i, candidate in enumerate(candidates):
-    with cols[i % 4]:
+    with cols[i % 3]:
         status_icons = ""
         if candidate.get('company_info_collected'):
             status_icons += "🏢"
@@ -344,28 +344,48 @@ for i, candidate in enumerate(candidates):
         occ_count, _ = get_occurrence_count(candidate['stock_code'], days=30)
         occ_emoji, occ_color, occ_label = occurrence_badge(occ_count)
         
+        # 거래대금 표시
+        tv = candidate.get('trading_value', 0)
+        if tv >= 1000:
+            tv_str = f"{tv/1000:.1f}조"
+        elif tv >= 1:
+            tv_str = f"{tv:.0f}억"
+        else:
+            tv_str = "-"
+        
         st.markdown(f"""
         <div style="
             background: linear-gradient(135deg, {reason_color(candidate['reason_flag'])}22, {reason_color(candidate['reason_flag'])}11);
-            border-left: 4px solid {reason_color(candidate['reason_flag'])};
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-            min-height: 130px;
+            border-left: 5px solid {reason_color(candidate['reason_flag'])};
+            padding: 14px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            min-height: 160px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
         ">
-            <div style="font-size: 11px; color: #888;">
-                {reason_emoji(candidate['reason_flag'])} {candidate['reason_flag']} {status_icons}
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 12px; color: #888;">
+                    {reason_emoji(candidate['reason_flag'])} {candidate['reason_flag']}
+                </span>
+                <span style="font-size: 11px;">{status_icons}</span>
             </div>
-            <div style="font-size: 15px; font-weight: bold;">{candidate['stock_name']}</div>
-            <div style="font-size: 12px; color: #666;">{candidate['stock_code']}</div>
-            <div style="font-size: 14px; color: {'#4CAF50' if candidate['change_rate'] > 0 else '#F44336'};">
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 2px;">{candidate['stock_name']}</div>
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">{candidate['stock_code']}</div>
+            <div style="font-size: 20px; color: {'#4CAF50' if candidate['change_rate'] > 0 else '#F44336'}; font-weight: bold; margin-bottom: 6px;">
                 {candidate['change_rate']:+.1f}%
             </div>
-            <div style="font-size: 11px; color: #888;">
-                거래대금: {candidate['trading_value']:.0f}억
+            <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                거래대금: {tv_str}
             </div>
-            <div style="font-size: 11px; color: {occ_color}; font-weight: bold;">
-                {occ_emoji} 30일 {occ_count}회 등장 ({occ_label})
+            <div style="
+                background: {occ_color}15;
+                border-radius: 4px;
+                padding: 6px;
+                text-align: center;
+            ">
+                <span style="font-size: 12px; color: {occ_color}; font-weight: bold;">
+                    {occ_emoji} 30일 {occ_count}회 ({occ_label})
+                </span>
             </div>
         </div>
         """, unsafe_allow_html=True)

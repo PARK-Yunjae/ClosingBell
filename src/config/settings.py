@@ -81,6 +81,7 @@ class ScreeningSettings:
     screening_time_main: str = "15:00"
     screening_time_preview: str = "12:30"
     learning_time: str = "16:00"
+    top_n_count: int = 5  # TOP N 종목 수 (기본 5)
     
     # Rate Limit (안정성 우선)
     api_call_interval: float = 0.12  # 초당 8회
@@ -146,6 +147,7 @@ def load_settings() -> Settings:
         screening_time_main=os.getenv("SCREENING_TIME_2", "15:00"),
         screening_time_preview=os.getenv("SCREENING_TIME_1", "12:30"),
         learning_time=os.getenv("LEARNING_TIME", "16:00"),
+        top_n_count=int(os.getenv("TOP_N_COUNT", "5")),
         api_call_interval=float(os.getenv("API_CALL_INTERVAL", "0.12")),
     )
     

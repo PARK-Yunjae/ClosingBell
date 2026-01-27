@@ -23,7 +23,7 @@ def format_market_cap(market_cap: float) -> str:
 
 
 def analyze_single_stock_for_webhook(stock_data: Dict) -> Optional[Dict]:
-    """단일 종목 AI 분석 (웹훅용 경량 버전)
+    """단일 종목 AI 분석 (웹훅용 경량 버전) - DART 연동
     
     Args:
         stock_data: 종목 정보 딕셔너리
@@ -52,7 +52,46 @@ def analyze_single_stock_for_webhook(stock_data: Dict) -> Optional[Dict]:
         
         client = genai.Client(api_key=api_key)
         
-        # 프롬프트 구성 (간소화 버전)
+        # ============================================================
+        # DART 공시 정보 수집 (v6.4)
+        # ============================================================
+        dart_info = ""
+        dart_risk_level = None
+        try:
+            from src.services.dart_service import get_dart_service
+            dart = get_dart_service()
+            
+            stock_code = stock_data.get('stock_code', '')
+            stock_name = stock_data.get('stock_name', '')
+            
+            # 위험 공시 체크
+            risk_result = dart.check_risk_disclosures(stock_code, stock_name, days=30)
+            
+            if risk_result['has_critical_risk']:
+                # 🚫 즉시 매도 필요한 공시 발견
+                dart_info = "\n[DART 공식 공시 - 위험!]\n"
+                for item in risk_result['risk_disclosures'][:3]:
+                    dart_info += f"⚠️ {item['date']}: {item['title']}\n"
+                dart_info += "→ 정리매매/관리종목/상장폐지 위험. 반드시 '매도' 권장.\n"
+                dart_risk_level = '높음'
+                
+            elif risk_result['has_high_risk']:
+                # ⚠️ 주의 필요
+                dart_info = "\n[DART 공식 공시 - 주의]\n"
+                for item in risk_result['risk_disclosures'][:3]:
+                    dart_info += f"⚠️ {item['date']}: {item['title']}\n"
+                dart_info += "→ 유상증자/희석 위험 확인 필요.\n"
+                dart_risk_level = '보통'
+                
+            else:
+                dart_info = f"\n[DART] 최근 30일 위험 공시 없음 ✅\n"
+                
+        except ImportError:
+            logger.debug("DART 서비스 미설치 - 스킵")
+        except Exception as e:
+            logger.warning(f"DART 조회 실패: {e}")
+        
+        # 프롬프트 구성 (DART 정보 포함)
         prompt = f"""
 다음 종목의 종가매매 관점에서 빠르게 분석해주세요.
 
@@ -65,16 +104,24 @@ CCI: {stock_data.get('cci', 0):.0f}
 이격도(20): {stock_data.get('disparity_20', 0):.1f}%
 연속양봉: {stock_data.get('consecutive_up', 0)}일
 거래대금: {format_market_cap(stock_data.get('trading_value', 0))}
-
-**중요**: 정리매매, 관리종목, 상장폐지 위험이 있으면 반드시 "매도"로 설정하세요.
+{dart_info}
+**중요**: 
+- DART에서 위험 공시가 발견되면 반드시 "매도"로 설정하세요.
+- 유상증자, 전환사채 공시가 있으면 희석 위험으로 "관망" 또는 "매도"로 설정하세요.
+- 정리매매, 관리종목, 상장폐지 위험이 있으면 반드시 "매도"로 설정하세요.
 
 다음 형식으로 JSON만 응답하세요:
 {{"recommendation": "매수/관망/매도 중 하나", "risk_level": "낮음/보통/높음 중 하나", "summary": "핵심 요약 1문장 (30자 이내)"}}
 """
         
+        # max_output_tokens 설정으로 JSON 잘림 방지
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt
+            contents=prompt,
+            config={
+                'max_output_tokens': 2048,  # 단일 종목용 (여유있게)
+                'temperature': 0.3,
+            },
         )
         result_text = response.text
         

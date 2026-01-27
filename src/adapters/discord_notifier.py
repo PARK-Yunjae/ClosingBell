@@ -6,12 +6,14 @@
 - Embed 생성
 - 발송 및 재시도
 - Rate Limit 핸들링
+- Dry-run 모드 지원 (DISCORD_DRY_RUN=true)
 
 의존성:
 - requests
 - config.settings
 """
 
+import os
 import time
 import logging
 from datetime import datetime
@@ -36,14 +38,19 @@ from src.domain.models import (
 
 logger = logging.getLogger(__name__)
 
+# Dry-run 모드 (환경변수로 제어)
+DISCORD_DRY_RUN = os.getenv('DISCORD_DRY_RUN', 'false').lower() == 'true'
+
 
 class DiscordNotifier:
     """디스코드 웹훅 알림 전송"""
     
-    def __init__(self, webhook_url: Optional[str] = None):
+    def __init__(self, webhook_url: Optional[str] = None, dry_run: bool = None):
         self.webhook_url = webhook_url or settings.discord.webhook_url
         self.max_retries = 2
         self.retry_delay = 2.0
+        # dry_run 파라미터가 None이면 환경변수 사용
+        self.dry_run = dry_run if dry_run is not None else DISCORD_DRY_RUN
     
     def _format_price(self, price: int) -> str:
         """가격 포맷팅"""
@@ -220,6 +227,49 @@ class DiscordNotifier:
         result = self._send(payload)
         return result.success
     
+    def send_top5(
+        self, 
+        stocks: list, 
+        ai_results: dict = None,
+        title: str = "종가매매 TOP5",
+        run_type: str = "main",
+        leading_sectors_text: str = None,
+    ) -> bool:
+        """★ P0-C: TOP5 전용 웹훅 발송 (DiscordEmbedBuilder 사용)
+        
+        Args:
+            stocks: StockScoreV5 또는 EnrichedStock 리스트
+            ai_results: AI 분석 결과 {stock_code: {...}}
+            title: Embed 제목
+            run_type: main/preview
+            leading_sectors_text: 주도섹터 텍스트
+            
+        Returns:
+            발송 성공 여부
+        """
+        try:
+            from src.services.discord_embed_builder import DiscordEmbedBuilder
+            
+            builder = DiscordEmbedBuilder()
+            embed = builder.build_top5_embed(
+                stocks=stocks,
+                title=title,
+                ai_results=ai_results,
+                run_type=run_type,
+                leading_sectors_text=leading_sectors_text,
+            )
+            
+            return self.send_embed(embed)
+        except ImportError:
+            logger.warning("DiscordEmbedBuilder 로드 실패, 기본 메시지로 대체")
+            # Fallback: 간단한 텍스트 메시지
+            stock_names = [getattr(s, 'stock_name', '?') for s in stocks[:5]]
+            self.send_message(f"TOP5: {', '.join(stock_names)}")
+            return True
+        except Exception as e:
+            logger.error(f"TOP5 웹훅 발송 실패: {e}")
+            return False
+    
     def send_learning_report(self, report) -> NotifyResult:
         """학습 리포트 발송"""
         # report object expected to have learning_date and message
@@ -246,6 +296,34 @@ class DiscordNotifier:
         retry_count: int = 0,
     ) -> NotifyResult:
         """웹훅 발송"""
+        # Dry-run 모드: 실제 발송하지 않고 콘솔에 출력
+        if self.dry_run:
+            import json
+            logger.info("🔵 [DRY-RUN] 웹훅 발송 대신 콘솔 출력:")
+            
+            # Embed 요약 출력
+            if 'embeds' in payload:
+                for embed in payload['embeds']:
+                    title = embed.get('title', 'No Title')
+                    fields_count = len(embed.get('fields', []))
+                    logger.info(f"  📋 Embed: {title} ({fields_count} fields)")
+                    
+                    # 첫 3개 필드만 출력
+                    for field in embed.get('fields', [])[:3]:
+                        name = field.get('name', '')
+                        value = field.get('value', '')[:100] + "..." if len(field.get('value', '')) > 100 else field.get('value', '')
+                        logger.info(f"    - {name}: {value}")
+            
+            if 'content' in payload:
+                logger.info(f"  📝 Content: {payload['content'][:200]}")
+            
+            return NotifyResult(
+                channel=NotifyChannel.DISCORD,
+                success=True,
+                response_code=200,
+                error_message="[DRY-RUN] 실제 발송하지 않음"
+            )
+        
         try:
             response = requests.post(
                 self.webhook_url,

@@ -611,15 +611,7 @@ class KISClient:
         try:
             data = self._request("GET", endpoint, tr_id, params=params)
 
-            # ✅ Raw 응답을 logs/condition_list_raw.json에 저장
-            raw_path = Path("logs/condition_list_raw.json")
-            try:
-                Path("logs").mkdir(exist_ok=True)
-                with open(raw_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                logger.debug(f"조건검색 raw 저장: {raw_path}")
-            except Exception as e:
-                logger.warning(f"조건검색 raw 저장 실패: {e}")
+            # v6.4: JSON 파일 저장 제거 (DB에 저장됨)
 
             # ✅ 조건 목록이 들어있는 리스트 자동 탐색
             output = None
@@ -699,13 +691,7 @@ class KISClient:
         try:
             data = self._request("GET", endpoint, tr_id, params=params)
 
-            # raw 저장(필요시)
-            try:
-                Path("logs").mkdir(exist_ok=True)
-                with open("logs/condition_result_raw.json", "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+            # v6.4: JSON 파일 저장 제거 (DB에 저장됨)
 
             output = data.get("output2") or data.get("output") or []
             if not isinstance(output, list):
