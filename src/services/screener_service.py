@@ -720,8 +720,11 @@ class ScreenerService:
                 # v6.5 Embed Builder 사용
                 from src.services.discord_embed_builder import DiscordEmbedBuilder
                 embed_builder = DiscordEmbedBuilder()
+                # ★ EnrichedStock 사용 (DART 정보 포함)
+                enriched_stocks = pipeline_result.get('enriched_stocks', [])
+                stocks_for_embed = enriched_stocks if enriched_stocks else top_n
                 embed = embed_builder.build_top5_embed(
-                    stocks=top_n,
+                    stocks=stocks_for_embed,
                     title=title,
                     leading_sectors_text=leading_sectors_text,
                     ai_results=ai_results if ai_results else None,

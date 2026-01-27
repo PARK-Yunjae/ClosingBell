@@ -257,7 +257,11 @@ class DartService:
             status = data.get('status', '000')
             if status != '000':
                 message = data.get('message', 'Unknown error')
-                logger.warning(f"DART API 에러: {status} - {message}")
+                # ★ P0: 013(조회된 데이터 없음)은 정상 케이스로 처리
+                if status == '013':
+                    logger.debug(f"DART: 조회된 데이터 없음 (status={status})")
+                else:
+                    logger.warning(f"DART API 에러: {status} - {message}")
                 return None
             
             return data

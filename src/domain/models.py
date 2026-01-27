@@ -82,7 +82,8 @@ class CurrentPrice:
     change: int  # 전일 대비 변동
     change_rate: float  # 등락률 (%)
     trading_value: float  # 당일 거래대금 (원)
-    volume: int = 0  # 거래량
+    volume: int = 0  # 거래량 (주)
+    market_cap: float = 0.0  # 시가총액 (억원)
 
 
 @dataclass

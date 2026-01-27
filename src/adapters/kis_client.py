@@ -322,6 +322,13 @@ class KISClient:
         data = self._request("GET", endpoint, tr_id, params=params)
         output = data.get("output", {})
         
+        # ★ 시가총액 (억원 단위로 변환)
+        hts_avls = output.get("hts_avls", "0")
+        try:
+            market_cap = float(hts_avls) if hts_avls else 0.0
+        except (ValueError, TypeError):
+            market_cap = 0.0
+        
         return CurrentPrice(
             code=stock_code.zfill(6),
             price=int(output.get("stck_prpr", 0)),
@@ -329,6 +336,7 @@ class KISClient:
             change_rate=float(output.get("prdy_ctrt", 0)),
             trading_value=float(output.get("acml_tr_pbmn", 0)),
             volume=int(output.get("acml_vol", 0)),
+            market_cap=market_cap,  # ★ 시가총액 추가
         )
     
     def get_top_trading_value_stocks(

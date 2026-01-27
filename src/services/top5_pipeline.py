@@ -227,8 +227,11 @@ class Top5Pipeline:
                 if is_preview:
                     title = "[프리뷰] 종가매매 TOP5"
                 
+                # ★ EnrichedStock 사용 (DART/재무 정보 포함)
+                stocks_for_embed = enriched_stocks if enriched_stocks else scores[:self.top_n_count]
+                
                 embed = self.embed_builder.build_top5_embed(
-                    stocks=scores[:self.top_n_count],
+                    stocks=stocks_for_embed,
                     title=title,
                     leading_sectors_text=leading_sectors_text,
                     ai_results=ai_results if ai_results else None,

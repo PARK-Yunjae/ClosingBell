@@ -132,13 +132,20 @@ class AIPipeline:
     # Gemini 출력 토큰 제한 (JSON 잘림 방지)
     MAX_OUTPUT_TOKENS = 8192  # 5종목 배치 분석용 (여유있게)
     
-    def __init__(self, model: str = 'gemini-2.5-flash-preview-05-20'):
+    def __init__(self, model: str = None):
         """
         Args:
             model: Gemini 모델명
         """
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        if model is None:
+            model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+        
         self.model = model
-        self._client = None
+        self._client = None 
     
     @property
     def client(self):

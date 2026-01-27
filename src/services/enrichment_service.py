@@ -120,6 +120,7 @@ class EnrichedStock:
     change_rate: float = 0.0
     market_cap: float = 0.0       # 시가총액 (억원)
     trading_value: float = 0.0    # 거래대금 (억원)
+    volume: int = 0               # ★ 거래량 (주)
     
     # 기술적 지표
     cci: float = 0.0
@@ -146,23 +147,38 @@ class EnrichedStock:
     @classmethod
     def from_stock_score(cls, score: Any, rank: int = 0) -> 'EnrichedStock':
         """StockScoreV5에서 EnrichedStock 생성"""
+        # ★ score_detail에서 기술적 지표 추출
+        score_detail = getattr(score, 'score_detail', None)
+        if score_detail:
+            cci = getattr(score_detail, 'raw_cci', 0)
+            disparity = getattr(score_detail, 'raw_distance', 0)
+            volume_ratio = getattr(score_detail, 'raw_volume_ratio', 0)
+            consecutive_up = getattr(score_detail, 'raw_consec_days', 0)
+        else:
+            cci = getattr(score, 'cci', 0)
+            disparity = getattr(score, 'disparity_20', 0)
+            volume_ratio = getattr(score, 'volume_ratio', 0)
+            consecutive_up = getattr(score, 'consecutive_up', 0)
+        
         return cls(
             stock_code=getattr(score, 'stock_code', '') or getattr(score, 'code', ''),
             stock_name=getattr(score, 'stock_name', '') or getattr(score, 'name', ''),
             rank=rank,
-            screen_score=getattr(score, 'screen_score', 0) or getattr(score, 'score', 0),
-            grade=getattr(score, 'grade', ''),
-            screen_price=getattr(score, 'screen_price', 0) or getattr(score, 'price', 0),
+            # ★ score_total 추가
+            screen_score=getattr(score, 'score_total', 0) or getattr(score, 'screen_score', 0),
+            grade=str(getattr(score, 'grade', '')),
+            # ★ current_price 추가
+            screen_price=getattr(score, 'current_price', 0) or getattr(score, 'screen_price', 0),
             change_rate=getattr(score, 'change_rate', 0.0),
-            market_cap=getattr(score, 'market_cap', 0.0),
+            market_cap=getattr(score, '_market_cap', 0) or getattr(score, 'market_cap', 0.0),
             trading_value=getattr(score, 'trading_value', 0.0),
-            cci=getattr(score, 'cci', 0.0),
-            disparity_20=getattr(score, 'disparity_20', 0.0),
-            consecutive_up=getattr(score, 'consecutive_up', 0),
-            volume_ratio=getattr(score, 'volume_ratio', 0.0),
-            sector=getattr(score, 'sector', ''),
-            is_leading_sector=getattr(score, 'is_leading_sector', False),
-            sector_rank=getattr(score, 'sector_rank', 99),
+            cci=cci,
+            disparity_20=disparity,
+            consecutive_up=consecutive_up,
+            volume_ratio=volume_ratio,
+            sector=getattr(score, '_sector', '') or getattr(score, 'sector', ''),
+            is_leading_sector=getattr(score, '_is_leading_sector', False),
+            sector_rank=getattr(score, '_sector_rank', 99),
         )
     
     def to_dict(self) -> Dict:
@@ -240,6 +256,22 @@ class EnrichmentService:
             Enrichment 결과가 추가된 EnrichedStock
         """
         stock.enriched_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # ★ 0. KIS API로 시총/거래량 업데이트 (실시간)
+        try:
+            from src.adapters.kis_client import KISClient
+            kis = KISClient()
+            current = kis.get_current_price(stock.stock_code)
+            if current:
+                # 시가총액 (억원)
+                if current.market_cap > 0:
+                    stock.market_cap = current.market_cap
+                # 거래량 (주)
+                if current.volume > 0:
+                    stock.volume = current.volume
+                logger.debug(f"KIS 업데이트: {stock.stock_code} 시총={current.market_cap}억, 거래량={current.volume}")
+        except Exception as e:
+            logger.debug(f"KIS 조회 실패 ({stock.stock_code}): {e}")
         
         # 1. DART 기업정보 + 재무 + 위험공시
         if self.dart:

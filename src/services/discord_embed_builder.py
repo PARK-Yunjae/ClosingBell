@@ -64,6 +64,14 @@ COLORS = {
     "default": 0x7289DA,   # 디스코드 기본
 }
 
+# ★ 순위 이모지 (가시성 개선)
+RANK_EMOJI = {
+    1: "🔥1위🔥",
+    2: "⭐2위",
+    3: "✨3위",
+    4: "4️⃣",
+    5: "5️⃣",
+}
 
 # ============================================================
 # Embed Builder
@@ -108,11 +116,29 @@ class DiscordEmbedBuilder:
             return f"{value/1000:.1f}조"
         return f"{value:,.0f}억"
     
+    def _format_volume(self, value: int) -> str:
+        """거래량(주) 포맷 (천만 단위)"""
+        if not value:
+            return "-"
+        if value >= 100000000:  # 1억주 이상
+            return f"{value/100000000:.1f}억주"
+        if value >= 10000000:   # 천만주 이상
+            return f"{value/10000000:.0f}천만주"
+        if value >= 1000000:    # 백만주 이상
+            return f"{value/1000000:.0f}백만주"
+        if value >= 10000:      # 만주 이상
+            return f"{value/10000:.0f}만주"
+        return f"{value:,}주"
+    
     def _get_grade_value(self, grade) -> str:
         """등급 값 추출 (Enum 또는 문자열)"""
         if hasattr(grade, 'value'):
             return grade.value
-        return str(grade) if grade else "-"
+        # ★ StockGrade.S 형태 처리
+        grade_str = str(grade) if grade else "-"
+        if 'StockGrade.' in grade_str:
+            return grade_str.replace('StockGrade.', '')
+        return grade_str
     
     # ============================================================
     # TOP5 Embed (메인)
@@ -274,7 +300,10 @@ class DiscordEmbedBuilder:
         current_price = getattr(stock, 'current_price', 0) or getattr(stock, 'screen_price', 0)
         change_rate = getattr(stock, 'change_rate', 0)
         trading_value = getattr(stock, 'trading_value', 0)
-        market_cap = getattr(stock, 'market_cap', 0)
+        # ★ _market_cap도 체크 (screener_service에서 _market_cap으로 저장)
+        market_cap = getattr(stock, '_market_cap', 0) or getattr(stock, 'market_cap', 0)
+        # ★ 거래량(주) 추가
+        volume = getattr(stock, 'volume', 0) or getattr(stock, '_volume', 0)
         
         # 기술적 지표
         score_detail = getattr(stock, 'score_detail', None)
@@ -374,11 +403,14 @@ class DiscordEmbedBuilder:
             field_value += f" | {sector_badge}"
         
         field_value += f"\n현재가: {current_price:,}원 ({change_rate:+.1f}%)"
-        field_value += f"\n시총: {self._format_market_cap(market_cap)} | 거래: {self._format_trading_value(trading_value)}"
+        # ★ 시총 + 거래대금 표시
+        field_value += f"\n시총: {self._format_market_cap(market_cap)} | 거래대금: {self._format_trading_value(trading_value)}"
         
         field_value += f"\n━━━━━━━━━━\n📊 **핵심지표**"
         field_value += f"\nCCI: **{cci:.0f}** | 이격도: {disparity:.1f}%"
-        field_value += f"\n거래량: {volume_ratio:.1f}배 | 연속: {consec_days}일"
+        # ★ 거래량에 총 거래량(주) 추가
+        volume_str = f" ({self._format_volume(volume)})" if volume else ""
+        field_value += f"\n거래량: {volume_ratio:.1f}배{volume_str} | 연속: {consec_days}일"
         
         if bonus_str != "-":
             field_value += f"\n🎁 보너스: {bonus_str}"
@@ -397,7 +429,7 @@ class DiscordEmbedBuilder:
         field_value = self._truncate(field_value, DISCORD_FIELD_VALUE_LIMIT)
         
         return {
-            "name": self._truncate(f"#{rank} {stock_name} ({stock_code})", DISCORD_FIELD_NAME_LIMIT),
+            "name": self._truncate(f"{RANK_EMOJI.get(rank, f'#{rank}')} **{stock_name}** ({stock_code})", DISCORD_FIELD_NAME_LIMIT),
             "value": field_value,
             "inline": False,
         }
