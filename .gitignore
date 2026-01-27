@@ -1,0 +1,12 @@
+﻿venv/
+__pycache__/
+*.pyc
+.env
+*.log
+*.db
+*.db-journal
+*.db-wal
+data/ohlcv/
+logs/
+.idea/
+.vscode/
