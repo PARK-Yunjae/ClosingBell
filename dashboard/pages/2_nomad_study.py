@@ -298,14 +298,28 @@ if not dates:
 
 st.sidebar.markdown("### 📅 날짜 선택")
 
-# v6.3.2: query param으로 날짜 받기 지원
+# v6.5.2: date_input으로 변경 (종가매매 TOP5와 동일한 UX)
 query_date = st.query_params.get("date", None)
-default_idx = 0
 
+# 기본 날짜 설정
 if query_date and query_date in dates:
-    default_idx = dates.index(query_date)
+    default_date = date.fromisoformat(query_date)
+else:
+    default_date = date.fromisoformat(dates[0]) if dates else date.today()
 
-selected_date = st.sidebar.selectbox("공부 날짜", dates, index=default_idx)
+selected_date_input = st.sidebar.date_input("공부 날짜", value=default_date)
+selected_date = selected_date_input.isoformat()
+
+# 데이터 있는 가장 가까운 날짜로 이동 버튼
+if selected_date not in dates:
+    # 선택한 날짜보다 이전 날짜 중 가장 가까운 날짜 찾기
+    earlier_dates = [d for d in dates if d <= selected_date]
+    if earlier_dates:
+        closest_date = earlier_dates[0]
+        if st.sidebar.button(f"→ {closest_date}로 표시"):
+            selected_date = closest_date
+            st.rerun()
+    st.sidebar.warning(f"⚠️ {selected_date} 데이터 없음")
 
 st.sidebar.markdown("### 🏷️ 필터")
 reason_options = ["전체", "상한가", "거래량천만", "상한가+거래량"]
@@ -345,16 +359,49 @@ st.markdown("---")
 # 종목 카드 그리드
 st.subheader("📋 종목 목록")
 
-# 카드 스타일 CSS
+# 카드 스타일 CSS (반응형 - 최대 5열)
 st.markdown("""
 <style>
+/* Streamlit columns를 반응형 flexbox로 변경 */
+[data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+}
+[data-testid="stColumn"] {
+    flex: 1 1 200px !important;
+    min-width: 200px !important;
+    max-width: calc(20% - 10px) !important;
+    width: auto !important;
+}
+/* 반응형 breakpoints */
+@media (max-width: 1400px) {
+    [data-testid="stColumn"] {
+        max-width: calc(25% - 10px) !important;
+    }
+}
+@media (max-width: 1100px) {
+    [data-testid="stColumn"] {
+        max-width: calc(33.33% - 10px) !important;
+    }
+}
+@media (max-width: 800px) {
+    [data-testid="stColumn"] {
+        max-width: calc(50% - 10px) !important;
+    }
+}
+@media (max-width: 500px) {
+    [data-testid="stColumn"] {
+        max-width: 100% !important;
+        min-width: 100% !important;
+    }
+}
 .nomad-card {
     background: linear-gradient(135deg, rgba(0,0,0,0.02), rgba(0,0,0,0.01));
     border-radius: 8px;
     padding: 12px;
-    margin-bottom: 8px;
     border-left: 4px solid #ccc;
     min-height: 100px;
+    transition: box-shadow 0.2s;
 }
 .nomad-card:hover {
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -387,10 +434,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 3열 레이아웃
-cols = st.columns(3)
+# 5열 레이아웃 (CSS가 반응형으로 조절)
+num_cols = 5
+cols = st.columns(num_cols)
 for i, candidate in enumerate(candidates):
-    with cols[i % 3]:
+    with cols[i % num_cols]:
         # 상태 아이콘
         status_icons = ""
         if candidate.get('company_info_collected'):

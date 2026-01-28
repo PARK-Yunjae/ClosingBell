@@ -11,24 +11,6 @@
 - C등급 (55-64): 시초 70% + 목표 +2%
 - D등급 (<55): 시초 전량매도
 
-⚡ v6.5 업데이트:
-- Discord 웹훅 개선 (등급, 시총, 거래량 표시)
-- RSI 지표 추가
-- 전역상수 통합 (app_config.py)
-- DART 확장 (최대주주, 감사의견)
-- 대시보드 버전 통일
-- 유목민 카드 2열 레이아웃
-
-⚡ v6.3 업데이트:
-- 주도섹터 분석 추가 (상위 3개 섹터)
-- TOP5에 주도섹터 여부 표시
-
-⚡ v6.0 업데이트:
-- TOP5 20일 추적 (D+1 ~ D+20)
-- 유목민 공부법 (상한가/거래량천만)
-- 과거 데이터 백필
-- 멀티페이지 대시보드
-
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
     python main.py --run        # 스크리닝 즉시 실행
@@ -45,6 +27,7 @@ import logging
 from datetime import datetime
 
 from src.config.settings import settings
+from src.config.app_config import APP_FULL_VERSION
 from src.infrastructure.database import init_database
 from src.infrastructure.scheduler import create_scheduler, is_market_open
 from src.infrastructure.logging_config import init_logging
@@ -576,7 +559,7 @@ def check_stock(stock_code: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='종가매매 스크리너 v6.0')
+    parser = argparse.ArgumentParser(description=APP_FULL_VERSION)
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
     parser.add_argument('--run-all', action='store_true', help='모든 서비스 순차 실행')
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
@@ -599,7 +582,7 @@ def main():
     parser.add_argument('--run-top5-ai', action='store_true', help='종가매매 TOP5 AI 분석 (Gemini) - 오늘만')
     parser.add_argument('--run-top5-ai-all', action='store_true', help='종가매매 TOP5 AI 분석 - 전체 미분석 (백필용)')
     parser.add_argument('--debug-universe', type=str, metavar='DATE', help='유니버스 비교 (TV200 vs 백필) - 예: --debug-universe 2026-01-23')
-    parser.add_argument('--version', action='version', version='ClosingBell v6.3.5')
+    parser.add_argument('--version', action='version', version=APP_FULL_VERSION)
     
     args = parser.parse_args()
     

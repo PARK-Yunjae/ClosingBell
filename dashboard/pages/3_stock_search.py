@@ -360,7 +360,7 @@ if search_query and len(search_query) >= 2:
         
         st.dataframe(
             df_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=min(400, 40 + len(df_display) * 35),
         )
@@ -417,7 +417,7 @@ if search_query and len(search_query) >= 2:
         
         st.dataframe(
             df_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=min(400, 40 + len(df_display) * 35),
         )
@@ -538,7 +538,7 @@ if search_query and len(search_query) >= 2:
         if ohlcv_df is not None and not ohlcv_df.empty:
             fig = create_candlestick_chart(ohlcv_df, chart_name, highlight_dates)
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
                 st.caption("🟠 점선: TOP5/유목민 출현일")
             else:
                 st.warning("차트 표시에 plotly가 필요합니다.")
@@ -555,7 +555,7 @@ else:
     st.subheader("📊 최근 TOP5 요약")
     
     try:
-        recent_dates = repos['top5'].get_dates_with_data(limit=5)
+        recent_dates = repos['top5'].get_dates_with_data(days=5)
         
         if recent_dates:
             for d in recent_dates[:3]:

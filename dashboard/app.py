@@ -495,7 +495,7 @@ if not ranking_df.empty and PLOTLY_AVAILABLE:
         showlegend=False,
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # 실시간 승률 계산
     win_rates = calc_nomad_win_rates()
@@ -521,7 +521,7 @@ if not ranking_df.empty and PLOTLY_AVAILABLE:
     
 elif not ranking_df.empty:
     # plotly 없을 때 테이블로 표시
-    st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+    st.dataframe(ranking_df, width='stretch', hide_index=True)
 else:
     st.info("📭 유목민 데이터가 없습니다. 백필 후 표시됩니다.")
 

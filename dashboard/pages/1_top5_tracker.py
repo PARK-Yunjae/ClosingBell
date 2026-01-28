@@ -400,7 +400,7 @@ cap_filter = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("### 📊 점수제")
-st.sidebar.success(f"{APP_VERSION}: 단순 선형 점수제 (하드필터 없음)")
+st.sidebar.success(f"{APP_VERSION}: 구간 최적화 점수제")
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"선택: {selected_date_str}")
@@ -646,35 +646,43 @@ for item in top5_data:
             
             try:
                 import json
-                ai_data = json.loads(item['ai_summary']) if isinstance(item['ai_summary'], str) else item['ai_summary']
+                ai_summary = item.get('ai_summary', '')
                 
-                col_ai1, col_ai2 = st.columns(2)
-                
-                with col_ai1:
-                    st.markdown("**⭐ 핵심 요약**")
-                    st.info(ai_data.get('summary', '-'))
+                # 빈 문자열이나 None 체크
+                if not ai_summary or ai_summary.strip() == '':
+                    st.info("🤖 AI 분석 데이터 준비 중입니다.")
+                else:
+                    ai_data = json.loads(ai_summary) if isinstance(ai_summary, str) else ai_summary
                     
-                    st.markdown("**📈 주가 움직임 원인**")
-                    st.write(ai_data.get('price_reason', '-'))
+                    col_ai1, col_ai2 = st.columns(2)
                     
-                    if ai_data.get('investment_points'):
-                        st.markdown("**✅ 투자 포인트**")
-                        for point in ai_data['investment_points'][:3]:
-                            st.write(f"• {point}")
-                
-                with col_ai2:
-                    if ai_data.get('risk_factors'):
-                        st.markdown("**⚠️ 리스크 요인**")
-                        for risk in ai_data['risk_factors'][:3]:
-                            st.write(f"• {risk}")
+                    with col_ai1:
+                        st.markdown("**⭐ 핵심 요약**")
+                        st.info(ai_data.get('summary', '-'))
+                        
+                        st.markdown("**📈 주가 움직임 원인**")
+                        st.write(ai_data.get('price_reason', '-'))
+                        
+                        if ai_data.get('investment_points'):
+                            st.markdown("**✅ 투자 포인트**")
+                            for point in ai_data['investment_points'][:3]:
+                                st.write(f"• {point}")
                     
-                    st.markdown("**💰 밸류에이션**")
-                    st.write(ai_data.get('valuation_comment', '-'))
-                    
-                    st.markdown(f"**🎯 추천: {rec_emoji} {ai_rec}**")
+                    with col_ai2:
+                        if ai_data.get('risk_factors'):
+                            st.markdown("**⚠️ 리스크 요인**")
+                            for risk in ai_data['risk_factors'][:3]:
+                                st.write(f"• {risk}")
+                        
+                        st.markdown("**💰 밸류에이션**")
+                        st.write(ai_data.get('valuation_comment', '-'))
+                        
+                        st.markdown(f"**🎯 추천: {rec_emoji} {ai_rec}**")
             
+            except json.JSONDecodeError:
+                st.info("🤖 AI 분석 데이터 준비 중입니다.")
             except Exception as e:
-                st.warning(f"AI 분석 표시 오류: {e}")
+                st.info("🤖 AI 분석을 불러올 수 없습니다.")
 
 
 # ==================== 순위별 통계 ====================
@@ -722,4 +730,4 @@ except Exception as e:
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption(f"{FOOTER_TOP5} | 단순 선형 점수제 + 주도섹터 | OHLCV 차트")
+st.caption(f"{FOOTER_TOP5} | 구간 최적화 점수제 + 주도섹터 | OHLCV 차트")
