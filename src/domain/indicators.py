@@ -123,6 +123,54 @@ def calculate_ma(
     return ma_values
 
 
+def calculate_rsi(
+    prices: List[DailyPrice],
+    period: int = 14,
+) -> List[float]:
+    """RSI (Relative Strength Index) 계산
+    
+    RSI = 100 - (100 / (1 + RS))
+    RS = 평균 상승폭 / 평균 하락폭
+    
+    Args:
+        prices: 일봉 데이터 리스트 (오래된 순)
+        period: RSI 기간 (기본 14일)
+        
+    Returns:
+        RSI 값 리스트 (0~100)
+    """
+    if len(prices) < period + 1:
+        return []
+    
+    close_prices = [p.close for p in prices]
+    
+    # 가격 변화 계산
+    changes = []
+    for i in range(1, len(close_prices)):
+        changes.append(close_prices[i] - close_prices[i-1])
+    
+    rsi_values = []
+    
+    for i in range(period - 1, len(changes)):
+        window = changes[i - period + 1:i + 1]
+        
+        gains = [c for c in window if c > 0]
+        losses = [-c for c in window if c < 0]
+        
+        avg_gain = sum(gains) / period if gains else 0
+        avg_loss = sum(losses) / period if losses else 0
+        
+        if avg_loss == 0:
+            rsi = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+        
+        rsi_values.append(round(rsi, 1))
+    
+    return rsi_values
+
+
 def calculate_slope(
     values: List[float],
     period: int = 5,

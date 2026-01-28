@@ -437,17 +437,22 @@ class ScreenerService:
                 
                 # 거래대금 계산 (여러 소스에서 시도)
                 trading_value = 0.0
+                market_cap = 0.0  # v6.5: 시총 추가
                 
                 # 1차: 일봉 데이터에서
                 if today.trading_value > 0:
                     trading_value = today.trading_value / 100_000_000
                 
-                # 2차: 현재가 API에서
-                if trading_value <= 0:
+                # 2차: 현재가 API에서 (거래대금 + 시총)
+                if trading_value <= 0 or market_cap <= 0:
                     try:
                         current_data = self.kis_client.get_current_price(stock.code)
-                        if current_data and current_data.trading_value > 0:
-                            trading_value = current_data.trading_value / 100_000_000
+                        if current_data:
+                            if current_data.trading_value > 0 and trading_value <= 0:
+                                trading_value = current_data.trading_value / 100_000_000
+                            # v6.5: 시총 가져오기 (억원 단위)
+                            if hasattr(current_data, 'market_cap') and current_data.market_cap > 0:
+                                market_cap = current_data.market_cap
                     except Exception as e:
                         logger.debug(f"현재가 조회 실패: {stock.code} - {e}")
                 
@@ -465,6 +470,7 @@ class ScreenerService:
                     daily_prices=daily_prices,
                     current_price=today.close,
                     trading_value=trading_value,
+                    market_cap=market_cap,  # v6.5: 시총 전달
                 )
                 stock_data_list.append(stock_data)
                 
@@ -700,7 +706,7 @@ class ScreenerService:
                 )
                 
                 # 파이프라인에서 Discord 발송하지 않고 Embed만 생성
-                pipeline._discord_notifier = None  # 직접 발송할 것이므로 비활성화
+                pipeline._discord_notifier = False  # False로 설정하면 자동 생성 안 함
                 
                 logger.info(f"🚀 v6.5 파이프라인 시작 ({run_type})")
                 

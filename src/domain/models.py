@@ -94,6 +94,7 @@ class StockData:
     daily_prices: List[DailyPrice]  # 최근 N일 일봉 (오래된 순)
     current_price: int
     trading_value: float  # 당일 거래대금 (억원)
+    market_cap: float = 0.0  # 시가총액 (억원)
     
     @property
     def today_change_rate(self) -> float:

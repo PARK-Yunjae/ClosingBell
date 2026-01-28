@@ -1,8 +1,12 @@
 """
-종가매매 TOP5 AI 분석 서비스 v6.3.2
+종가매매 TOP5 AI 분석 서비스 v6.5.1
 
 뉴스는 메모리에서만 사용하고 DB 저장 안 함
 AI 분석 결과(summary, risk_level, recommendation)만 DB 저장
+
+v6.5.1 변경사항:
+- PER/PBR 없을 때 테마·수급 중심 종목으로 분류
+- 밸류에이션 컨텍스트 개선
 """
 
 import os
@@ -12,6 +16,8 @@ import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import date
 from bs4 import BeautifulSoup
+
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,28 @@ def format_volume(volume: int) -> str:
         return f"{volume/10_000:.0f}만주"
     else:
         return f"{volume:,}주"
+
+
+def format_valuation_for_top5(per, pbr) -> str:
+    """TOP5용 밸류에이션 컨텍스트 (v6.5.1)"""
+    has_per = per is not None and per > 0
+    has_pbr = pbr is not None and pbr > 0
+    
+    if not has_per and not has_pbr:
+        return "PER/PBR: 미제공 (적자 또는 신규상장) → 테마·수급 중심 종목"
+    
+    parts = []
+    if has_per:
+        parts.append(f"PER: {per:.1f}")
+    else:
+        parts.append("PER: 적자")
+    
+    if has_pbr:
+        parts.append(f"PBR: {pbr:.1f}")
+    else:
+        parts.append("PBR: 미제공")
+    
+    return " | ".join(parts)
 
 
 def fetch_naver_company_info(stock_code: str) -> Dict:
@@ -130,6 +158,10 @@ def generate_top5_ai_analysis(stock_data: Dict, company_info: Dict, news_list: L
         client = genai.Client(api_key=api_key)
         
         # 프롬프트 구성
+        per = company_info.get('per')
+        pbr = company_info.get('pbr')
+        valuation_text = format_valuation_for_top5(per, pbr)
+        
         stock_info = f"""
 종목: {stock_data['stock_name']} ({stock_data['stock_code']})
 점수: {stock_data.get('screen_score', 0):.1f}점 ({stock_data.get('grade', '-')}등급)
@@ -137,8 +169,7 @@ def generate_top5_ai_analysis(stock_data: Dict, company_info: Dict, news_list: L
 
 업종: {stock_data.get('sector') or company_info.get('sector', '-')}
 시가총액: {format_market_cap(company_info.get('market_cap') or stock_data.get('market_cap'))}
-PER: {company_info.get('per', '-')}
-PBR: {company_info.get('pbr', '-')}
+{valuation_text}
 
 CCI: {stock_data.get('cci', 0):.0f}
 RSI: {stock_data.get('rsi', '-')}
@@ -158,6 +189,11 @@ RSI: {stock_data.get('rsi', '-')}
 다음 종목에 대해 종가매매 관점에서 분석해주세요.
 특히 정리매매, 상장폐지, 횡령, 분식회계 등 위험 요소가 있는지 확인해주세요.
 
+⚠️ PER/PBR이 없는 종목은:
+- 적자 기업이거나 신규상장 종목입니다
+- 실적 기반 밸류에이션이 어려우므로 테마·수급·모멘텀 관점에서 분석해주세요
+- "PER이 제공되지 않아 판단 어렵다"가 아니라, 테마·수급 종목으로 다른 관점의 분석을 해주세요
+
 {stock_info}
 {news_text}
 
@@ -167,7 +203,7 @@ RSI: {stock_data.get('rsi', '-')}
     "price_reason": "오늘 주가 급등 원인 추정 (1문장)",
     "investment_points": ["투자 포인트 1", "투자 포인트 2"],
     "risk_factors": ["리스크 1", "리스크 2"],
-    "valuation_comment": "밸류에이션 의견 (1문장)",
+    "valuation_comment": "밸류에이션 의견 (PER/PBR 없으면 테마·수급 관점 코멘트)",
     "risk_level": "낮음/보통/높음 중 하나",
     "recommendation": "매수/관망/매도 중 하나"
 }}
@@ -175,13 +211,13 @@ RSI: {stock_data.get('rsi', '-')}
 중요: 정리매매, 관리종목, 상장폐지 위험이 있으면 반드시 risk_level을 "높음"으로, recommendation을 "매도"로 설정하세요.
 """
         
-        # max_output_tokens 설정으로 JSON 잘림 방지
+        # settings에서 AI 설정 로드
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=settings.ai.model,
             contents=prompt,
             config={
-                'max_output_tokens': 4096,
-                'temperature': 0.3,
+                'max_output_tokens': settings.ai.max_output_tokens,
+                'temperature': settings.ai.temperature,
             },
         )
         result_text = response.text

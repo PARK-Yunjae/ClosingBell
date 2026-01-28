@@ -117,27 +117,50 @@ class DiscordEmbedBuilder:
         return f"{value:,.0f}억"
     
     def _format_volume(self, value: int) -> str:
-        """거래량(주) 포맷 (천만 단위)"""
+        """거래량(주) 포맷 (만주 단위 통일)"""
         if not value:
             return "-"
         if value >= 100000000:  # 1억주 이상
             return f"{value/100000000:.1f}억주"
-        if value >= 10000000:   # 천만주 이상
-            return f"{value/10000000:.0f}천만주"
-        if value >= 1000000:    # 백만주 이상
-            return f"{value/1000000:.0f}백만주"
         if value >= 10000:      # 만주 이상
-            return f"{value/10000:.0f}만주"
+            return f"{value/10000:.0f}만주"  # 700만주, 1000만주 형태
         return f"{value:,}주"
     
     def _get_grade_value(self, grade) -> str:
-        """등급 값 추출 (Enum 또는 문자열)"""
+        """등급 값 추출 (Enum 또는 문자열)
+        
+        처리 케이스:
+        - StockGrade.S (Enum 객체) → 'S'
+        - 'StockGrade.S' (문자열) → 'S'
+        - 'S' (문자열) → 'S'
+        - None → '-'
+        """
+        if grade is None:
+            return "-"
+        
+        # Enum인 경우 (hasattr로 체크)
         if hasattr(grade, 'value'):
-            return grade.value
-        # ★ StockGrade.S 형태 처리
-        grade_str = str(grade) if grade else "-"
+            val = grade.value
+            # value가 또 객체면 str로 변환 후 처리
+            val_str = str(val)
+            if 'StockGrade.' in val_str:
+                return val_str.split('.')[-1]
+            return val_str
+        
+        # 문자열인 경우
+        grade_str = str(grade)
+        
+        # 'StockGrade.S' 형태 처리
         if 'StockGrade.' in grade_str:
-            return grade_str.replace('StockGrade.', '')
+            return grade_str.split('.')[-1]
+        
+        # '<StockGrade.S: 'S'>' 형태 처리 (repr)
+        if '<StockGrade.' in grade_str:
+            # S, A, B, C, D 중 하나 추출
+            for g in ['S', 'A', 'B', 'C', 'D']:
+                if f'.{g}' in grade_str or f"'{g}'" in grade_str:
+                    return g
+        
         return grade_str
     
     # ============================================================
@@ -300,9 +323,9 @@ class DiscordEmbedBuilder:
         current_price = getattr(stock, 'current_price', 0) or getattr(stock, 'screen_price', 0)
         change_rate = getattr(stock, 'change_rate', 0)
         trading_value = getattr(stock, 'trading_value', 0)
-        # ★ _market_cap도 체크 (screener_service에서 _market_cap으로 저장)
-        market_cap = getattr(stock, '_market_cap', 0) or getattr(stock, 'market_cap', 0)
-        # ★ 거래량(주) 추가
+        # ★ v6.5: market_cap 우선, _market_cap fallback (screener_service에서 동적 추가)
+        market_cap = getattr(stock, 'market_cap', 0) or getattr(stock, '_market_cap', 0)
+        # ★ 거래량(주) - volume 우선, _volume fallback
         volume = getattr(stock, 'volume', 0) or getattr(stock, '_volume', 0)
         
         # 기술적 지표

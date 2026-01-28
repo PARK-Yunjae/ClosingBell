@@ -1,19 +1,8 @@
 """
-ClosingBell 대시보드 v6.3.2
-==========================
+ClosingBell 대시보드
+====================
 
 📊 종가매매 TOP5 20일 추적 + 유목민 공부법
-
-v6.3.2 변경사항:
-- CCI 하드 필터 (250+)
-- 대기업 표시 (점수 가산 없음)
-- 네이버 금융 기업정보
-- Gemini 2.0 Flash AI 분석
-
-기능:
-- 전체 승률 요약
-- 누적 수익률 그래프
-- 최근 결과 테이블
 
 실행 방법:
 - cd dashboard && streamlit run app.py
@@ -26,6 +15,21 @@ import os
 from pathlib import Path
 from datetime import date, timedelta
 import pandas as pd
+
+# 전역상수 import
+try:
+    from src.config.app_config import (
+        APP_VERSION, APP_NAME, APP_FULL_VERSION, AI_ENGINE,
+        FOOTER_DASHBOARD, SIDEBAR_TITLE,
+    )
+except ImportError:
+    # fallback
+    APP_VERSION = "v6.5"
+    APP_NAME = "ClosingBell"
+    APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
+    AI_ENGINE = "Gemini 2.5 Flash"
+    FOOTER_DASHBOARD = APP_FULL_VERSION
+    SIDEBAR_TITLE = f"🔔 {APP_NAME}"
 
 # plotly import (Streamlit Cloud 호환)
 try:
@@ -49,14 +53,14 @@ if str(project_root) not in sys.path:
 # settings.py의 BASE_DIR이 이미 절대 경로를 사용하므로 불필요
 
 st.set_page_config(
-    page_title="ClosingBell v6.5",
+    page_title=APP_FULL_VERSION,
     page_icon="🔔",
     layout="wide",
 )
 
 # ==================== 사이드바 네비게이션 ====================
 with st.sidebar:
-    st.markdown("## 🔔 ClosingBell")
+    st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
     st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
@@ -83,7 +87,7 @@ def get_cached_repositories():
         return None
 
 # ==================== 헤더 ====================
-st.title("🔔 ClosingBell v6.5")
+st.title(f"🔔 {APP_FULL_VERSION}")
 st.markdown("**종가매매 TOP5 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
 st.markdown("---")
 
@@ -524,7 +528,7 @@ else:
 
 # ==================== 사이드바 ====================
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔔 ClosingBell v6.5")
+st.sidebar.markdown(f"### {SIDEBAR_TITLE} {APP_VERSION}")
 
 # v6.5: 종목 검색 (검색 페이지로 이동)
 st.sidebar.markdown("---")
@@ -541,13 +545,14 @@ if search_query and len(search_query) >= 2:
     st.switch_page("pages/3_stock_search.py")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
-**v6.5 업데이트:**
+st.sidebar.markdown(f"""
+**{APP_VERSION} 업데이트:**
 - 점수제 구간 최적화
 - CCI 160~180 최적
 - 등락률 4~6% 최적
 - 이격도 2~8% 최적
 - 연속양봉 2~3일 최적
+- DART + 네이버 기업정보
 
 **전략:**
 - 종가매매 TOP5 (점수제)
@@ -557,4 +562,4 @@ st.sidebar.markdown("""
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v6.5 | 점수제 구간 최적화 + AI 분석")
+st.caption(f"{FOOTER_DASHBOARD} | 점수제 구간 최적화 + AI 분석")

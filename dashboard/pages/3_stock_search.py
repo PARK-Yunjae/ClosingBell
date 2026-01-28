@@ -1,5 +1,5 @@
 """
-ClosingBell v6.5 - 종목 검색 페이지
+ClosingBell - 종목 검색 페이지
 
 종목코드/종목명으로 TOP5/유목민 출현 이력 검색
 - 요약 카드 (등장 횟수, 평균 랭크, 최근 등장일)
@@ -10,19 +10,34 @@ ClosingBell v6.5 - 종목 검색 페이지
 
 import streamlit as st
 import pandas as pd
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# 프로젝트 루트 추가
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# 전역상수 import
+try:
+    from src.config.app_config import (
+        APP_VERSION, APP_FULL_VERSION, SIDEBAR_TITLE, FOOTER_SEARCH,
+    )
+except ImportError:
+    APP_VERSION = "v6.5"
+    APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
+    SIDEBAR_TITLE = "🔔 ClosingBell"
+    FOOTER_SEARCH = f"{APP_FULL_VERSION} | 종목 상세 분석"
 
 st.set_page_config(
-    page_title="종목 검색 | ClosingBell",
+    page_title=f"종목 검색 | {APP_FULL_VERSION}",
     page_icon="🔍",
     layout="wide",
 )
 
 # ==================== 사이드바 네비게이션 ====================
 with st.sidebar:
-    st.markdown("## 🔔 ClosingBell")
+    st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
     st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
@@ -36,10 +51,6 @@ st.markdown("종목코드 또는 종목명으로 **TOP5/유목민** 출현 이�
 # Repository 로드
 @st.cache_resource
 def get_repositories():
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    
     from src.infrastructure.database import init_database
     from src.infrastructure.repository import (
         get_top5_history_repository,
@@ -561,4 +572,4 @@ else:
 
 # 푸터
 st.markdown("---")
-st.caption("ClosingBell v6.5 | 종목 검색")
+st.caption(FOOTER_SEARCH)

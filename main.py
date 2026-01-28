@@ -1,5 +1,5 @@
 """
-종가매매 스크리너 v6.3
+종가매매 스크리너 v6.5
 
 📊 종가매매 점수제 (100점 만점):
    거래량비·등락률·연속양봉·CCI·이격도·캔들
@@ -11,15 +11,17 @@
 - C등급 (55-64): 시초 70% + 목표 +2%
 - D등급 (<55): 시초 전량매도
 
+⚡ v6.5 업데이트:
+- Discord 웹훅 개선 (등급, 시총, 거래량 표시)
+- RSI 지표 추가
+- 전역상수 통합 (app_config.py)
+- DART 확장 (최대주주, 감사의견)
+- 대시보드 버전 통일
+- 유목민 카드 2열 레이아웃
+
 ⚡ v6.3 업데이트:
 - 주도섹터 분석 추가 (상위 3개 섹터)
 - TOP5에 주도섹터 여부 표시
-- Discord 웹훅에 주도섹터 정보 추가
-- 대시보드 주도섹터 배지 표시
-
-⚡ v6.2.3 업데이트:
-- 단순 선형 점수제 적용 (9.5년 백테스트 승리)
-- CCI 하드필터 제거 (점수제에서 자연 감점)
 
 ⚡ v6.0 업데이트:
 - TOP5 20일 추적 (D+1 ~ D+20)
@@ -62,16 +64,16 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v6.3                                 ║
+║   🔔  종가매매 스크리너 v6.5                                 ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
 ║      CCI·등락률·이격도·연속·거래량·캔들 각 15점                  ║
 ║      + 보너스 10점                                            ║
 ║                                                              ║
-║   🆕 v6.2 변경사항                                            ║
-║      • TV200 필터 일치 (백필/실시간 동일)                       ║
-║      • CCI 하드필터 제거 (점수제 자연 감점)                      ║
-║      • 대시보드 업종 표시                                      ║
+║   🆕 v6.5 변경사항                                            ║
+║      • Discord 등급/시총/거래량 표시                          ║
+║      • RSI 지표 추가                                          ║
+║      • 유목민 카드 2열 레이아웃                                ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -833,7 +835,7 @@ def run_news_collection_cli():
     try:
         from src.services.news_service import collect_news_for_candidates
         
-        result = collect_news_for_candidates(limit=800)
+        result = collect_news_for_candidates(limit=1000)
         
         if 'error' in result:
             print(f"\n❌ 오류: {result['error']}")
@@ -864,7 +866,7 @@ def run_company_info_cli():
     try:
         from src.services.company_service import collect_company_info_for_candidates
         
-        result = collect_company_info_for_candidates(limit=800)
+        result = collect_company_info_for_candidates(limit=1000)
         
         print(f"\n✅ 기업정보 수집 완료!")
         print(f"   대상 종목: {result.get('total', 0)}개")
@@ -884,7 +886,7 @@ def run_ai_analysis_cli():
     try:
         from src.services.ai_service import analyze_candidates_with_ai
         
-        result = analyze_candidates_with_ai(limit=100)
+        result = analyze_candidates_with_ai(limit=1000)
         
         print(f"\n✅ AI 분석 완료!")
         print(f"   대상 종목: {result.get('total', 0)}개")
@@ -906,7 +908,7 @@ def run_ai_analysis_all_cli():
     try:
         from src.services.ai_service import analyze_all_pending
         
-        result = analyze_all_pending(limit=800)
+        result = analyze_all_pending(limit=1000)
         
         print(f"\n✅ 전체 AI 분석 완료!")
         print(f"   대상 종목: {result.get('total', 0)}개")

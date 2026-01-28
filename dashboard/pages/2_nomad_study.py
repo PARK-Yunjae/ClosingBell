@@ -1,8 +1,10 @@
 """
-유목민 공부법 대시보드 v6.2
-===========================
+유목민 공부법 대시보드
+======================
 
-네이버 금융 기업정보 + Gemini 2.0 Flash AI 분석
+상한가/거래량천만 종목 분석
+- 네이버 금융 + DART 기업정보
+- Gemini 2.5 Flash AI 분석
 - 숫자 표현: 소수점 1자리
 """
 
@@ -20,6 +22,20 @@ import json
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# 전역상수 import
+try:
+    from src.config.app_config import (
+        APP_VERSION, APP_FULL_VERSION, AI_ENGINE, SIDEBAR_TITLE, FOOTER_NOMAD,
+        MSG_COMPANY_INFO_AUTO,
+    )
+except ImportError:
+    APP_VERSION = "v6.5"
+    APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
+    AI_ENGINE = "Gemini 2.5 Flash"
+    SIDEBAR_TITLE = "🔔 ClosingBell"
+    FOOTER_NOMAD = f"{APP_FULL_VERSION} | 유목민 공부법"
+    MSG_COMPANY_INFO_AUTO = "기업정보는 매일 자동 수집됩니다."
+
 st.set_page_config(
     page_title="유목민 공부법",
     page_icon="📚",
@@ -29,7 +45,7 @@ st.set_page_config(
 
 # ==================== 사이드바 네비게이션 ====================
 with st.sidebar:
-    st.markdown("## 🔔 ClosingBell")
+    st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
     st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
@@ -37,7 +53,7 @@ with st.sidebar:
     st.markdown("---")
 
 st.title("📚 유목민 공부법")
-st.markdown("**상한가/거래량천만 종목 분석** | _네이버 금융 + AI 요약_")
+st.markdown(f"**상한가/거래량천만 종목 분석** | _네이버 금융 + DART + {AI_ENGINE}_")
 st.markdown("---")
 
 
@@ -329,14 +345,56 @@ st.markdown("---")
 # 종목 카드 그리드
 st.subheader("📋 종목 목록")
 
-cols = st.columns(3)  # v6.4: 4열 → 3열 (PC 가독성 개선)
+# 카드 스타일 CSS
+st.markdown("""
+<style>
+.nomad-card {
+    background: linear-gradient(135deg, rgba(0,0,0,0.02), rgba(0,0,0,0.01));
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    border-left: 4px solid #ccc;
+    min-height: 100px;
+}
+.nomad-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.nomad-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+.nomad-name {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+.nomad-code {
+    font-size: 11px;
+    color: #888;
+}
+.nomad-change {
+    font-size: 18px;
+    font-weight: bold;
+}
+.nomad-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# 3열 레이아웃
+cols = st.columns(3)
 for i, candidate in enumerate(candidates):
     with cols[i % 3]:
+        # 상태 아이콘
         status_icons = ""
         if candidate.get('company_info_collected'):
             status_icons += "🏢"
-        if candidate.get('news_collected'):
-            status_icons += "📰"
         if candidate.get('ai_summary'):
             status_icons += "🤖"
         
@@ -346,45 +404,31 @@ for i, candidate in enumerate(candidates):
         
         # 거래대금 표시
         tv = candidate.get('trading_value', 0)
-        if tv >= 1000:
-            tv_str = f"{tv/1000:.1f}조"
+        if tv >= 10000:
+            tv_str = f"{tv/10000:.1f}조"
         elif tv >= 1:
             tv_str = f"{tv:.0f}억"
         else:
             tv_str = "-"
         
+        # 등락률 색상
+        change_color = '#4CAF50' if candidate['change_rate'] > 0 else '#F44336'
+        border_color = reason_color(candidate['reason_flag'])
+        
         st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, {reason_color(candidate['reason_flag'])}22, {reason_color(candidate['reason_flag'])}11);
-            border-left: 5px solid {reason_color(candidate['reason_flag'])};
-            padding: 14px;
-            border-radius: 8px;
-            margin-bottom: 12px;
-            min-height: 160px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
-        ">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 12px; color: #888;">
+        <div class="nomad-card" style="border-left-color: {border_color};">
+            <div class="nomad-header">
+                <span style="font-size: 11px; color: #888;">
                     {reason_emoji(candidate['reason_flag'])} {candidate['reason_flag']}
                 </span>
-                <span style="font-size: 11px;">{status_icons}</span>
+                <span>{status_icons}</span>
             </div>
-            <div style="font-size: 18px; font-weight: bold; margin-bottom: 2px;">{candidate['stock_name']}</div>
-            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">{candidate['stock_code']}</div>
-            <div style="font-size: 20px; color: {'#4CAF50' if candidate['change_rate'] > 0 else '#F44336'}; font-weight: bold; margin-bottom: 6px;">
-                {candidate['change_rate']:+.1f}%
-            </div>
-            <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
-                거래대금: {tv_str}
-            </div>
-            <div style="
-                background: {occ_color}15;
-                border-radius: 4px;
-                padding: 6px;
-                text-align: center;
-            ">
-                <span style="font-size: 12px; color: {occ_color}; font-weight: bold;">
-                    {occ_emoji} 30일 {occ_count}회 ({occ_label})
+            <div class="nomad-name">{candidate['stock_name']}</div>
+            <div class="nomad-code">{candidate['stock_code']} | 거래대금: {tv_str}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                <span class="nomad-change" style="color: {change_color};">{candidate['change_rate']:+.1f}%</span>
+                <span class="nomad-badge" style="background: {occ_color}20; color: {occ_color};">
+                    {occ_emoji} {occ_count}회 ({occ_label})
                 </span>
             </div>
         </div>
@@ -490,16 +534,9 @@ if selected_stock_str:
             st.markdown("##### 📝 사업 내용")
             st.info(selected_candidate['business_summary'])
         
+        # v6.5: 재수집 버튼 제거 (배포 환경 에러 방지)
         st.markdown("---")
-        if st.button("🔄 기업정보 재수집", key="collect_company"):
-            with st.spinner(f"{selected_candidate['stock_name']} 기업정보 수집 중..."):
-                success, result = collect_single_company_info(selected_candidate['stock_code'])
-                if success:
-                    st.success(f"✅ 수집 완료! ({len(result)}개 항목)")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error(f"❌ 실패: {result}")
+        st.caption(f"ℹ️ {MSG_COMPANY_INFO_AUTO}")
     
     with tab2:
         news_list = load_nomad_news(selected_date, selected_candidate['stock_code'])
@@ -587,4 +624,4 @@ if selected_stock_str:
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v6.2 | 유목민 공부법 - 네이버 금융 + Gemini 2.0 Flash")
+st.caption(FOOTER_NOMAD)

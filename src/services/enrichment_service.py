@@ -259,8 +259,8 @@ class EnrichmentService:
         
         # ★ 0. KIS API로 시총/거래량 업데이트 (실시간)
         try:
-            from src.adapters.kis_client import KISClient
-            kis = KISClient()
+            from src.adapters.kis_client import get_kis_client
+            kis = get_kis_client()  # 싱글톤 사용 (토큰 재사용)
             current = kis.get_current_price(stock.stock_code)
             if current:
                 # 시가총액 (억원)

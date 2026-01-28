@@ -1,8 +1,8 @@
 """
-AI 분석 서비스 v6.2
+AI 분석 서비스 v6.5
 ====================
 
-유목민 공부법 종목에 대해 Gemini 2.0 Flash로 AI 분석 생성
+유목민 공부법 종목에 대해 Gemini 2.5 Flash로 AI 분석 생성
 
 스케줄:
 - 17:50 기업정보 수집 후 자동 실행
@@ -22,6 +22,7 @@ import time
 from datetime import date
 from typing import Dict, Optional, List
 
+from src.config.settings import settings
 from src.infrastructure.repository import (
     get_nomad_candidates_repository,
     get_nomad_news_repository,
@@ -44,7 +45,7 @@ def format_market_cap(cap) -> str:
 
 def generate_ai_analysis(candidate: dict, news_list: list) -> tuple:
     """
-    Gemini 2.0 Flash로 AI 분석 생성
+    Gemini 2.5 Flash로 AI 분석 생성
     
     Returns:
         (result_dict, error_message)
@@ -63,6 +64,12 @@ def generate_ai_analysis(candidate: dict, news_list: list) -> tuple:
         # 새 API 클라이언트
         client = genai.Client(api_key=api_key)
         
+        # PER/PBR 컨텍스트
+        per = candidate.get('per')
+        pbr = candidate.get('pbr')
+        per_text = f"{per:.1f}" if per and per > 0 else "적자/미제공"
+        pbr_text = f"{pbr:.1f}" if pbr and pbr > 0 else "미제공"
+        
         # 프롬프트 구성
         company_info = f"""
 종목: {candidate['stock_name']} ({candidate['stock_code']})
@@ -71,8 +78,8 @@ def generate_ai_analysis(candidate: dict, news_list: list) -> tuple:
 시장: {candidate.get('market', '-')}
 업종: {candidate.get('sector', '-')}
 시가총액: {format_market_cap(candidate.get('market_cap'))}
-PER: {candidate.get('per', '-')}
-PBR: {candidate.get('pbr', '-')}
+PER: {per_text}
+PBR: {pbr_text}
 ROE: {candidate.get('roe', '-')}%
 외국인보유율: {candidate.get('foreign_rate', '-')}%
 사업내용: {str(candidate.get('business_summary', '-'))[:300]}
@@ -92,6 +99,8 @@ ROE: {candidate.get('roe', '-')}%
 {company_info}
 {news_text}
 
+참고: PER이 "적자/미제공"인 경우 테마·수급 관점에서 분석해주세요.
+
 다음 형식으로 JSON으로 응답하세요:
 {{
     "summary": "핵심 요약 (1문장)",
@@ -104,13 +113,13 @@ ROE: {candidate.get('roe', '-')}%
 }}
 """
         
-        # 새 API 호출 (max_output_tokens 설정으로 JSON 잘림 방지)
+        # 새 API 호출 (settings에서 설정 로드)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=settings.ai.model,
             contents=prompt,
             config={
-                'max_output_tokens': 4096,
-                'temperature': 0.3,
+                'max_output_tokens': settings.ai.max_output_tokens,
+                'temperature': settings.ai.temperature,
             },
         )
         result_text = response.text

@@ -90,6 +90,9 @@ class Top5Pipeline:
     
     @property
     def discord_notifier(self):
+        # _discord_notifier가 False면 비활성화 (외부에서 발송 시)
+        if self._discord_notifier is False:
+            return None
         if self._discord_notifier is None:
             try:
                 from src.adapters.discord_notifier import get_discord_notifier

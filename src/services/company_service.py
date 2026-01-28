@@ -497,7 +497,7 @@ def run_company_info_collection() -> Dict:
     
     v6.5: DART 기반으로 변경 (네이버 크롤링 대체)
     """
-    return collect_company_info_with_dart(limit=100)
+    return collect_company_info_with_dart(limit=limit)  # v6.5.1: limit 전달
 
 
 def collect_company_info_with_dart(limit: int = 100) -> Dict:
@@ -557,16 +557,30 @@ def collect_company_info_with_dart(limit: int = 100) -> Dict:
                 basic = profile.get('basic') or {}
                 financial = profile.get('financial') or {}
                 
-                repo.update_company_info(
+                # v6.5.1: 네이버에서 PER/PBR/ROE 보충 수집
+                per, pbr, roe = None, None, None
+                try:
+                    naver_info = fetch_naver_finance(stock_code)
+                    per = naver_info.per
+                    pbr = naver_info.pbr
+                    roe = naver_info.roe
+                except Exception as e:
+                    logger.debug(f"네이버 PER/PBR/ROE 수집 실패 ({stock_code}): {e}")
+                
+                repo.update_company_info_by_id(
                     candidate_id=candidate.get('id'),
-                    company_info={
+                    info={
                         'market': basic.get('corp_cls', ''),
                         'sector': basic.get('induty_code', ''),
-                        'ceo': basic.get('ceo_nm', ''),
+                        'ceo_name': basic.get('ceo_nm', ''),  # ceo → ceo_name
                         'revenue': financial.get('revenue'),
                         'operating_profit': financial.get('operating_profit'),
                         'net_income': financial.get('net_income'),
-                        'data_source': 'DART',
+                        # v6.5.1: PER/PBR/ROE 추가
+                        'per': per,
+                        'pbr': pbr,
+                        'roe': roe,
+                        'data_source': 'DART+NAVER',
                     }
                 )
                 stats['success'] += 1

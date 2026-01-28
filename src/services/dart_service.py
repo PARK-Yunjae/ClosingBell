@@ -683,7 +683,215 @@ class DartService:
         return mappings.get(account_nm)
 
     # ============================================================
-    # Phase 1: 통합 기업 프로필 (v6.5)
+    # Phase 3: 최대주주 지분율 조회 (v6.5.1)
+    # ============================================================
+    def get_major_shareholder(self, stock_code: str) -> Optional[Dict]:
+        """최대주주 지분율 조회
+        
+        Args:
+            stock_code: 종목코드
+            
+        Returns:
+            {
+                'largest_shareholder': '홍길동',    # 최대주주명
+                'ownership_rate': 32.5,             # 지분율 (%)
+                'relation': '본인',                 # 관계
+                'stock_count': 1234567,             # 보유주식수
+                'change': '+0.5%',                  # 변동 (있는 경우)
+                'report_date': '2025-03-31',        # 보고일
+            }
+        """
+        corp_code = self.get_corp_code(stock_code)
+        if not corp_code:
+            return None
+        
+        # 최근 사업연도
+        year = str(datetime.now().year - 1)
+        
+        params = {
+            'corp_code': corp_code,
+            'bsns_year': year,
+            'reprt_code': '11011',  # 사업보고서
+        }
+        
+        data = self._request('hyslrSttus.json', params)
+        
+        if not data or 'list' not in data:
+            # 사업보고서 없으면 반기보고서 시도
+            params['reprt_code'] = '11012'
+            data = self._request('hyslrSttus.json', params)
+            
+            if not data or 'list' not in data:
+                return None
+        
+        items = data.get('list', [])
+        if not items:
+            return None
+        
+        # 첫 번째 항목이 최대주주
+        largest = items[0]
+        
+        try:
+            ownership_rate = float(largest.get('trmend_posesn_stock_qota_rt', '0').replace(',', ''))
+        except (ValueError, TypeError):
+            ownership_rate = 0.0
+        
+        try:
+            stock_count = int(largest.get('trmend_posesn_stock_co', '0').replace(',', ''))
+        except (ValueError, TypeError):
+            stock_count = 0
+        
+        return {
+            'largest_shareholder': largest.get('nm', '-'),
+            'ownership_rate': ownership_rate,
+            'relation': largest.get('relate', '-'),
+            'stock_count': stock_count,
+            'report_date': largest.get('rcept_dt', ''),
+        }
+    
+    # ============================================================
+    # Phase 3: 감사의견 조회 (v6.5.1)
+    # ============================================================
+    def get_audit_opinion(self, stock_code: str, year: str = None) -> Optional[Dict]:
+        """감사의견 조회
+        
+        Args:
+            stock_code: 종목코드
+            year: 사업연도 (기본: 전년도)
+            
+        Returns:
+            {
+                'opinion': '적정',           # 적정/한정/부적정/의견거절
+                'auditor': '삼일회계법인',    # 감사인
+                'fiscal_year': '2024',
+                'report_date': '2025-03-20',
+                'is_safe': True,             # 적정이면 True
+                'risk_level': '낮음',        # 낮음/보통/높음/위험
+            }
+        """
+        if not year:
+            year = str(datetime.now().year - 1)
+        
+        audit_info = {
+            'opinion': '적정',  # 기본값
+            'auditor': '-',
+            'fiscal_year': year,
+            'report_date': '',
+            'is_safe': True,
+            'risk_level': '낮음',
+        }
+        
+        # 공시에서 감사 관련 키워드 확인 (fnlttSinglAcntAll 대신 공시 검색 사용)
+        disclosures = self.get_recent_disclosures(stock_code, days=180)
+        
+        for disc in (disclosures or []):
+            title = disc.get('report_nm', '')
+            
+            if '감사보고서' in title or '감사의견' in title:
+                audit_info['report_date'] = disc.get('rcept_dt', '')
+                
+                # 위험 키워드 체크
+                if '의견거절' in title or '거절' in title:
+                    audit_info['opinion'] = '의견거절'
+                    audit_info['is_safe'] = False
+                    audit_info['risk_level'] = '위험'
+                elif '부적정' in title:
+                    audit_info['opinion'] = '부적정'
+                    audit_info['is_safe'] = False
+                    audit_info['risk_level'] = '위험'
+                elif '한정' in title:
+                    audit_info['opinion'] = '한정'
+                    audit_info['is_safe'] = False
+                    audit_info['risk_level'] = '높음'
+                elif '적정' in title:
+                    audit_info['opinion'] = '적정'
+                    audit_info['is_safe'] = True
+                    audit_info['risk_level'] = '낮음'
+                    
+                break
+        
+        # 감사보고서 지연 체크 (3월 이후에도 없으면 위험)
+        today = datetime.now()
+        if today.month >= 4 and not audit_info['report_date']:
+            # 3월 감사보고서 제출 기한 이후에도 보고서 없음
+            recent_audit = self._check_audit_delay(disclosures)
+            if recent_audit.get('delayed'):
+                audit_info['opinion'] = '지연'
+                audit_info['is_safe'] = False
+                audit_info['risk_level'] = '높음'
+        
+        return audit_info
+    
+    def _check_audit_delay(self, disclosures: List[Dict]) -> Dict:
+        """감사보고서 지연 여부 확인"""
+        result = {'delayed': False, 'reason': ''}
+        
+        for disc in (disclosures or []):
+            title = disc.get('report_nm', '')
+            if '감사보고서' in title and ('지연' in title or '연기' in title or '미제출' in title):
+                result['delayed'] = True
+                result['reason'] = title
+                break
+        
+        return result
+    
+    # ============================================================
+    # Phase 3: 공시 이력 조회 (증자, CB 등) (v6.5.1)
+    # ============================================================
+    def get_capital_changes(self, stock_code: str, days: int = 90) -> List[Dict]:
+        """자본 변동 관련 공시 조회 (유상증자, 무상증자, CB 등)
+        
+        Returns:
+            [
+                {
+                    'date': '2026-01-25',
+                    'type': '무상증자',
+                    'title': '무상증자 결정',
+                    'impact': 'positive/negative/neutral',
+                },
+                ...
+            ]
+        """
+        disclosures = self.get_recent_disclosures(stock_code, days=days)
+        if not disclosures:
+            return []
+        
+        capital_keywords = {
+            '무상증자': ('positive', '주주가치 제고'),
+            '유상증자': ('negative', '자금 조달, 지분 희석'),
+            '전환사채': ('negative', '잠재적 지분 희석'),
+            'CB발행': ('negative', '잠재적 지분 희석'),
+            'BW발행': ('negative', '잠재적 지분 희석'),
+            '신주인수권': ('negative', '잠재적 지분 희석'),
+            '자기주식취득': ('positive', '주가 부양 의지'),
+            '자기주식처분': ('negative', '물량 출회'),
+            '주식분할': ('neutral', '유동성 확대'),
+            '액면분할': ('neutral', '유동성 확대'),
+            '합병': ('neutral', '사업 재편'),
+            '분할': ('neutral', '사업 분리'),
+        }
+        
+        results = []
+        
+        for disc in disclosures:
+            title = disc.get('report_nm', '')
+            date = disc.get('rcept_dt', '')
+            
+            for keyword, (impact, desc) in capital_keywords.items():
+                if keyword in title:
+                    results.append({
+                        'date': date,
+                        'type': keyword,
+                        'title': title,
+                        'impact': impact,
+                        'description': desc,
+                    })
+                    break
+        
+        return results
+
+    # ============================================================
+    # Phase 1: 통합 기업 프로필 (v6.5) → v6.5.1 확장
     # ============================================================
     def get_full_company_profile(
         self, 
@@ -702,9 +910,12 @@ class DartService:
         
         Returns:
             {
-                'basic': {...},      # 기업개황
-                'financial': {...},  # 재무요약
-                'risk': {...},       # 위험공시 (옵션)
+                'basic': {...},           # 기업개황
+                'financial': {...},       # 재무요약
+                'risk': {...},            # 위험공시 (옵션)
+                'major_shareholder': {...}, # v6.5.1: 최대주주
+                'audit': {...},           # v6.5.1: 감사의견
+                'capital_changes': [...], # v6.5.1: 자본변동 공시
                 'cached_at': '2026-01-27 15:30:00',
                 'success': True/False,
             }
@@ -713,6 +924,9 @@ class DartService:
             'basic': None,
             'financial': None,
             'risk': None,
+            'major_shareholder': None,  # v6.5.1
+            'audit': None,              # v6.5.1
+            'capital_changes': [],      # v6.5.1
             'cached_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'success': False,
         }
@@ -735,6 +949,24 @@ class DartService:
                 result['risk'] = self.check_risk_disclosures(stock_code, stock_name)
             except Exception as e:
                 logger.warning(f"위험공시 조회 실패 ({stock_code}): {e}")
+        
+        # 4. v6.5.1: 최대주주 지분율
+        try:
+            result['major_shareholder'] = self.get_major_shareholder(stock_code)
+        except Exception as e:
+            logger.warning(f"최대주주 조회 실패 ({stock_code}): {e}")
+        
+        # 5. v6.5.1: 감사의견
+        try:
+            result['audit'] = self.get_audit_opinion(stock_code)
+        except Exception as e:
+            logger.warning(f"감사의견 조회 실패 ({stock_code}): {e}")
+        
+        # 6. v6.5.1: 자본변동 공시
+        try:
+            result['capital_changes'] = self.get_capital_changes(stock_code)
+        except Exception as e:
+            logger.warning(f"자본변동 조회 실패 ({stock_code}): {e}")
         
         # 성공 여부
         result['success'] = result['basic'] is not None
@@ -827,6 +1059,45 @@ class DartService:
                     lines.append(f"  - {item['date']}: {item['title']}")
             else:
                 lines.append(f"✅ 최근 30일 위험 공시 없음")
+        
+        # 4. v6.5.1: 최대주주
+        major = profile.get('major_shareholder')
+        if major:
+            lines.append(f"\n[최대주주]")
+            lines.append(f"• 최대주주: {major.get('largest_shareholder', '-')}")
+            ownership = major.get('ownership_rate', 0)
+            lines.append(f"• 지분율: {ownership:.1f}%")
+            if ownership >= 50:
+                lines.append(f"  → 경영권 안정 (50% 이상)")
+            elif ownership >= 30:
+                lines.append(f"  → 경영권 보통 (30~50%)")
+            else:
+                lines.append(f"  → 경영권 취약 (30% 미만)")
+        
+        # 5. v6.5.1: 감사의견
+        audit = profile.get('audit')
+        if audit:
+            lines.append(f"\n[감사의견]")
+            opinion = audit.get('opinion', '적정')
+            is_safe = audit.get('is_safe', True)
+            
+            if is_safe:
+                lines.append(f"✅ 감사의견: {opinion}")
+            else:
+                lines.append(f"🚨 감사의견: {opinion} (주의 필요!)")
+                if opinion == '의견거절':
+                    lines.append(f"  → 거래정지/상장폐지 위험!")
+                elif opinion == '한정':
+                    lines.append(f"  → 재무제표 신뢰도 저하")
+        
+        # 6. v6.5.1: 자본변동 공시
+        capital = profile.get('capital_changes', [])
+        if capital:
+            lines.append(f"\n[자본변동 공시 (최근 90일)]")
+            for item in capital[:5]:
+                impact_emoji = '🟢' if item['impact'] == 'positive' else '🔴' if item['impact'] == 'negative' else '⚪'
+                lines.append(f"• {item['date']}: {impact_emoji} {item['type']}")
+                lines.append(f"  → {item['description']}")
         
         return "\n".join(lines) if lines else "DART 정보 없음"
 

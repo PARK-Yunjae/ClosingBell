@@ -88,6 +88,14 @@ class ScreeningSettings:
 
 
 @dataclass
+class AISettings:
+    """AI 분석 설정"""
+    model: str = "gemini-2.5-flash"
+    max_output_tokens: int = 8192
+    temperature: float = 0.3
+
+
+@dataclass
 class Settings:
     """전체 설정"""
     kis: KISSettings
@@ -95,6 +103,7 @@ class Settings:
     email: EmailSettings
     database: DatabaseSettings
     screening: ScreeningSettings
+    ai: AISettings
     
     # 로깅
     log_level: str = "INFO"
@@ -151,12 +160,20 @@ def load_settings() -> Settings:
         api_call_interval=float(os.getenv("API_CALL_INTERVAL", "0.12")),
     )
     
+    # AI 설정
+    ai = AISettings(
+        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        max_output_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "8192")),
+        temperature=float(os.getenv("GEMINI_TEMPERATURE", "0.3")),
+    )
+    
     return Settings(
         kis=kis,
         discord=discord,
         email=email,
         database=database,
         screening=screening,
+        ai=ai,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_path=Path(os.getenv("LOG_PATH", str(BASE_DIR / "logs" / "screener.log"))),
     )

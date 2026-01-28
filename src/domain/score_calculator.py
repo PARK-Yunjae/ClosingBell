@@ -184,6 +184,9 @@ class ScoreDetailV5:
     is_above_ma20: bool = False
     is_bullish: bool = False
     
+    # v6.5.1 추가: RSI
+    raw_rsi: float = 0.0
+    
     @property
     def total(self) -> float:
         """총점 (100점 만점)"""
@@ -226,6 +229,8 @@ class StockScoreV5:
     score_total: float
     
     rank: int = 0
+    market_cap: float = 0.0  # 시가총액 (억원) - v6.5 추가
+    volume: int = 0  # 거래량 (주) - v6.5 추가
     
     @property
     def grade(self) -> StockGrade:
@@ -539,7 +544,7 @@ class ScoreCalculatorV5:
         
         100점 만점 = 핵심 90점 + 보너스 10점
         """
-        from src.domain.indicators import calculate_cci, calculate_ma
+        from src.domain.indicators import calculate_cci, calculate_ma, calculate_rsi
         
         prices = stock.daily_prices
         if len(prices) < 20:
@@ -555,6 +560,10 @@ class ScoreCalculatorV5:
         # CCI
         cci_values = calculate_cci(prices, period=14)
         cci = cci_values[-1] if cci_values else None
+        
+        # RSI (v6.5.1 추가)
+        rsi_values = calculate_rsi(prices, period=14)
+        rsi = rsi_values[-1] if rsi_values else None
         
         # MA20
         ma20_values = calculate_ma(prices, period=20)
@@ -634,6 +643,8 @@ class ScoreCalculatorV5:
             raw_ma20=ma20 or 0.0,
             is_above_ma20=is_above_ma20,
             is_bullish=is_bullish,
+            # v6.5.1 추가
+            raw_rsi=rsi or 0.0,
         )
         
         return StockScoreV5(
@@ -644,6 +655,8 @@ class ScoreCalculatorV5:
             trading_value=stock.trading_value,
             score_detail=score_detail,
             score_total=score_detail.total,
+            market_cap=getattr(stock, 'market_cap', 0.0),  # v6.5: 시총 전달
+            volume=today.volume if today else 0,  # v6.5: 거래량 전달
         )
     
     def calculate_scores(

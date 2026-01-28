@@ -1,6 +1,6 @@
 """
-종가매매 TOP5 20일 추적 대시보드 v6.3.2.3
-=======================================
+종가매매 TOP5 20일 추적 대시보드
+================================
 
 OHLCV 파일 기반 차트 + 가독성 개선
 - 달력 UI
@@ -30,6 +30,17 @@ except ImportError:
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# 전역상수 import
+try:
+    from src.config.app_config import (
+        APP_VERSION, APP_FULL_VERSION, SIDEBAR_TITLE, FOOTER_TOP5,
+    )
+except ImportError:
+    APP_VERSION = "v6.5"
+    APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
+    SIDEBAR_TITLE = "🔔 ClosingBell"
+    FOOTER_TOP5 = f"{APP_FULL_VERSION} | D+1 ~ D+20 수익률 분석"
+
 # 업종 정보 조회
 try:
     from src.services.company_service import get_sector_from_mapping
@@ -51,7 +62,7 @@ st.set_page_config(
 
 # ==================== 사이드바 네비게이션 ====================
 with st.sidebar:
-    st.markdown("## 🔔 ClosingBell")
+    st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
     st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
@@ -59,7 +70,7 @@ with st.sidebar:
     st.markdown("---")
 
 st.title("📊 종가매매 TOP5 20일 추적")
-st.markdown("**D+1 ~ D+20 수익률 분석** | _v6.5 구간 최적화 점수제_")
+st.markdown(f"**D+1 ~ D+20 수익률 분석** | _{APP_VERSION} 구간 최적화 점수제_")
 st.markdown("---")
 
 
@@ -389,7 +400,7 @@ cap_filter = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("### 📊 점수제")
-st.sidebar.success("v6.3.2.3: 단순 선형 점수제 (하드필터 없음)")
+st.sidebar.success(f"{APP_VERSION}: 단순 선형 점수제 (하드필터 없음)")
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"선택: {selected_date_str}")
@@ -711,4 +722,4 @@ except Exception as e:
 
 # ==================== 푸터 ====================
 st.markdown("---")
-st.caption("ClosingBell v6.3 | 단순 선형 점수제 + 주도섹터 | OHLCV 차트")
+st.caption(f"{FOOTER_TOP5} | 단순 선형 점수제 + 주도섹터 | OHLCV 차트")

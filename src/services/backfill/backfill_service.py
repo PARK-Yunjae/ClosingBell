@@ -237,7 +237,7 @@ class HistoricalBackfillService:
                     'grade': grade.value,
                     # ScoreCalculatorV5에서 계산된 지표값 사용
                     'cci': score_result.score_detail.raw_cci,
-                    'rsi': None,  # RSI는 v5 점수제에서 사용 안함
+                    'rsi': score_result.score_detail.raw_rsi,  # v6.5: RSI 저장
                     'disparity_20': score_result.score_detail.raw_distance,
                     'consecutive_up': score_result.score_detail.raw_consec_days,
                     'volume_ratio_5': score_result.score_detail.raw_volume_ratio,
