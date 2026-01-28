@@ -127,7 +127,7 @@ class ScreenerService:
         self.screening_repo = screening_repo or get_screening_repository()
         self.calculator = ScoreCalculatorV5()
         
-        logger.info("ScreenerService v6.3 초기화")
+        logger.info("ScreenerService 초기화")
     
     def run_screening(
         self,
@@ -241,7 +241,7 @@ class ScreenerService:
                 score._is_leading_sector = sector_info.is_leading_sector
             
             leading_sectors_text = sector_service.format_leading_sectors_text()
-            logger.info(f"v6.3 주도섹터: {leading_sectors_text}")
+            logger.info(f"주도섹터: {leading_sectors_text}")
             
             execution_time = time.time() - start_time
             
@@ -674,10 +674,10 @@ class ScreenerService:
                 history_id = top5_repo.upsert(history_data)
                 logger.debug(f"TOP5 저장: #{score.rank} {score.stock_name} (id={history_id})")
             
-            logger.info(f"v6.0 TOP5 저장 완료: {len(top_n)}개")
+            logger.info(f"TOP5 저장 완료: {len(top_n)}개")
             
         except Exception as e:
-            logger.error(f"v6.0 TOP5 저장 실패: {e}")
+            logger.error(f"TOP5 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
         """알림 발송 (종가매매 TOP5) v6.5 - DART+AI 배치 통합"""
@@ -824,7 +824,7 @@ class ScreenerService:
     def _print_results(self, top_n: List[StockScoreV5]):
         """콘솔 출력 v6.2"""
         print("\n" + "=" * 60)
-        print("🔔 종가매매 TOP5 (v6.2)")
+        print("🔔 종가매매 TOP5")
         print("=" * 60)
         
         if not top_n:
