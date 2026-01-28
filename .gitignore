@@ -10,3 +10,5 @@ data/ohlcv/
 logs/
 .idea/
 .vscode/
+# Allow screener.db for Streamlit Cloud
+!data/screener.db
