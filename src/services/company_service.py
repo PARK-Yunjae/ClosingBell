@@ -491,13 +491,13 @@ def collect_company_info_for_candidates(limit: int = 600) -> Dict:
     return stats
 
 
-def run_company_info_collection() -> Dict:
+def run_company_info_collection(limit: int = 100) -> Dict:
     """
     기업 정보 수집 실행 (스케줄러용)
     
     v6.5: DART 기반으로 변경 (네이버 크롤링 대체)
     """
-    return collect_company_info_with_dart(limit=limit)  # v6.5.1: limit 전달
+    return collect_company_info_with_dart(limit=limit)
 
 
 def collect_company_info_with_dart(limit: int = 100) -> Dict:

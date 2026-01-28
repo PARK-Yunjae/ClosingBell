@@ -372,34 +372,36 @@ class ScreenerScheduler:
             minute=20,
         )
         
-        # 16:25 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        # 16:35 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        # ※ daily_data_update(16:30) 이후 실행해야 CSV에 오늘 데이터 있음
         self.add_job(
             job_id='nomad_collection',
             func=run_nomad_collection,
             hour=16,
-            minute=25,
+            minute=35,
         )
         
-        # 16:30 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        # 16:32 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        # ※ daily_data_update(16:30)와 충돌 방지
         try:
             from src.services.news_service import run_news_collection
             self.add_job(
                 job_id='news_collection',
                 func=run_news_collection,
                 hour=16,
-                minute=30,
+                minute=32,
             )
         except ImportError:
             logger.warning("news_service 모듈 없음 - 뉴스 수집 스킵")
         
-        # 16:35 기업정보 수집 (네이버 금융 크롤링)
+        # 16:37 기업정보 수집 (네이버 금융 크롤링)
         try:
             from src.services.company_service import run_company_info_collection
             self.add_job(
                 job_id='company_info_collection',
                 func=run_company_info_collection,
                 hour=16,
-                minute=35,
+                minute=37,
             )
         except ImportError:
             logger.warning("company_service 모듈 없음 - 기업정보 수집 스킵")
