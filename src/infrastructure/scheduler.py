@@ -1,25 +1,26 @@
 """
-작업 스케줄러 v6.3
+작업 스케줄러 v6.5
 
 책임:
 - Cron 스케줄 관리
 - 작업 등록/해제
 - 장 운영일 체크
 
-v6.3 스케줄:
-- 12:30 프리뷰 스크리닝
+v6.5 스케줄:
+- 12:00 프리뷰 스크리닝
 - 15:00 메인 스크리닝 (→ closing_top5_history)
-- 16:35 KIS OHLCV 수집 (정규장 기준 - 운영용)
-- 16:40 FDR OHLCV 갱신 (프리장 포함 - 백테스팅용)
-- 16:45 글로벌 데이터 갱신
-- 17:00 결과 수집 (→ top5_daily_prices)
-- 17:10 일일 학습
-- 17:20 유목민 종목 수집 (→ nomad_candidates)
-- 17:30 뉴스 수집 (→ nomad_news)
-- 17:40 기업정보 크롤링
-- 17:50 AI 분석 (Gemini 2.0 Flash)
-- 18:00 Git 커밋
-- 18:05 자동 종료
+- 16:00 KIS OHLCV 수집 (정규장 기준)
+- 16:10 글로벌 데이터 갱신
+- 16:15 결과 수집 (→ top5_daily_prices)
+- 16:20 일일 학습
+- 16:30 FDR OHLCV 갱신 (daily_data_update)
+- 16:32 유목민 종목 수집 (→ nomad_candidates)
+- 16:37 기업정보 크롤링
+- 16:39 뉴스 수집 (→ nomad_news)
+- 16:40 AI 분석 (유목민)
+- 16:45 TOP5 AI 분석
+- 17:00 Git 커밋
+- 17:30 자동 종료
 
 의존성:
 - APScheduler
@@ -372,24 +373,24 @@ class ScreenerScheduler:
             minute=20,
         )
         
-        # 16:35 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
+        # 16:32 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
         # ※ daily_data_update(16:30) 이후 실행해야 CSV에 오늘 데이터 있음
         self.add_job(
             job_id='nomad_collection',
             func=run_nomad_collection,
             hour=16,
-            minute=35,
+            minute=32,
         )
         
-        # 16:32 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
-        # ※ daily_data_update(16:30)와 충돌 방지
+        # 16:39 유목민 뉴스 수집 (네이버 뉴스 + Gemini 요약)
+        # ※ nomad_collection(16:32) 이후 실행해야 후보 종목이 있음
         try:
             from src.services.news_service import run_news_collection
             self.add_job(
                 job_id='news_collection',
                 func=run_news_collection,
                 hour=16,
-                minute=32,
+                minute=39,
             )
         except ImportError:
             logger.warning("news_service 모듈 없음 - 뉴스 수집 스킵")

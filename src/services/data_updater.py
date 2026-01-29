@@ -480,7 +480,12 @@ def run_kis_data_update(days: int = 5) -> dict:
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     
-    from scripts.collect_kis_ohlcv import KISOHLCVCollector
+    try:
+        from scripts.collect_kis_ohlcv import KISOHLCVCollector
+    except ImportError:
+        logger.warning("scripts.collect_kis_ohlcv 모듈 없음 - KIS 데이터 수집 스킵")
+        logger.info("수동 수집: python scripts/collect_kis_ohlcv.py")
+        return {'updated': 0, 'failed': 0, 'skipped': 0, 'error': 'module not found'}
     
     print("=" * 50)
     print("📊 KIS OHLCV 데이터 수집 시작 (정규장 기준)")
