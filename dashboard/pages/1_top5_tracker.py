@@ -652,35 +652,40 @@ for item in top5_data:
                 if not ai_summary or ai_summary.strip() == '':
                     st.info("🤖 AI 분석 데이터 준비 중입니다.")
                 else:
-                    ai_data = json.loads(ai_summary) if isinstance(ai_summary, str) else ai_summary
+                    # JSON 파싱 시도
+                    try:
+                        ai_data = json.loads(ai_summary) if isinstance(ai_summary, str) else ai_summary
+                        
+                        col_ai1, col_ai2 = st.columns(2)
+                        
+                        with col_ai1:
+                            st.markdown("**⭐ 핵심 요약**")
+                            st.info(ai_data.get('summary', '-'))
+                            
+                            st.markdown("**📈 주가 움직임 원인**")
+                            st.write(ai_data.get('price_reason', '-'))
+                            
+                            if ai_data.get('investment_points'):
+                                st.markdown("**✅ 투자 포인트**")
+                                for point in ai_data['investment_points'][:3]:
+                                    st.write(f"• {point}")
+                        
+                        with col_ai2:
+                            if ai_data.get('risk_factors'):
+                                st.markdown("**⚠️ 리스크 요인**")
+                                for risk in ai_data['risk_factors'][:3]:
+                                    st.write(f"• {risk}")
+                            
+                            st.markdown("**💰 밸류에이션**")
+                            st.write(ai_data.get('valuation_comment', '-'))
+                            
+                            st.markdown(f"**🎯 추천: {rec_emoji} {ai_rec}**")
                     
-                    col_ai1, col_ai2 = st.columns(2)
-                    
-                    with col_ai1:
-                        st.markdown("**⭐ 핵심 요약**")
-                        st.info(ai_data.get('summary', '-'))
-                        
-                        st.markdown("**📈 주가 움직임 원인**")
-                        st.write(ai_data.get('price_reason', '-'))
-                        
-                        if ai_data.get('investment_points'):
-                            st.markdown("**✅ 투자 포인트**")
-                            for point in ai_data['investment_points'][:3]:
-                                st.write(f"• {point}")
-                    
-                    with col_ai2:
-                        if ai_data.get('risk_factors'):
-                            st.markdown("**⚠️ 리스크 요인**")
-                            for risk in ai_data['risk_factors'][:3]:
-                                st.write(f"• {risk}")
-                        
-                        st.markdown("**💰 밸류에이션**")
-                        st.write(ai_data.get('valuation_comment', '-'))
-                        
-                        st.markdown(f"**🎯 추천: {rec_emoji} {ai_rec}**")
+                    except json.JSONDecodeError:
+                        # JSON 아닌 경우 단순 텍스트로 표시
+                        st.markdown("**⭐ AI 분석 요약**")
+                        st.info(ai_summary)
             
-            except json.JSONDecodeError:
-                st.info("🤖 AI 분석 데이터 준비 중입니다.")
             except Exception as e:
                 st.info("🤖 AI 분석을 불러올 수 없습니다.")
 

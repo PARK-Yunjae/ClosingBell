@@ -59,7 +59,7 @@ def load_stock_mapping() -> Dict[str, str]:
     return mapping
 
 
-def collect_nomad_candidates(target_date: date = None) -> Dict:
+def collect_nomad_candidates(target_date: date = None, force: bool = False) -> Dict:
     """
     유목민 공부 후보 수집 (CSV 기반)
     
@@ -68,6 +68,7 @@ def collect_nomad_candidates(target_date: date = None) -> Dict:
     
     Args:
         target_date: 수집 날짜 (기본: 오늘)
+        force: True면 기존 데이터 삭제 후 재수집
         
     Returns:
         {'limit_up': int, 'volume_explosion': int, 'total': int}
@@ -82,9 +83,14 @@ def collect_nomad_candidates(target_date: date = None) -> Dict:
     
     # 기존 데이터 확인
     existing = repo.get_by_date(target_date_str)
-    if existing:
-        logger.info(f"  이미 {len(existing)}개 후보가 있음 → 스킵")
+    if existing and not force:
+        logger.info(f"  이미 {len(existing)}개 후보가 있음 → 스킵 (--force로 재수집 가능)")
         return {'limit_up': 0, 'volume_explosion': 0, 'total': len(existing), 'skipped': True}
+    
+    # force 모드: 기존 데이터 삭제
+    if existing and force:
+        logger.info(f"  기존 {len(existing)}개 삭제 후 재수집")
+        repo.delete_by_date(target_date_str)
     
     result = {'limit_up': 0, 'volume_explosion': 0, 'total': 0}
     candidates = []
@@ -219,13 +225,17 @@ def collect_nomad_candidates(target_date: date = None) -> Dict:
     return result
 
 
-def run_nomad_collection() -> Dict:
-    """유목민 공부법 수집 실행 (스케줄러용)"""
+def run_nomad_collection(force: bool = False) -> Dict:
+    """유목민 공부법 수집 실행 (스케줄러용)
+    
+    Args:
+        force: True면 기존 데이터 삭제 후 재수집
+    """
     logger.info("=" * 50)
     logger.info("📚 유목민 공부법 수집 시작 (CSV 기반)")
     logger.info("=" * 50)
     
-    result = collect_nomad_candidates()
+    result = collect_nomad_candidates(force=force)
     
     logger.info("=" * 50)
     logger.info(f"📚 유목민 공부법 완료: {result.get('total', 0)}개 종목")

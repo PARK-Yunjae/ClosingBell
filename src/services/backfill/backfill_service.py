@@ -195,9 +195,10 @@ class HistoricalBackfillService:
                 if len(daily_prices) < MIN_DAILY_DATA_COUNT:
                     continue
                 
-                # 종목명 조회
+                # 종목명/업종 조회
                 name_row = self.stock_mapping[self.stock_mapping['code'] == code]
                 name = name_row['name'].iloc[0] if len(name_row) > 0 else code
+                sector = name_row['sector'].iloc[0] if len(name_row) > 0 and 'sector' in self.stock_mapping.columns else None
                 
                 # 거래대금 계산 (억원)
                 today_row = df_recent.iloc[-1]
@@ -241,6 +242,8 @@ class HistoricalBackfillService:
                     'disparity_20': score_result.score_detail.raw_distance,
                     'consecutive_up': score_result.score_detail.raw_consec_days,
                     'volume_ratio_5': score_result.score_detail.raw_volume_ratio,
+                    # v6.5.2: sector 추가
+                    'sector': sector,
                 })
                 
             except Exception as e:
@@ -499,6 +502,10 @@ class HistoricalBackfillService:
                     # v6.3.1: 거래대금/거래량
                     'trading_value': row.get('trading_value'),
                     'volume': row.get('volume'),
+                    # v6.5.2: sector 추가 (stock_mapping에서 조회)
+                    'sector': row.get('sector'),
+                    'sector_rank': None,  # 백필에서는 순위 계산 안 함
+                    'is_leading_sector': 0,
                 }
                 
                 # v6.3.2: realtime 우선 정책 - realtime이 있으면 덮어쓰지 않음

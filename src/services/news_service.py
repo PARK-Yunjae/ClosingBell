@@ -333,7 +333,7 @@ def collect_news_for_candidate(candidate: Dict) -> Dict:
         logger.warning(f"  ⚠️ {stock_name}: 뉴스 없음")
         # 뉴스 없어도 수집 완료 표시
         candidates_repo = get_nomad_candidates_repository()
-        candidates_repo.update_news_collected(candidate_id)
+        candidates_repo.update_news_collected(candidate_id, news_count=0)
         return result
     
     # 2. study_date 기준으로 필터링 (±2년 = 730일)
@@ -418,9 +418,9 @@ def collect_news_for_candidate(candidate: Dict) -> Dict:
         except Exception as e:
             logger.error(f"  뉴스 저장 실패: {e}")
     
-    # 5. candidate 업데이트 (news_collected = 1)
+    # 5. candidate 업데이트 (news_collected = 1, news_count)
     candidates_repo = get_nomad_candidates_repository()
-    candidates_repo.update_news_collected(candidate_id)
+    candidates_repo.update_news_collected(candidate_id, news_count=result['saved'])
     
     logger.info(f"  ✅ {result['saved']}개 저장 완료")
     

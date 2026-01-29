@@ -471,49 +471,39 @@ def run_kis_data_update(days: int = 5) -> dict:
     """
     KIS API로 OHLCV 데이터 수집 (정규장 기준)
     
+    v6.5.2: scripts 모듈 의존성 제거, DATA_DIR(ohlcv) 폴더 직접 사용
+    
     Args:
         days: 최근 며칠치 업데이트
         
     Returns:
         수집 결과 통계
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    
-    try:
-        from scripts.collect_kis_ohlcv import KISOHLCVCollector
-    except ImportError:
-        logger.warning("scripts.collect_kis_ohlcv 모듈 없음 - KIS 데이터 수집 스킵")
-        logger.info("수동 수집: python scripts/collect_kis_ohlcv.py")
-        return {'updated': 0, 'failed': 0, 'skipped': 0, 'error': 'module not found'}
-    
-    print("=" * 50)
-    print("📊 KIS OHLCV 데이터 수집 시작 (정규장 기준)")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("📊 KIS OHLCV 데이터 갱신 시작")
+    logger.info("=" * 50)
     
     today = date.today()
     
     if not is_market_open(today):
-        print("휴장일 - 데이터 수집 스킵")
+        logger.info("휴장일 - 데이터 수집 스킵")
         return {'updated': 0, 'failed': 0, 'skipped': 0}
     
+    # DATA_DIR 폴더 확인
+    if not DATA_DIR.exists():
+        logger.warning(f"OHLCV 폴더 없음: {DATA_DIR}")
+        return {'updated': 0, 'failed': 0, 'skipped': 0, 'error': 'ohlcv_dir_not_found'}
+    
     try:
-        # 수집기 생성
-        collector = KISOHLCVCollector(output_dir=KIS_DATA_DIR)
+        # 기존 run_data_update 함수 재사용
+        result = run_data_update(max_stocks=MAX_STOCKS_PER_RUN)
         
-        # 업데이트 실행
-        result = collector.update_recent(days=days)
+        logger.info("=" * 50)
+        logger.info(f"📊 KIS 데이터 갱신 완료: 성공 {result.get('updated', 0)}, 실패 {result.get('failed', 0)}")
+        logger.info("=" * 50)
         
-        print("=" * 50)
-        print(f"📊 KIS 데이터 수집 완료: 성공 {result['updated']}, 실패 {result['failed']}")
-        print("=" * 50)
-        
-        return {
-            'updated': result['updated'],
-            'failed': result['failed'],
-            'skipped': result.get('no_change', 0)
-        }
+        return result
         
     except Exception as e:
-        logger.error(f"KIS OHLCV 수집 실패: {e}")
+        logger.error(f"KIS OHLCV 갱신 실패: {e}")
         return {'updated': 0, 'failed': 1, 'skipped': 0, 'error': str(e)}

@@ -575,6 +575,7 @@ def main():
     parser.add_argument('--auto-fill', action='store_true', help='누락 데이터 자동 수집')
     parser.add_argument('--run-top5-update', action='store_true', help='TOP5 일일 추적 업데이트')
     parser.add_argument('--run-nomad', action='store_true', help='유목민 공부 실행')
+    parser.add_argument('--force', action='store_true', help='기존 데이터 삭제 후 재수집 (--run-nomad와 함께 사용)')
     parser.add_argument('--run-news', action='store_true', help='유목민 뉴스 수집 (네이버+Gemini)')
     parser.add_argument('--run-company-info', action='store_true', help='유목민 기업정보 수집 (네이버금융)')
     parser.add_argument('--run-ai-analysis', action='store_true', help='유목민 AI 분석 - 오늘만 (Gemini)')
@@ -638,7 +639,7 @@ def main():
         return
     
     if args.run_nomad:
-        run_nomad_study()
+        run_nomad_study(force=args.force)
         return
     
     if args.run_news:
@@ -783,27 +784,28 @@ def run_top5_daily_update():
         print(f"\n❌ 오류: {e}")
 
 
-def run_nomad_study():
-    """유목민 공부 실행"""
+def run_nomad_study(force: bool = False):
+    """유목민 공부 실행
+    
+    Args:
+        force: True면 기존 데이터 삭제 후 재수집
+    """
     logger = logging.getLogger(__name__)
     print("\n📚 유목민 공부 실행...")
     
     try:
-        from datetime import date
-        from src.infrastructure.repository import get_nomad_candidates_repository
+        from src.services.nomad_collector import run_nomad_collection
         
-        repo = get_nomad_candidates_repository()
-        today = date.today().isoformat()
+        result = run_nomad_collection(force=force)
         
-        # 오늘 데이터 확인
-        existing = repo.get_by_date(today)
-        if existing:
-            print(f"오늘({today}) 이미 {len(existing)}개 후보가 있습니다.")
-            return
-        
-        # TODO: 상한가/거래량천만 종목 수집
-        print(f"\n⚠️ 종목 수집 기능은 KIS API 연동이 필요합니다.")
-        print(f"   --run 명령으로 스크리닝 후 자동 수집됩니다.")
+        if result.get('skipped'):
+            print(f"\n⚠️ 이미 {result['total']}개 후보가 있어 스킵됨")
+            print("   재수집하려면: python main.py --run-nomad --force")
+        else:
+            print(f"\n✅ 유목민 수집 완료!")
+            print(f"   상한가: {result.get('limit_up', 0)}개")
+            print(f"   거래량천만: {result.get('volume_explosion', 0)}개")
+            print(f"   총: {result.get('total', 0)}개")
         
     except Exception as e:
         logger.error(f"유목민 공부 실패: {e}")

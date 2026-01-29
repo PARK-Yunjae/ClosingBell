@@ -359,15 +359,15 @@ st.markdown("---")
 # 종목 카드 그리드
 st.subheader("📋 종목 목록")
 
-# 카드 스타일 CSS (반응형 - 최대 5열)
+# 카드 스타일 CSS (반응형 - 최대 5열) - 종목 카드 영역에만 적용
 st.markdown("""
 <style>
-/* Streamlit columns를 반응형 flexbox로 변경 */
-[data-testid="stHorizontalBlock"] {
+/* 종목 카드 영역에만 적용 (nomad-cards-container 내부) */
+.nomad-cards-container [data-testid="stHorizontalBlock"] {
     flex-wrap: wrap !important;
     gap: 12px !important;
 }
-[data-testid="stColumn"] {
+.nomad-cards-container [data-testid="stColumn"] {
     flex: 1 1 200px !important;
     min-width: 200px !important;
     max-width: calc(20% - 10px) !important;
@@ -375,22 +375,22 @@ st.markdown("""
 }
 /* 반응형 breakpoints */
 @media (max-width: 1400px) {
-    [data-testid="stColumn"] {
+    .nomad-cards-container [data-testid="stColumn"] {
         max-width: calc(25% - 10px) !important;
     }
 }
 @media (max-width: 1100px) {
-    [data-testid="stColumn"] {
+    .nomad-cards-container [data-testid="stColumn"] {
         max-width: calc(33.33% - 10px) !important;
     }
 }
 @media (max-width: 800px) {
-    [data-testid="stColumn"] {
+    .nomad-cards-container [data-testid="stColumn"] {
         max-width: calc(50% - 10px) !important;
     }
 }
 @media (max-width: 500px) {
-    [data-testid="stColumn"] {
+    .nomad-cards-container [data-testid="stColumn"] {
         max-width: 100% !important;
         min-width: 100% !important;
     }
@@ -433,6 +433,9 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+# 종목 카드 영역 시작
+st.markdown('<div class="nomad-cards-container">', unsafe_allow_html=True)
 
 # 5열 레이아웃 (CSS가 반응형으로 조절)
 num_cols = 5
@@ -481,6 +484,9 @@ for i, candidate in enumerate(candidates):
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+# 종목 카드 영역 끝
+st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 

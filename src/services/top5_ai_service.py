@@ -288,11 +288,21 @@ def analyze_top5_stocks(target_date: str = None, limit: int = 5) -> Dict:
         for row in stocks:
             stock = dict(zip(columns, row))
             
-            # 이미 분석된 종목 스킵 (ai_summary 또는 ai_recommendation이 있으면 스킵)
-            ai_summary_exists = stock.get('ai_summary') and stock.get('ai_summary').strip()
-            ai_recommendation_exists = stock.get('ai_recommendation') and stock.get('ai_recommendation').strip()
+            # 이미 분석된 종목 스킵 (JSON 형식의 ai_summary가 있으면 스킵)
+            ai_summary_raw = stock.get('ai_summary', '')
             
-            if ai_summary_exists or ai_recommendation_exists:
+            # JSON 형식인지 확인 (웹훅용 짧은 텍스트는 재분석)
+            is_valid_json = False
+            if ai_summary_raw and ai_summary_raw.strip():
+                try:
+                    parsed = json.loads(ai_summary_raw)
+                    # JSON이고 필수 필드가 있으면 유효
+                    if isinstance(parsed, dict) and parsed.get('summary'):
+                        is_valid_json = True
+                except json.JSONDecodeError:
+                    pass  # JSON 아님 → 재분석 필요
+            
+            if is_valid_json:
                 logger.info(f"  ⏭️ {stock['stock_name']} - 이미 분석됨 (스킵)")
                 stats['skipped'] += 1
                 continue
@@ -354,11 +364,13 @@ def run_top5_ai_analysis_all(limit_per_day: int = 5) -> Dict:
     db = get_database()
     total_stats = {'analyzed': 0, 'failed': 0, 'skipped': 0, 'errors': []}
     
-    # 미분석 날짜 조회
+    # 미분석 날짜 조회 (ai_summary가 NULL이거나 JSON 아닌 짧은 텍스트)
+    # JSON은 '{'로 시작하므로, '{'로 시작하지 않으면 재분석 대상
     rows = db.fetch_all("""
         SELECT DISTINCT screen_date 
         FROM closing_top5_history 
         WHERE ai_summary IS NULL 
+           OR (ai_summary NOT LIKE '{%' AND ai_summary != '')
         ORDER BY screen_date
     """)
     

@@ -1741,11 +1741,48 @@ class NomadCandidatesRepository:
         )
         return [dict(row) for row in rows]
     
-    def update_news_collected(self, candidate_id: int):
-        """뉴스 수집 완료 표시"""
+    def delete_by_date(self, study_date: str):
+        """특정 날짜의 후보 삭제 (재수집용)
+        
+        Args:
+            study_date: 삭제할 날짜 (YYYY-MM-DD)
+        """
+        # 관련 뉴스도 함께 삭제
         self.db.execute(
-            "UPDATE nomad_candidates SET news_collected = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (candidate_id,)
+            "DELETE FROM nomad_news WHERE study_date = ?",
+            (study_date,)
+        )
+        self.db.execute(
+            "DELETE FROM nomad_candidates WHERE study_date = ?",
+            (study_date,)
+        )
+        logger.info(f"  날짜 {study_date} 데이터 삭제 완료")
+    
+    def update_news_collected(self, candidate_id: int, news_count: int = 0):
+        """뉴스 수집 완료 표시 (news_count 업데이트 포함)
+        
+        Args:
+            candidate_id: 후보 ID
+            news_count: 수집된 뉴스 개수 (0이면 nomad_news 테이블에서 카운트)
+        """
+        if news_count == 0:
+            # study_date, stock_code로 실제 뉴스 개수 조회
+            candidate = self.db.fetch_one(
+                "SELECT study_date, stock_code FROM nomad_candidates WHERE id = ?",
+                (candidate_id,)
+            )
+            if candidate:
+                count_row = self.db.fetch_one(
+                    "SELECT COUNT(*) as cnt FROM nomad_news WHERE study_date = ? AND stock_code = ?",
+                    (candidate['study_date'], candidate['stock_code'])
+                )
+                news_count = count_row['cnt'] if count_row else 0
+        
+        self.db.execute(
+            """UPDATE nomad_candidates 
+               SET news_collected = 1, news_count = ?, news_status = 'collected', updated_at = CURRENT_TIMESTAMP 
+               WHERE id = ?""",
+            (news_count, candidate_id)
         )
     
     def get_uncollected_company_info(self, limit: int = 20) -> List[dict]:
