@@ -668,7 +668,7 @@ class ScreenerService:
                     'is_leading_sector': 1 if getattr(score, '_is_leading_sector', False) else 0,
                     # v6.3.1: 거래대금/거래량
                     'trading_value': score.trading_value,
-                    'volume': getattr(score, '_volume', None),
+                    'volume': getattr(score, 'volume', None),  # v6.5.2: _volume → volume
                 }
                 
                 history_id = top5_repo.upsert(history_data)
