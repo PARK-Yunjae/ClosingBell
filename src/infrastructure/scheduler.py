@@ -330,6 +330,19 @@ class ScreenerScheduler:
             minute=main_minute,
         )
         
+        # 15:02 눌림목 스크리너 (TOP5 직후 실행)
+        # ※ 최근 5일 급등 종목 중 오늘 눌림목 발생 종목 탐지
+        try:
+            from src.services.dip_scanner import run_dip_scan
+            self.add_job(
+                job_id='dip_scan',
+                func=run_dip_scan,
+                hour=main_hour,
+                minute=main_minute + 2,  # 15:02
+            )
+        except ImportError:
+            logger.warning("dip_scanner 모듈 없음 - 눌림목 스캔 스킵")
+        
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
