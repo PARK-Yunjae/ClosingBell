@@ -19,7 +19,7 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 from src.infrastructure.repository import get_repository
-from src.adapters.kis_client import get_kis_client
+from src.adapters.kiwoom_rest_client import get_kiwoom_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def collect_next_day_results(target_date: date = None) -> Dict:
     logger.info(f"📊 익일 결과 수집: {target_date}")
     
     repo = get_repository()
-    kis = get_kis_client()
+    broker = get_kiwoom_client()
     
     # 해당 날짜의 스크리닝 종목 조회 (익일 결과 없는 것만)
     items = repo.screening.get_items_without_next_day_result(
@@ -63,7 +63,7 @@ def collect_next_day_results(target_date: date = None) -> Dict:
             yesterday_close = item['current_price']
             
             # 익일 시고저종 조회
-            prices = kis.get_daily_prices(code, count=5)
+            prices = broker.get_daily_prices(code, count=5)
             
             if not prices:
                 logger.warning(f"  ⚠️ {code} {name}: 데이터 없음")
@@ -217,7 +217,7 @@ def collect_top5_daily_prices() -> Dict:
     
     history_repo = get_top5_history_repository()
     prices_repo = get_top5_prices_repository()
-    kis = get_kis_client()
+    broker = get_kiwoom_client()
     
     # 활성 추적 항목 조회
     active_items = history_repo.get_active_items()
@@ -243,7 +243,7 @@ def collect_top5_daily_prices() -> Dict:
             collected_days = prices_repo.get_collected_days(history_id)
             
             # 일봉 데이터 조회 (최근 25일)
-            prices = kis.get_daily_prices(code, count=25)
+            prices = broker.get_daily_prices(code, count=25)
             
             if not prices:
                 logger.warning(f"  ⚠️ {code} {name}: 데이터 없음")

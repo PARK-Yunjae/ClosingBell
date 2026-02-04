@@ -9,7 +9,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, List
 import pandas as pd
 
-from src.adapters.kis_client import get_kis_client
+from src.adapters.kiwoom_rest_client import get_kiwoom_client
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def load_csv_with_date(file_path: Path) -> Optional[pd.DataFrame]:
 def update_single_stock(code: str, last_date: date, today: date) -> bool:
     """단일 종목 데이터 갱신"""
     try:
-        client = get_kis_client()
+        client = get_kiwoom_client()
         days_needed = get_business_days_between(last_date, today) + 5
         prices = client.get_daily_prices(code, count=min(days_needed, 100))
         

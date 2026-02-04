@@ -1,5 +1,5 @@
 """
-종가매매 스크리너 v6.5
+종가매매 스크리너 v7.0 (키움 REST API)
 
 📊 종가매매 점수제 (100점 만점):
    거래량비·등락률·연속양봉·CCI·이격도·캔들
@@ -10,6 +10,12 @@
 - B등급 (65-74): 시초 50% + 목표 +2.5%
 - C등급 (55-64): 시초 70% + 목표 +2%
 - D등급 (<55): 시초 전량매도
+
+🆕 v7.0 변경사항:
+- 키움증권 REST API 전환 (KIS → Kiwoom)
+- 거래대금/거래량 연속조회 (최대 300개/150개)
+- TV200 조건검색 → 거래대금+거래량 랭킹 조합
+- Discord 2000자 자동 분할
 
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
@@ -47,16 +53,16 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v6.5                                 ║
+║   🔔  종가매매 스크리너 v7.0                                 ║
 ║                                                              ║
 ║   📊 점수제 (100점 만점)                                       ║
 ║      CCI·등락률·이격도·연속·거래량·캔들 각 15점                  ║
 ║      + 보너스 10점                                            ║
 ║                                                              ║
-║   🆕 v6.5 변경사항                                            ║
-║      • Discord 등급/시총/거래량 표시                          ║
-║      • RSI 지표 추가                                          ║
-║      • 유목민 카드 2열 레이아웃                                ║
+║   🆕 v7.0 변경사항                                            ║
+║      • 키움증권 REST API 전환                                 ║
+║      • 연속조회로 300개/150개 랭킹 지원                        ║
+║      • Discord 2000자 자동 분할                               ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -582,6 +588,7 @@ def main():
     parser.add_argument('--run-ai-analysis-all', action='store_true', help='유목민 AI 분석 - 전체 미분석 (백필 포함)')
     parser.add_argument('--run-top5-ai', action='store_true', help='종가매매 TOP5 AI 분석 (Gemini) - 오늘만')
     parser.add_argument('--run-top5-ai-all', action='store_true', help='종가매매 TOP5 AI 분석 - 전체 미분석 (백필용)')
+    parser.add_argument('--run-quiet', action='store_true', help='Quiet Accumulation 스크리너 (선행 신호 탐지)')
     parser.add_argument('--debug-universe', type=str, metavar='DATE', help='유니버스 비교 (TV200 vs 백필) - 예: --debug-universe 2026-01-23')
     parser.add_argument('--version', action='version', version=APP_FULL_VERSION)
     
@@ -664,6 +671,11 @@ def main():
     
     if args.run_top5_ai_all:
         run_top5_ai_all_cli()
+        return
+    
+    # v7.0: Quiet Accumulation 스크리너
+    if args.run_quiet:
+        run_quiet_accumulation_cli()
         return
     
     # v6.3.3: 유니버스 비교 디버그
@@ -949,6 +961,34 @@ def run_top5_ai_all_cli():
         
     except Exception as e:
         logger.error(f"TOP5 AI 전체 분석 실패: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def run_quiet_accumulation_cli():
+    """Quiet Accumulation 스크리너 CLI (v7.0)"""
+    logger = logging.getLogger(__name__)
+    
+    print("\n🔇 Quiet Accumulation 스크리너 시작...")
+    print("   💡 거래량 폭발 전 조용한 축적 패턴 탐지")
+    print("   📊 가격 2,000~10,000원 / 변동성↓ / 거래대금↑")
+    
+    try:
+        from src.services.quiet_accumulation import run_quiet_accumulation
+        
+        stocks = run_quiet_accumulation(send_alert=True)
+        
+        print(f"\n✅ Quiet Accumulation 완료!")
+        print(f"   선정 종목: {len(stocks)}개")
+        
+        if stocks:
+            print("\n📋 TOP 5:")
+            for i, s in enumerate(stocks[:5], 1):
+                print(f"   #{i} {s.grade} {s.name} ({s.code})")
+                print(f"      {s.current_price:,}원 | 점수: {s.total_score:.0f}점")
+        
+    except Exception as e:
+        logger.error(f"Quiet Accumulation 실패: {e}")
         import traceback
         traceback.print_exc()
 

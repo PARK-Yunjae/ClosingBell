@@ -206,9 +206,119 @@ class DiscordNotifier:
         return self._send(payload)
     
     def send_simple_message(self, content: str) -> NotifyResult:
-        """단순 텍스트 메시지 발송"""
-        payload = {"content": content}
-        return self._send(payload)
+        """단순 텍스트 메시지 발송 (2000자 자동 분할)
+        
+        Discord는 content 필드에 2000자 제한이 있음.
+        1900자 초과 시 자동으로 여러 메시지로 분할하여 발송.
+        """
+        # 2000자 이하면 그냥 발송
+        if len(content) <= 1900:
+            payload = {"content": content}
+            return self._send(payload)
+        
+        # 분할 발송
+        chunks = self._split_message(content, max_length=1900)
+        logger.info(f"📨 메시지 분할 발송: {len(chunks)}개 청크")
+        
+        last_result = None
+        for i, chunk in enumerate(chunks, 1):
+            payload = {"content": chunk}
+            last_result = self._send(payload)
+            
+            if not last_result.success:
+                logger.error(f"분할 메시지 {i}/{len(chunks)} 발송 실패")
+                return last_result
+            
+            # 청크 간 딜레이 (rate limit 방지)
+            if i < len(chunks):
+                time.sleep(0.3)
+        
+        return last_result
+    
+    def _split_message(self, content: str, max_length: int = 1900) -> list:
+        """메시지를 max_length 이하로 분할
+        
+        분할 우선순위:
+        1. 빈 줄 기준
+        2. 줄바꿈 기준
+        3. 강제 슬라이싱
+        
+        코드블록(```)이 포함된 경우 각 청크에 감싸기 유지
+        """
+        if len(content) <= max_length:
+            return [content]
+        
+        # 코드블록 여부 확인
+        has_codeblock = content.count('```') >= 2
+        
+        # 코드블록이 있으면 언어 태그 추출
+        codeblock_lang = ""
+        if has_codeblock:
+            import re
+            match = re.search(r'```(\w*)\n', content)
+            if match:
+                codeblock_lang = match.group(1)
+            # 코드블록 제거하고 내용만 추출
+            content_inner = re.sub(r'```\w*\n?', '', content)
+        else:
+            content_inner = content
+        
+        chunks = []
+        current_chunk = ""
+        
+        # 줄 단위로 분할
+        lines = content_inner.split('\n')
+        
+        for line in lines:
+            test_chunk = current_chunk + line + '\n' if current_chunk else line + '\n'
+            
+            # 코드블록 래핑 시 길이 계산
+            if has_codeblock:
+                wrapped_length = len(f"```{codeblock_lang}\n{test_chunk}```")
+            else:
+                wrapped_length = len(test_chunk)
+            
+            if wrapped_length <= max_length:
+                current_chunk = test_chunk
+            else:
+                # 현재 청크 저장
+                if current_chunk:
+                    if has_codeblock:
+                        chunks.append(f"```{codeblock_lang}\n{current_chunk.rstrip()}```")
+                    else:
+                        chunks.append(current_chunk.rstrip())
+                
+                # 새 청크 시작
+                current_chunk = line + '\n'
+                
+                # 한 줄이 max_length를 초과하면 강제 분할
+                if has_codeblock:
+                    single_wrapped = len(f"```{codeblock_lang}\n{current_chunk}```")
+                else:
+                    single_wrapped = len(current_chunk)
+                    
+                if single_wrapped > max_length:
+                    # 강제 슬라이싱
+                    remaining = line
+                    while remaining:
+                        slice_len = max_length - (len(f"```{codeblock_lang}\n```") if has_codeblock else 0) - 10
+                        part = remaining[:slice_len]
+                        remaining = remaining[slice_len:]
+                        
+                        if has_codeblock:
+                            chunks.append(f"```{codeblock_lang}\n{part}```")
+                        else:
+                            chunks.append(part)
+                    current_chunk = ""
+        
+        # 마지막 청크 저장
+        if current_chunk.strip():
+            if has_codeblock:
+                chunks.append(f"```{codeblock_lang}\n{current_chunk.rstrip()}```")
+            else:
+                chunks.append(current_chunk.rstrip())
+        
+        return chunks if chunks else [content[:max_length]]
     
     def send_message(self, content: str) -> NotifyResult:
         """텍스트 메시지 발송 (v5 호환용 별칭)"""
@@ -315,13 +425,28 @@ class DiscordNotifier:
                         logger.info(f"    - {name}: {value}")
             
             if 'content' in payload:
-                logger.info(f"  📝 Content: {payload['content'][:200]}")
+                logger.info(f"  📝 Content ({len(payload['content'])}자): {payload['content'][:200]}")
             
             return NotifyResult(
                 channel=NotifyChannel.DISCORD,
                 success=True,
                 response_code=200,
                 error_message="[DRY-RUN] 실제 발송하지 않음"
+            )
+        
+        # Payload 크기 사전 검증 (content 필드)
+        if 'content' in payload and len(payload['content']) > 2000:
+            error_msg = f"content 길이 초과: {len(payload['content'])}자 (최대 2000자)"
+            logger.error(f"❌ Discord 발송 사전 차단: {error_msg}")
+            
+            # errors.log에 상세 기록
+            self._log_payload_error(payload, error_msg)
+            
+            return NotifyResult(
+                channel=NotifyChannel.DISCORD,
+                success=False,
+                response_code=400,
+                error_message=error_msg,
             )
         
         try:
@@ -347,9 +472,25 @@ class DiscordNotifier:
                     error_message="Rate Limit 초과",
                 )
             
+            # 400 Bad Request (길이 초과 등)
+            if response.status_code == 400:
+                error_text = response.text[:500]
+                error_msg = f"HTTP 400: {error_text}"
+                logger.error(f"❌ Discord 400 에러: {error_msg}")
+                
+                # errors.log에 상세 기록
+                self._log_payload_error(payload, error_msg)
+                
+                return NotifyResult(
+                    channel=NotifyChannel.DISCORD,
+                    success=False,
+                    response_code=400,
+                    error_message=error_msg,
+                )
+            
             # 성공 (204 No Content)
             if response.status_code in (200, 204):
-                logger.info("Discord 알림 발송 성공")
+                logger.info("✅ Discord 알림 발송 성공")
                 return NotifyResult(
                     channel=NotifyChannel.DISCORD,
                     success=True,
@@ -380,6 +521,36 @@ class DiscordNotifier:
                 response_code=0,
                 error_message=str(e),
             )
+    
+    def _log_payload_error(self, payload: dict, error_msg: str):
+        """payload 에러를 errors.log에 상세 기록"""
+        try:
+            import json
+            from pathlib import Path
+            
+            # errors.log 경로
+            errors_log = Path("logs/errors.log")
+            errors_log.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(errors_log, 'a', encoding='utf-8') as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"[{datetime.now().isoformat()}] Discord Payload Error\n")
+                f.write(f"Error: {error_msg}\n")
+                
+                if 'content' in payload:
+                    f.write(f"Content Length: {len(payload['content'])}자\n")
+                    f.write(f"Content Preview: {payload['content'][:500]}...\n")
+                
+                if 'embeds' in payload:
+                    f.write(f"Embeds Count: {len(payload['embeds'])}\n")
+                    for i, embed in enumerate(payload['embeds']):
+                        f.write(f"  Embed {i+1} Title: {embed.get('title', 'N/A')}\n")
+                        f.write(f"  Embed {i+1} Fields: {len(embed.get('fields', []))}\n")
+                
+                f.write(f"{'='*60}\n")
+                
+        except Exception as e:
+            logger.warning(f"errors.log 기록 실패: {e}")
 
 
 # 싱글톤 인스턴스

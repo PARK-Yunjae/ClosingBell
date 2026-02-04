@@ -1,122 +1,111 @@
-# ClosingBell v6.5.1 업데이트
+# ClosingBell v7.0 - 키움 REST API 전환
 
-## 📋 변경사항 요약
+## 🆕 v7.0 변경사항
 
-### Phase 1: 버전 통일 + 전역상수
-- `src/config/app_config.py` (🆕 신규)
-  - APP_VERSION = "v6.5"
-  - AI_ENGINE = "Gemini 2.5 Flash"
-  - 데이터 경로, 푸터 문구 통합 관리
-- 대시보드 전체 버전 통일 (v6.3 → v6.5)
+### 1️⃣ 키움증권 REST API 전환 (KIS → Kiwoom)
+- **KIS 의존성 완전 제거**
+- 키움 REST API로 모든 데이터 조회
+- OAuth 토큰 자동 갱신 (메모리 + 파일 캐시)
+- Rate Limit 핸들링 (초당 8회)
+- Circuit Breaker (연속 실패 시 폴백)
 
-### Phase 2: UI/UX 개선
-- 유목민 종목 카드 레이아웃 개선 (컴팩트)
-- "기업정보 재수집" 버튼 삭제 (배포 환경 에러 방지)
+### 2️⃣ 유니버스 조회 개선
+- **TV200 조건검색 → 거래대금+거래량 랭킹 조합**
+- 거래대금 상위 300개 (ka10032, 연속조회)
+- 거래량 상위 150개 (ka10030, 연속조회)
+- 교집합 + 필터: 거래대금≥150억, 등락률1~30%
 
-### Phase 3: DART 확장
-- `dart_service.py` 확장
-  - 최대주주 지분율 조회 (`get_major_shareholder`)
-  - 감사의견 조회 (`get_audit_opinion`)
-  - 자본변동 공시 조회 (`get_capital_changes`)
-- AI 프롬프트에 새 정보 포함
+### 3️⃣ Quiet Accumulation 스크리너 (🆕 신규)
+- **"거래량 폭발 전, 조용한 축적 패턴" 탐지**
+- 가격: 2,000~10,000원
+- 변동성 낮음 + 박스권 수렴
+- 거래대금 미세 상승 (5일/20일 비율)
+- 60일 고점 대비 80% 이상 + 저점 상승 추세
 
-### Phase 4: AI 분석 개선
-- `ai_service.py` 개선
-  - PER/PBR 없을 때 "테마·수급 중심 종목" 컨텍스트 제공
-  - 유목민 공부법: 목표가/매수/매도 추천 금지
-  - 공부 포인트 필드 추가
-- `top5_ai_service.py` 개선
-  - 밸류에이션 컨텍스트 개선
-
-### 기존 수정 (v6.5)
-- Discord 웹훅: 등급(🏆S, 🥇A), 시총, 거래량 표시
-- RSI 계산 함수 추가
-- PER/PBR/ROE 네이버 보충 수집
+### 4️⃣ Discord 2000자 자동 분할
+- 긴 메시지 자동 분할 발송
+- 코드블록 래핑 유지
 
 ---
 
-## 📁 폴더 구조
+## 📋 필수 설정 (.env)
 
-```
-closingbell_v6.5.1_release/
-├── src/
-│   ├── config/
-│   │   └── app_config.py        # 🆕 전역상수
-│   ├── domain/
-│   │   ├── indicators.py        # RSI 추가
-│   │   └── score_calculator.py  # raw_rsi 필드
-│   └── services/
-│       ├── ai_service.py        # AI 프롬프트 개선
-│       ├── company_service.py   # PER/PBR/ROE 보충
-│       ├── dart_service.py      # 최대주주/감사의견
-│       ├── discord_embed_builder.py  # 등급/시총/거래량
-│       ├── screener_service.py  # market_cap 전달
-│       └── top5_ai_service.py   # 밸류에이션 개선
-├── scripts/
-│   └── test_discord_webhook.py  # 웹훅 테스트
-├── dashboard/
-│   ├── app.py                   # 버전 통일
-│   └── pages/
-│       ├── 1_top5_tracker.py    # 버전 통일
-│       ├── 2_nomad_study.py     # 레이아웃 + 버튼 삭제
-│       └── 3_stock_search.py    # 버전 통일
-├── README.md
-└── TEST_GUIDE.md
+```bash
+# 키움증권 REST API 설정 (필수)
+KIWOOM_APPKEY=your_appkey
+KIWOOM_SECRETKEY=your_secretkey
+KIWOOM_BASE_URL=https://api.kiwoom.com
+KIWOOM_USE_MOCK=false
 ```
 
 ---
 
-## 🔧 설치 방법
+## 🚀 사용법
 
-### 1. 파일 복사 (덮어쓰기)
+### 기본 실행
+```bash
+python main.py              # 스케줄러 모드
+python main.py --run        # 즉시 실행
+python main.py --run-test   # 테스트 (알림X)
+```
+
+### Quiet Accumulation (v7.0 신규)
+```bash
+python main.py --run-quiet  # 조용한 축적 패턴 스캔
+```
+
+### 백필 및 유틸
+```bash
+python main.py --backfill 20     # 과거 20일 백필
+python main.py --check 005930    # 종목 점수 확인
+python main.py --validate        # 설정 검증
+```
+
+---
+
+## 📁 주요 파일 구조
 
 ```
-기존 프로젝트/
+ClosingBell/
+├── main.py                    # v7.0 메인
 ├── src/
+│   ├── adapters/
+│   │   ├── kiwoom_rest_client.py  # 키움 REST API
+│   │   └── discord_notifier.py    # 2000자 분할
 │   ├── config/
-│   │   └── app_config.py  ← 새로 추가
-│   ├── domain/
-│   │   ├── indicators.py  ← 덮어쓰기
-│   │   └── score_calculator.py  ← 덮어쓰기
+│   │   ├── settings.py        # 키움 설정 추가
+│   │   └── app_config.py      # v7.0 버전
 │   └── services/
-│       ├── ai_service.py  ← 덮어쓰기
-│       ├── company_service.py  ← 덮어쓰기
-│       ├── dart_service.py  ← 덮어쓰기
-│       ├── discord_embed_builder.py  ← 덮어쓰기
-│       ├── screener_service.py  ← 덮어쓰기
-│       └── top5_ai_service.py  ← 덮어쓰기
-├── scripts/
-│   └── test_discord_webhook.py  ← 덮어쓰기
-└── dashboard/
-    ├── app.py  ← 덮어쓰기
-    └── pages/
-        ├── 1_top5_tracker.py  ← 덮어쓰기
-        ├── 2_nomad_study.py  ← 덮어쓰기
-        └── 3_stock_search.py  ← 덮어쓰기
+│       ├── screener_service.py    # 키움 유니버스
+│       └── quiet_accumulation.py  # 🆕 선행 신호
+├── .env                       # 키움 API 키
+└── README.md
 ```
 
-### 2. 파일 복사 명령어 (Windows)
+---
 
-```cmd
-# 압축 해제 후 closingbell 폴더에서 실행
-xcopy /Y closingbell_v6.5.1_release\src\config\* src\config\
-xcopy /Y closingbell_v6.5.1_release\src\domain\* src\domain\
-xcopy /Y closingbell_v6.5.1_release\src\services\* src\services\
-xcopy /Y closingbell_v6.5.1_release\scripts\* scripts\
-xcopy /Y closingbell_v6.5.1_release\dashboard\* dashboard\
-xcopy /Y /S closingbell_v6.5.1_release\dashboard\pages\* dashboard\pages\
-```
+## 📊 스케줄 (기본)
+
+| 시간 | 작업 |
+|------|------|
+| 12:00 | 프리뷰 스크리닝 |
+| 15:00 | 메인 스크리닝 (TOP5) |
+| 15:05 | Quiet Accumulation (선행 신호) |
+| 17:40 | 자동 종료 |
 
 ---
 
 ## ⚠️ 주의사항
 
-1. **백업 권장**: 기존 파일 백업 후 덮어쓰기
-2. **Python 버전**: 3.10 이상 권장
-3. **환경변수**: .env 파일 확인 (DART_API_KEY, GEMINI_API_KEY)
+1. **키움 API 키 필수**: .env에 KIWOOM_APPKEY, KIWOOM_SECRETKEY 설정
+2. **Python 3.10+** 권장
+3. **KIS 설정은 레거시**: 더 이상 사용하지 않음 (삭제 가능)
 
 ---
 
-## 📞 문의
+## 📈 버전 히스토리
 
-테스트 가이드는 `TEST_GUIDE.md` 참고
+- **v7.0** (2026-02-04): 키움 REST API 전환, Quiet Accumulation
+- **v6.5** (2026-01-29): Discord 등급/시총 표시, RSI 추가
+- **v6.4** (2026-01-28): TV200 스냅샷 DB 저장
+- **v6.3** (2026-01-27): CCI 하드필터 비활성화

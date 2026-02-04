@@ -1,5 +1,5 @@
 """
-스크리닝 서비스 v6.5
+스크리닝 서비스 v7.0 (키움 REST API)
 
 책임:
 - 스크리닝 플로우 제어
@@ -8,21 +8,18 @@
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
 - 글로벌 지표 필터 (나스닥/환율)
 
+v7.0 변경사항:
+- 키움증권 REST API 전환 (KIS → Kiwoom)
+- TV200 조건검색 → 거래대금+거래량 랭킹 조합
+  * 거래대금 상위 300개 (ka10032, 연속조회)
+  * 거래량 상위 150개 (ka10030, 연속조회)
+  * 교집합 + 필터: 거래대금≥150억, 등락률1~30%
+- 기존 TV200 스냅샷 폴백 유지
+
 v6.5 변경사항:
 - Top5Pipeline 연동 (Enrichment + AI 배치)
 - DART 기업정보/재무/위험공시 통합
 - AI 배치 호출 (5회 → 1회)
-- 기존 방식 fallback 유지
-
-v6.4 변경사항:
-- TV200 조건검색 유지 (HTS와 동일)
-- TV200 스냅샷을 DB에 저장하여 백필에서 재사용
-- 백필: 스냅샷 있으면 사용, 없으면 OHLCV 기반 필터 (fallback)
-- 시간이 지나면 스냅샷이 쌓여서 백필도 100% 일치
-
-v6.3 변경사항:
-- CCI 하드 필터 비활성화 (999로 설정, 점수제에서 자연 감점)
-- TV200 백필 필터와 일치 (거래대금 100억+, 등락률 0.1~30%)
 """
 
 import os
@@ -41,7 +38,7 @@ from src.domain.score_calculator import (
     StockScoreV5,
     format_discord_embed,
 )
-from src.adapters.kis_client import get_kis_client, KISClient
+from src.adapters.kiwoom_rest_client import get_kiwoom_client, KiwoomRestClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
 from src.infrastructure.repository import (
     get_screening_repository,
@@ -114,20 +111,20 @@ def filter_by_cci(scores: list, limit: int = CCI_HARD_LIMIT) -> tuple:
 
 
 class ScreenerService:
-    """스크리닝 서비스 v6.3 (단순 선형 점수제)"""
+    """스크리닝 서비스 v6.5 (키움 REST API 기반)"""
     
     def __init__(
         self,
-        kis_client: Optional[KISClient] = None,
+        broker_client: Optional[KiwoomRestClient] = None,
         discord_notifier: Optional[DiscordNotifier] = None,
         screening_repo: Optional[ScreeningRepository] = None,
     ):
-        self.kis_client = kis_client or get_kis_client()
+        self.broker_client = broker_client or get_kiwoom_client()
         self.discord_notifier = discord_notifier or get_discord_notifier()
         self.screening_repo = screening_repo or get_screening_repository()
         self.calculator = ScoreCalculatorV5()
         
-        logger.info("ScreenerService 초기화")
+        logger.info("ScreenerService 초기화 (키움 REST API)")
     
     def run_screening(
         self,
@@ -293,59 +290,161 @@ class ScreenerService:
                                      is_preview, str(e))
     
     def _get_universe(self) -> List:
-        """유니버스 조회 (TV200 조건검색)
+        """유니버스 조회 (키움 REST API 기반)
         
-        v6.4: 
-        - TV200 조건검색 사용 (HTS와 동일)
-        - 결과를 스냅샷으로 저장하여 백필에서 재사용
-        - 스냅샷이 쌓이면 백필과 100% 일치
+        v7.0: TV200 조건검색 → 키움 거래대금/거래량 상위 조합으로 전환
+        
+        알고리즘 (명세서 준수):
+        1) ka10032에서 300개 조회
+        2) ka10030에서 150개 조회 → {code: rank} 딕셔너리
+        3) 필터링:
+           - 거래량 150위 이내
+           - 거래대금 >= 150억
+           - 등락률 1% ~ 30%
+           - 가격 2,000 ~ 10,000원
+        4) filter_universe_stocks() 적용 (ETF/스팩 등 제외)
+        5) 스냅샷 저장 (source='KIWOOM_RANK')
+        
+        폴백:
+        - API 실패 → 오늘 tv200_snapshot(after) 조회
+        - 없으면 → 가장 최근 스냅샷 사용 (FALLBACK 태그)
+        - 그래도 없으면 → 후보 0개로 종료 (프로그램 유지)
         """
-        condition_name = os.getenv("CONDITION_NAME", "TV200")
-        min_candidates = int(os.getenv("MIN_CANDIDATES", "30"))
+        from src.domain.models import StockInfo
         
         stocks = []
+        names_dict = {}
+        is_fallback = False
         
         try:
-            # TV200 조건검색
-            stocks_raw = self.kis_client.get_condition_universe(
-                condition_name=condition_name,
-                limit=500,
+            # 키움 REST API로 유니버스 조회
+            raw_stocks, names_dict = self.broker_client.get_rank_universe(
+                min_trading_value=15000,  # 150억 (백만원 단위)
+                min_change_rate=1.0,
+                max_change_rate=30.0,
+                min_price=2000,
+                max_price=10000,
+                volume_rank_limit=150,
             )
             
-            if stocks_raw:
-                # 원본 결과 저장 (비교 분석용)
-                self._save_tv200_result(stocks_raw, "before_filter")
+            if raw_stocks:
+                # StockInfo 객체로 변환
+                stocks_before_filter = [
+                    StockInfo(code=s['code'], name=s['name']) 
+                    for s in raw_stocks
+                ]
                 
-                # 필터링 (ETF/스팩 등 제외)
-                stocks, _ = filter_universe_stocks(stocks_raw, log_details=True)
-                logger.info(f"TV200 조건검색 결과: {len(stocks)}개")
+                # 원본 결과 저장 (비교 분석용)
+                self._save_universe_snapshot(
+                    stocks_before_filter, names_dict, 
+                    filter_stage="before", source="KIWOOM_RANK"
+                )
+                
+                # Step 4: ETF/스팩/리츠/인버스 등 제외
+                stocks, excluded_count = filter_universe_stocks(
+                    stocks_before_filter, log_details=True
+                )
+                logger.info(f"🎯 키움 유니버스 최종: {len(stocks)}개 (패턴 제외: {excluded_count}개)")
                 
                 # 필터 후 결과 저장 (스냅샷 - 백필에서 사용)
-                self._save_tv200_result(stocks, "after_filter")
+                self._save_universe_snapshot(
+                    stocks, names_dict, 
+                    filter_stage="after", source="KIWOOM_RANK"
+                )
                 
         except Exception as e:
-            logger.error(f"TV200 조건검색 실패: {e}")
+            logger.error(f"❌ 키움 유니버스 조회 실패: {e}")
+            is_fallback = True
         
-        # Fallback (종목 부족 시 거래대금 API)
+        # 폴백 로직 (API 실패 또는 결과 부족)
+        min_candidates = int(os.getenv("MIN_CANDIDATES", "10"))
+        
         if len(stocks) < min_candidates:
-            logger.warning(f"TV200 결과 부족 ({len(stocks)}개), 거래대금 API fallback")
+            logger.warning(f"⚠️ 유니버스 부족 ({len(stocks)}개), 스냅샷 폴백 시도")
+            is_fallback = True
+            
             try:
-                fallback = self.kis_client.get_top_trading_value_stocks(
-                    min_trading_value=settings.screening.min_trading_value,
-                    limit=200,
-                )
-                if fallback:
-                    filtered, _ = filter_universe_stocks(fallback, log_details=True)
-                    existing = {s.code for s in stocks}
-                    for s in filtered:
-                        if s.code not in existing:
-                            stocks.append(s)
-                    logger.info(f"Fallback 후: {len(stocks)}개")
+                from src.infrastructure.repository import get_tv200_snapshot_repository
+                snapshot_repo = get_tv200_snapshot_repository()
+                
+                # 1차: 오늘 날짜 스냅샷
+                today_str = self._get_actual_trading_date().isoformat()
+                snapshot = snapshot_repo.get_snapshot(today_str, filter_stage='after')
+                
+                # 2차: 가장 최근 스냅샷
+                if not snapshot:
+                    all_dates = snapshot_repo.get_all_dates(filter_stage='after')
+                    if all_dates:
+                        latest_date = max(all_dates)
+                        snapshot = snapshot_repo.get_snapshot(latest_date, filter_stage='after')
+                        logger.warning(f"📅 최근 스냅샷 사용: {latest_date}")
+                
+                if snapshot and snapshot.get('codes'):
+                    codes = snapshot['codes']
+                    names = snapshot.get('names', {})
+                    
+                    # StockInfo로 변환
+                    existing_codes = {s.code for s in stocks}
+                    for code in codes:
+                        if code not in existing_codes:
+                            stocks.append(StockInfo(
+                                code=code, 
+                                name=names.get(code, '')
+                            ))
+                    
+                    logger.info(f"🔄 폴백 후 유니버스: {len(stocks)}개 (FALLBACK)")
+                    
             except Exception as e:
-                logger.error(f"Fallback 실패: {e}")
+                logger.error(f"폴백 스냅샷 조회 실패: {e}")
+        
+        # 결과가 0개여도 프로그램은 계속 실행
+        if not stocks:
+            logger.warning("⚠️ 유니버스 0개 - 스크리닝 건너뜀 (프로그램 유지)")
+        
+        # 폴백 태그 저장 (알림에서 사용)
+        self._is_fallback_universe = is_fallback
         
         return stocks
     
+    def _save_universe_snapshot(
+        self, 
+        stocks: List, 
+        names_dict: Dict[str, str],
+        filter_stage: str,
+        source: str = "KIWOOM_RANK"
+    ):
+        """유니버스 스냅샷 저장
+        
+        Args:
+            stocks: 종목 리스트
+            names_dict: 코드 → 이름 딕셔너리
+            filter_stage: 'before' 또는 'after'
+            source: 소스 ('KIWOOM_RANK', 'TV200' 등)
+        """
+        try:
+            screen_date = self._get_actual_trading_date()
+            today_str = screen_date.isoformat() if hasattr(screen_date, 'isoformat') else str(screen_date)
+            
+            # 코드 리스트 추출
+            codes = []
+            for s in stocks:
+                code = s.code if hasattr(s, 'code') else str(s)
+                codes.append(code)
+            
+            # DB 저장
+            from src.infrastructure.repository import get_tv200_snapshot_repository
+            snapshot_repo = get_tv200_snapshot_repository()
+            snapshot_repo.save_snapshot(
+                screen_date=today_str,
+                codes=codes,
+                names=names_dict,
+                filter_stage=filter_stage,
+                source=source,
+            )
+            logger.info(f"📸 스냅샷 저장: {today_str} {filter_stage} ({len(codes)}개) [source={source}]")
+            
+        except Exception as e:
+            logger.warning(f"스냅샷 저장 실패: {e}")
     def _save_tv200_result(self, stocks: List, stage: str = "raw"):
         """TV200 결과 DB 스냅샷 저장 (v6.4 - JSON 파일 저장 제거)
         
@@ -419,7 +518,7 @@ class ScreenerService:
         
         for i, stock in enumerate(stocks):
             try:
-                daily_prices = self.kis_client.get_daily_prices(
+                daily_prices = self.broker_client.get_daily_prices(
                     stock.code,
                     count=MIN_DAILY_DATA_COUNT + 10,
                 )
@@ -446,7 +545,7 @@ class ScreenerService:
                 # 2차: 현재가 API에서 (거래대금 + 시총)
                 if trading_value <= 0 or market_cap <= 0:
                     try:
-                        current_data = self.kis_client.get_current_price(stock.code)
+                        current_data = self.broker_client.get_current_price(stock.code)
                         if current_data:
                             if current_data.trading_value > 0 and trading_value <= 0:
                                 trading_value = current_data.trading_value / 100_000_000

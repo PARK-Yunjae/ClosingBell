@@ -21,20 +21,37 @@ load_dotenv(BASE_DIR / ".env")
 
 
 @dataclass
-class KISSettings:
-    """한국투자증권 API 설정"""
+class KiwoomSettings:
+    """키움증권 REST API 설정"""
     app_key: str
-    app_secret: str
-    account_no: str
-    base_url: str = "https://openapi.koreainvestment.com:9443"
-    hts_id: Optional[str] = None
+    secret_key: str
+    base_url: str = "https://api.kiwoom.com"
+    use_mock: bool = False  # True면 모의투자 도메인 사용
     
     def __post_init__(self):
         # Streamlit Cloud 등 대시보드 전용 모드에서는 API 키 불필요
         if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
             return
-        if not self.app_key or not self.app_secret:
-            raise ValueError("KIS_APP_KEY와 KIS_APP_SECRET은 필수입니다.")
+        if not self.app_key or not self.secret_key:
+            raise ValueError("KIWOOM_APPKEY와 KIWOOM_SECRETKEY는 필수입니다.")
+        
+        # 모의투자 도메인 적용
+        if self.use_mock:
+            self.base_url = "https://mockapi.kiwoom.com"
+
+
+@dataclass
+class KISSettings:
+    """한국투자증권 API 설정 (레거시 - 제거 예정)"""
+    app_key: str = ""
+    app_secret: str = ""
+    account_no: str = ""
+    base_url: str = "https://openapi.koreainvestment.com:9443"
+    hts_id: Optional[str] = None
+    
+    def __post_init__(self):
+        # 더 이상 KIS는 검증하지 않음 - 키움으로 전환됨
+        pass
 
 
 @dataclass
@@ -98,7 +115,8 @@ class AISettings:
 @dataclass
 class Settings:
     """전체 설정"""
-    kis: KISSettings
+    kiwoom: KiwoomSettings  # 키움 REST API (메인)
+    kis: KISSettings        # KIS (레거시 - 제거 예정)
     discord: DiscordSettings
     email: EmailSettings
     database: DatabaseSettings
@@ -117,7 +135,15 @@ class Settings:
 def load_settings() -> Settings:
     """환경 변수에서 설정 로드"""
     
-    # KIS 설정
+    # 키움 설정 (메인 브로커)
+    kiwoom = KiwoomSettings(
+        app_key=os.getenv("KIWOOM_APPKEY", "").strip('"'),
+        secret_key=os.getenv("KIWOOM_SECRETKEY", "").strip('"'),
+        base_url=os.getenv("KIWOOM_BASE_URL", "https://api.kiwoom.com"),
+        use_mock=os.getenv("KIWOOM_USE_MOCK", "false").lower() == "true",
+    )
+    
+    # KIS 설정 (레거시 - 제거 예정, 빈 값으로 초기화)
     kis = KISSettings(
         app_key=os.getenv("KIS_APP_KEY", "").strip('"'),
         app_secret=os.getenv("KIS_APP_SECRET", "").strip('"'),
@@ -168,6 +194,7 @@ def load_settings() -> Settings:
     )
     
     return Settings(
+        kiwoom=kiwoom,
         kis=kis,
         discord=discord,
         email=email,
@@ -185,8 +212,9 @@ settings = load_settings()
 
 if __name__ == "__main__":
     # 설정 확인용
-    print(f"KIS App Key: {settings.kis.app_key[:10]}...")
-    print(f"Discord Webhook: {settings.discord.webhook_url[:50]}...")
+    print(f"Kiwoom App Key: {settings.kiwoom.app_key[:10] if settings.kiwoom.app_key else 'N/A'}...")
+    print(f"Kiwoom Base URL: {settings.kiwoom.base_url}")
+    print(f"Discord Webhook: {settings.discord.webhook_url[:50] if settings.discord.webhook_url else 'N/A'}...")
     print(f"DB Path: {settings.database.path}")
     print(f"Min Trading Value: {settings.screening.min_trading_value}억원")
     print(f"API Call Interval: {settings.screening.api_call_interval}초")

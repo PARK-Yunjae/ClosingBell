@@ -257,11 +257,11 @@ class EnrichmentService:
         """
         stock.enriched_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # ★ 0. KIS API로 시총/거래량 업데이트 (실시간)
+        # ★ 0. 키움 API로 시총/거래량 업데이트 (실시간)
         try:
-            from src.adapters.kis_client import get_kis_client
-            kis = get_kis_client()  # 싱글톤 사용 (토큰 재사용)
-            current = kis.get_current_price(stock.stock_code)
+            from src.adapters.kiwoom_rest_client import get_kiwoom_client
+            broker = get_kiwoom_client()  # 싱글톤 사용 (토큰 재사용)
+            current = broker.get_current_price(stock.stock_code)
             if current:
                 # 시가총액 (억원)
                 if current.market_cap > 0:
@@ -269,9 +269,9 @@ class EnrichmentService:
                 # 거래량 (주)
                 if current.volume > 0:
                     stock.volume = current.volume
-                logger.debug(f"KIS 업데이트: {stock.stock_code} 시총={current.market_cap}억, 거래량={current.volume}")
+                logger.debug(f"키움 업데이트: {stock.stock_code} 시총={current.market_cap}억, 거래량={current.volume}")
         except Exception as e:
-            logger.debug(f"KIS 조회 실패 ({stock.stock_code}): {e}")
+            logger.debug(f"키움 조회 실패 ({stock.stock_code}): {e}")
         
         # 1. DART 기업정보 + 재무 + 위험공시
         if self.dart:

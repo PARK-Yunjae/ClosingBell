@@ -4,7 +4,7 @@ ClosingBell 앱 전역 설정
 - 데이터 경로 (절대경로)
 - 표시 문구
 
-v6.5.1 - 전역상수 통합 관리
+v7.0 - 키움 REST API 전환
 """
 
 from pathlib import Path
@@ -13,9 +13,10 @@ import os
 # ============================================================
 # 버전 정보
 # ============================================================
-APP_VERSION = "v6.5"
+APP_VERSION = "v7.0"
 APP_NAME = "ClosingBell"
 AI_ENGINE = "Gemini 2.5 Flash"
+BROKER_API = "키움증권 REST API"
 
 # 전체 버전 문자열
 APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
@@ -28,7 +29,7 @@ DEFAULT_DATA_DIR = r"C:\Coding\data"
 
 # 환경변수에서 로드 (없으면 기본값)
 DATA_DIR = Path(os.getenv("DATA_DIR", DEFAULT_DATA_DIR))
-OHLCV_DIR = DATA_DIR / "ohlcv_kis"
+OHLCV_DIR = DATA_DIR / "ohlcv_kiwoom"  # v7.0: 키움 기반
 OHLCV_FULL_DIR = DATA_DIR / "ohlcv"  # 3년+ 전체 데이터
 GLOBAL_DIR = DATA_DIR / "global"
 MAPPING_FILE = DATA_DIR / "stock_mapping.csv"
@@ -73,7 +74,7 @@ PAGE_TITLES = {
 # 데이터 소스 표시
 # ============================================================
 DATA_SOURCES = {
-    "kis": "한국투자증권 API",
+    "kiwoom": "키움증권 REST API",  # v7.0
     "naver": "네이버 금융",
     "dart": "DART 전자공시",
     "ai": AI_ENGINE,

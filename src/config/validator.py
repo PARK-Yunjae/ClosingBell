@@ -71,31 +71,37 @@ class ConfigValidationError(Exception):
         return "\n".join(lines)
 
 
-def validate_kis_settings(result: ValidationResult):
-    """KIS API 설정 검증"""
-    # 필수: APP_KEY
-    if not settings.kis.app_key or settings.kis.app_key == "your_app_key_here":
+def validate_kiwoom_settings(result: ValidationResult):
+    """키움 REST API 설정 검증"""
+    # 필수: APPKEY
+    if not settings.kiwoom.app_key or settings.kiwoom.app_key == "your_appkey_here":
         result.add_error(
-            "KIS_APP_KEY 미설정 - 한국투자증권 개발자센터에서 발급받으세요."
+            "KIWOOM_APPKEY 미설정 - 키움증권 REST API에서 발급받으세요."
         )
     
-    # 필수: APP_SECRET
-    if not settings.kis.app_secret or settings.kis.app_secret == "your_app_secret_here":
+    # 필수: SECRETKEY
+    if not settings.kiwoom.secret_key or settings.kiwoom.secret_key == "your_secretkey_here":
         result.add_error(
-            "KIS_APP_SECRET 미설정 - 한국투자증권 개발자센터에서 발급받으세요."
-        )
-    
-    # 권장: ACCOUNT_NO (조회 기능에는 필요 없음)
-    if not settings.kis.account_no or settings.kis.account_no == "12345678-01":
-        result.add_warning(
-            "KIS_ACCOUNT_NO 미설정 - 실제 계좌번호를 입력하세요 (조회만 할 경우 필요 없음)."
+            "KIWOOM_SECRETKEY 미설정 - 키움증권 REST API에서 발급받으세요."
         )
     
     # BASE_URL 형식 검증
-    if not settings.kis.base_url.startswith("https://"):
+    if not settings.kiwoom.base_url.startswith("https://"):
         result.add_error(
-            f"KIS_BASE_URL 형식 오류 - https://로 시작해야 합니다: {settings.kis.base_url}"
+            f"KIWOOM_BASE_URL 형식 오류 - https://로 시작해야 합니다: {settings.kiwoom.base_url}"
         )
+    
+    # 모의투자 모드 알림
+    if settings.kiwoom.use_mock:
+        result.add_warning(
+            "KIWOOM_USE_MOCK=true - 모의투자 도메인을 사용합니다 (KRX만 지원)."
+        )
+
+
+def validate_kis_settings(result: ValidationResult):
+    """KIS API 설정 검증 (레거시 - 더 이상 사용하지 않음)"""
+    # KIS는 더 이상 검증하지 않음 - 키움으로 완전 전환
+    pass
 
 
 def validate_discord_settings(result: ValidationResult):
@@ -217,12 +223,12 @@ def validate_settings(raise_on_error: bool = True) -> ValidationResult:
     
     # 각 설정 그룹 검증
     if not is_dashboard_only:
-        # 실전 모드: KIS/Discord 필수 검증
-        validate_kis_settings(result)
+        # 실전 모드: 키움/Discord 필수 검증
+        validate_kiwoom_settings(result)
         validate_discord_settings(result)
     else:
-        # 대시보드 모드: KIS/Discord 스킵
-        logger.info("🖥️ DASHBOARD_ONLY 모드 - KIS/Discord 검증 스킵")
+        # 대시보드 모드: 키움/Discord 스킵
+        logger.info("🖥️ DASHBOARD_ONLY 모드 - 키움/Discord 검증 스킵")
     
     # 공통 검증 (DB, 로그, 스크리닝)
     validate_database_settings(result)
@@ -253,11 +259,12 @@ def print_settings_summary():
     print("📋 현재 설정 요약")
     print("=" * 60)
     
-    # KIS 설정
-    print("\n[KIS API]")
-    print(f"  APP_KEY: {'설정됨' if settings.kis.app_key else '미설정'}")
-    print(f"  APP_SECRET: {'설정됨' if settings.kis.app_secret else '미설정'}")
-    print(f"  BASE_URL: {settings.kis.base_url}")
+    # 키움 설정
+    print("\n[키움 REST API]")
+    print(f"  APPKEY: {'설정됨' if settings.kiwoom.app_key else '미설정'}")
+    print(f"  SECRETKEY: {'설정됨' if settings.kiwoom.secret_key else '미설정'}")
+    print(f"  BASE_URL: {settings.kiwoom.base_url}")
+    print(f"  USE_MOCK: {settings.kiwoom.use_mock}")
     
     # Discord 설정
     print("\n[Discord]")

@@ -80,7 +80,7 @@ RANK_EMOJI = {
 class DiscordEmbedBuilder:
     """Discord Embed 생성기"""
     
-    def __init__(self, version: str = "v6.5"):
+    def __init__(self, version: str = "v7.0"):
         self.version = version
     
     def _truncate(self, text: str, max_length: int = DISCORD_FIELD_VALUE_LIMIT, suffix: str = "...") -> str:
