@@ -37,22 +37,27 @@ class DipScanner:
     """눌림목 스크리너
     
     백테스트 결과 기반 조건:
-    - 급등: 거래량 1000만+, 등락률 15%+, 이격도 20%+
-    - 눌림목: 음봉, -3% 이하, 거래량 급감(50% 미만)
+    - 급등: 거래량 전일대비 500%+ AND 거래량 1000만+
+    - 눌림목A: 거래량 30% 이하 + 음봉 -3% 이하
+    - 눌림목B: 거래량 20% 이하 + 가격방어 -2%~+1%
     """
     
     # ============================================================
-    # 급등 조건 (감시 리스트 등록)
+    # 급등 조건 (감시 리스트 등록) - 거래량 기준
     # ============================================================
-    MIN_VOLUME = 10_000_000      # 1000만주
-    MIN_CHANGE_RATE = 15.0       # 15%
-    MIN_DISPARITY = 20.0         # 이격도 20%
+    MIN_VOLUME = 10_000_000      # 1000만주 (기본 유동성)
+    VOL_SPIKE_RATIO = 5.0        # 전일 대비 500%+
     
     # ============================================================
     # 눌림목 조건
     # ============================================================
-    DIP_MAX_CHANGE = -3.0        # -3% 이하
-    DIP_VOLUME_RATIO = 0.5       # 급등일 대비 50% 미만
+    DIP_MAX_CHANGE = -3.0        # 눌림목형: -3% 이하
+    DIP_VOLUME_RATIO = 0.3       # 급등일 대비 30% 이하
+    
+    # 가격방어형
+    DEFEND_MAX_CHANGE = 1.0      # +1% 이내
+    DEFEND_MIN_CHANGE = -2.0     # -2% 이상
+    DEFEND_VOLUME_RATIO = 0.2    # 급등일 대비 20% 이하
     
     # 추적 기간
     WATCH_DAYS = 5
@@ -221,12 +226,20 @@ class DipScanner:
             
             row = latest.iloc[0]
             
-            # 급등 조건 체크
+            # 급등 조건 체크 - 거래량 기준
+            # 1) 기본 유동성: 1000만주+
             if row['volume'] < self.MIN_VOLUME:
                 continue
-            if pd.isna(row['change_rate']) or row['change_rate'] < self.MIN_CHANGE_RATE:
+            
+            # 2) 전일 대비 거래량 폭발 (500%+)
+            idx = df.index.get_loc(row.name)
+            if idx < 1:
                 continue
-            if pd.isna(row['disparity']) or row['disparity'] < self.MIN_DISPARITY:
+            
+            prev_vol = df.iloc[idx-1]['volume']
+            vol_spike = row['volume'] / prev_vol if prev_vol > 0 else 0
+            
+            if vol_spike < self.VOL_SPIKE_RATIO:
                 continue
             
             surges.append({
@@ -236,8 +249,9 @@ class DipScanner:
                 'date': row['date'].strftime('%Y-%m-%d'),
                 'close': int(row['close']),
                 'volume': int(row['volume']),
-                'change_rate': round(row['change_rate'], 2),
-                'disparity': round(row['disparity'], 2),
+                'change_rate': round(row['change_rate'], 2) if pd.notna(row['change_rate']) else 0,
+                'disparity': round(row['disparity'], 2) if pd.notna(row['disparity']) else 0,
+                'vol_spike': round(vol_spike, 1),
             })
         
         logger.info(f"급등 종목 발견: {len(surges)}개")
@@ -334,29 +348,37 @@ class DipScanner:
             row = today_data.iloc[0]
             
             # ============================================================
-            # 눌림목 조건 체크
+            # 눌림목 조건 체크 (2가지 타입)
             # ============================================================
             
-            # 1) 음봉
-            if row['close'] >= row['open']:
-                continue
-            
-            # 2) 등락률 -3% 이하
-            if pd.isna(row['change_rate']) or row['change_rate'] > self.DIP_MAX_CHANGE:
-                continue
-            
-            # 3) 거래량 급감
             vol_ratio = row['volume'] / watch['surge_volume'] if watch['surge_volume'] > 0 else 1
-            if vol_ratio >= self.DIP_VOLUME_RATIO:
+            change = row['change_rate'] if pd.notna(row['change_rate']) else 0
+            is_bearish = row['close'] < row['open']
+            
+            # 타입A: 눌림목형 (음봉 + -3% 이하 + 거래량 30% 이하)
+            is_dip = (is_bearish and 
+                     change <= self.DIP_MAX_CHANGE and 
+                     vol_ratio <= self.DIP_VOLUME_RATIO)
+            
+            # 타입B: 가격방어형 (변동 -2%~+1% + 거래량 20% 이하)
+            is_defend = (self.DEFEND_MIN_CHANGE <= change <= self.DEFEND_MAX_CHANGE and
+                        vol_ratio <= self.DEFEND_VOLUME_RATIO)
+            
+            if not is_dip and not is_defend:
                 continue
             
+            # 신호 타입
+            signal_type = '눌림목' if is_dip else '가격방어'
+            
             # ============================================================
-            # 신호 강도 계산 (1~3) - 백테스트 기반
+            # 신호 강도 계산 (1~3)
             # ============================================================
             strength = 1
             if watch['surge_change'] >= 29:  # 상한가
                 strength += 1
-            if row['change_rate'] <= -5:  # 강한 눌림
+            if is_dip and change <= -5:  # 강한 눌림
+                strength += 1
+            if is_defend and vol_ratio <= 0.15:  # 극단적 거래량 급감
                 strength += 1
             if watch['surge_disparity'] >= 30:  # 고이격
                 strength += 1
@@ -378,6 +400,7 @@ class DipScanner:
                 'volume_ratio': round(vol_ratio * 100, 1),
                 'current_disparity': round(row['disparity'], 2) if pd.notna(row['disparity']) else 0,
                 'strength': strength,
+                'signal_type': signal_type,
             })
         
         # 강도순 정렬
@@ -410,43 +433,154 @@ class DipScanner:
         conn.commit()
         conn.close()
     
-    def format_discord_message(self, signals: List[Dict]) -> str:
-        """Discord 메시지 포맷"""
+    def format_discord_message(self, signals: List[Dict], watch_status: List[Dict] = None) -> str:
+        """Discord 메시지 포맷
+        
+        Args:
+            signals: 눌림목 신호 리스트
+            watch_status: 감시 리스트 현황 (전체)
+        """
         today = date.today().strftime('%Y-%m-%d')
+        lines = []
         
-        if not signals:
-            return f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📉 눌림목 스크리너 ({today})
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-오늘 눌림목 신호 없음
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
-        
-        lines = [
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"📉 눌림목 신호 ({today})",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            ""
-        ]
-        
-        for i, s in enumerate(signals[:5], 1):  # 최대 5개
-            stars = "⭐" * s['strength']
-            limit_up = " 🔥상한가" if s['surge_change'] >= 29 else ""
-            
-            lines.append(f"{i}. {s['name']} ({s['code']}) {stars}")
-            lines.append(f"   급등: {s['surge_date']} (D+{s['days_after']})")
-            lines.append(f"   급등일: +{s['surge_change']:.1f}%{limit_up}, {s['surge_volume']//10000:,}만주")
-            lines.append(f"   오늘: {s['dip_change']:.1f}%, {s['dip_volume']//10000:,}만주 ({s['volume_ratio']:.0f}%)")
-            lines.append(f"   이격도: {s['current_disparity']:.1f}%")
+        # ============================================================
+        # 1. 눌림목 신호
+        # ============================================================
+        if signals:
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"📉 눌림목 신호 ({today}) - {len(signals)}개")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             lines.append("")
+            
+            for i, s in enumerate(signals[:5], 1):  # 최대 5개
+                stars = "⭐" * s['strength']
+                limit_up = " 🔥상한가" if s['surge_change'] >= 29 else ""
+                sig_type = "🛡️방어" if s.get('signal_type') == '가격방어' else "📉눌림"
+                
+                lines.append(f"{i}. {s['name']} ({s['code']}) {stars} {sig_type}")
+                lines.append(f"   급등: {s['surge_date']} (D+{s['days_after']})")
+                lines.append(f"   급등일: +{s['surge_change']:.1f}%{limit_up}, {s['surge_volume']//10000:,}만주")
+                lines.append(f"   오늘: {s['dip_change']:.1f}%, {s['dip_volume']//10000:,}만주 ({s['volume_ratio']:.0f}%)")
+                lines.append(f"   이격도: {s['current_disparity']:.1f}%")
+                lines.append("")
+            
+            lines.append("💡 재료/뉴스 확인 후 진입 결정!")
+            lines.append("⚠️ 손절 -3% 필수")
+        else:
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"📉 눌림목 신호 ({today}) - 0개")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("💡 재료/뉴스 확인 후 진입 결정!")
-        lines.append("⚠️ 손절 -3% 필수")
+        # ============================================================
+        # 2. 감시 리스트 현황 (전체)
+        # ============================================================
+        if watch_status:
+            # 신호 종목 코드 세트
+            signal_codes = {s['code'] for s in signals} if signals else set()
+            
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"📋 감시 리스트 현황 ({len(watch_status)}개)")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("")
+            
+            for w in watch_status:
+                limit_up = "🔥" if w['surge_change'] >= 29 else "  "
+                
+                # 오늘 상태 표시
+                today_change = w.get('today_change', 0)
+                today_vol_ratio = w.get('today_vol_ratio', 0)
+                days_after = w.get('days_after', 0)
+                
+                # 태그
+                tags = []
+                if w['code'] in signal_codes:
+                    tags.append("📉눌림목")
+                if today_vol_ratio > 0 and today_vol_ratio < 20:
+                    if abs(today_change) < 2:
+                        tags.append("🛡️가격방어")
+                    else:
+                        tags.append("📉거래량급감")
+                if today_change > 3:
+                    tags.append("🚀반등")
+                
+                tag_str = " ".join(tags) if tags else ""
+                
+                # 오늘 데이터 있으면 표시
+                if w.get('has_today_data'):
+                    lines.append(
+                        f"{limit_up}{w['name'][:6]:<7s} "
+                        f"+{w['surge_change']:>5.1f}% "
+                        f"→ D+{days_after} "
+                        f"오늘 {today_change:>+5.1f}% "
+                        f"(거래량 {today_vol_ratio:>3.0f}%) "
+                        f"{tag_str}"
+                    )
+                else:
+                    lines.append(
+                        f"{limit_up}{w['name'][:6]:<7s} "
+                        f"+{w['surge_change']:>5.1f}% "
+                        f"({w['surge_date']})"
+                    )
+            
+            lines.append("")
+            lines.append("🛡️=가격방어(변동<2%,거래량<20%)")
+        
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         return "\n".join(lines)
+    
+    def get_watch_status(self, today: str = None) -> List[Dict]:
+        """감시 리스트 전체 현황 (오늘 가격/거래량 포함)"""
+        if today is None:
+            today = date.today().strftime('%Y-%m-%d')
+        
+        today_dt = datetime.strptime(today, '%Y-%m-%d')
+        watch_list = self.get_watch_list()
+        
+        status_list = []
+        
+        for watch in watch_list:
+            code = watch['code']
+            surge_date = watch['surge_date']
+            surge_dt = datetime.strptime(surge_date, '%Y-%m-%d')
+            days_after = (today_dt - surge_dt).days
+            
+            item = {
+                'code': code,
+                'name': watch['name'],
+                'sector': watch['sector'],
+                'surge_date': surge_date,
+                'surge_change': watch['surge_change'],
+                'surge_volume': watch['surge_volume'],
+                'days_after': days_after,
+                'has_today_data': False,
+                'today_change': 0,
+                'today_vol_ratio': 0,
+            }
+            
+            # 오늘 데이터
+            df = self.get_stock_data(code)
+            if df is not None:
+                today_data = df[df['date'].dt.strftime('%Y-%m-%d') == today]
+                if today_data.empty:
+                    today_data = df.iloc[-1:]
+                
+                row = today_data.iloc[0]
+                
+                if not pd.isna(row['change_rate']):
+                    item['has_today_data'] = True
+                    item['today_change'] = round(row['change_rate'], 2)
+                    item['today_vol_ratio'] = round(
+                        row['volume'] / watch['surge_volume'] * 100, 1
+                    ) if watch['surge_volume'] > 0 else 0
+            
+            status_list.append(item)
+        
+        # 급등일 내림차순, 같은 날이면 등락률 내림차순
+        status_list.sort(key=lambda x: (-x['days_after'], -x['surge_change']))
+        
+        return status_list
     
     def run(self, send_discord: bool = True) -> List[Dict]:
         """스캐너 실행
@@ -479,11 +613,14 @@ class DipScanner:
         if signals:
             self.save_signals(signals)
         
-        # 4) Discord 전송
+        # 4) 감시 리스트 현황 수집
+        watch_status = self.get_watch_status()
+        
+        # 5) Discord 전송
         if send_discord:
             try:
                 notifier = get_discord_notifier()
-                message = self.format_discord_message(signals)
+                message = self.format_discord_message(signals, watch_status)
                 notifier.send_message(f"```\n{message}\n```")
                 logger.info("📤 Discord 전송 완료")
             except Exception as e:
@@ -531,12 +668,20 @@ class DipScanner:
             
             row = target_data.iloc[0]
             
-            # 급등 조건 체크
+            # 급등 조건 체크 - 거래량 기준
+            # 1) 기본 유동성: 1000만주+
             if row['volume'] < self.MIN_VOLUME:
                 continue
-            if pd.isna(row['change_rate']) or row['change_rate'] < self.MIN_CHANGE_RATE:
+            
+            # 2) 전일 대비 거래량 폭발 (500%+)
+            idx = df.index.get_loc(row.name)
+            if idx < 1:
                 continue
-            if pd.isna(row['disparity']) or row['disparity'] < self.MIN_DISPARITY:
+            
+            prev_vol = df.iloc[idx-1]['volume']
+            vol_spike = row['volume'] / prev_vol if prev_vol > 0 else 0
+            
+            if vol_spike < self.VOL_SPIKE_RATIO:
                 continue
             
             surges.append({
@@ -546,8 +691,9 @@ class DipScanner:
                 'date': target_date,
                 'close': int(row['close']),
                 'volume': int(row['volume']),
-                'change_rate': round(row['change_rate'], 2),
-                'disparity': round(row['disparity'], 2),
+                'change_rate': round(row['change_rate'], 2) if pd.notna(row['change_rate']) else 0,
+                'disparity': round(row['disparity'], 2) if pd.notna(row['disparity']) else 0,
+                'vol_spike': round(vol_spike, 1),
             })
         
         return surges
@@ -651,5 +797,6 @@ if __name__ == "__main__":
     
     signals = scanner.run(send_discord=send_discord)
     
-    if not send_discord and signals:
-        print("\n" + scanner.format_discord_message(signals))
+    if not send_discord:
+        watch_status = scanner.get_watch_status()
+        print("\n" + scanner.format_discord_message(signals, watch_status))
