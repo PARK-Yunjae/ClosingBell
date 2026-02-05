@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -55,14 +55,36 @@ def _resolve_ohlcv_path(code: str) -> Optional[Path]:
     return None
 
 
-def _load_ohlcv_df(code: str) -> Tuple[Optional[pd.DataFrame], Optional[Path]]:
+def _load_ohlcv_df(code: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     path = _resolve_ohlcv_path(code)
-    if not path:
-        return None, None
-    df = load_single_ohlcv(path)
-    if df is None or df.empty:
-        return None, path
-    return df, path
+    if path:
+        df = load_single_ohlcv(path)
+        if df is not None and not df.empty:
+            return df, str(path)
+    # FDR fallback (온라인/로컬 공통)
+    try:
+        import FinanceDataReader as fdr
+        end = datetime.now().date()
+        start = end - pd.Timedelta(days=365)
+        df = fdr.DataReader(code, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        if df is not None and not df.empty:
+            df = df.reset_index()
+            df.columns = [c.lower() for c in df.columns]
+            rename_map = {
+                "date": "date",
+                "open": "open",
+                "high": "high",
+                "low": "low",
+                "close": "close",
+                "volume": "volume",
+            }
+            df = df.rename(columns=rename_map)
+            if "date" not in df.columns and "index" in df.columns:
+                df = df.rename(columns={"index": "date"})
+            return df, "FDR"
+    except Exception:
+        pass
+    return None, None
 
 
 def _to_daily_prices(df: pd.DataFrame) -> List[DailyPrice]:

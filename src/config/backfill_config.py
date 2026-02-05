@@ -25,8 +25,8 @@ class BackfillConfig:
     stock_mapping_path: Path = MAPPING_FILE
     global_data_dir: Path = GLOBAL_DIR
     
-    # 데이터 소스 선택: 'ohlcv' 또는 'kiwoom'
-    data_source: str = 'ohlcv'  # 기본: C:\Coding\data\ohlcv
+    # 데이터 소스 선택: 'kiwoom' 또는 'ohlcv'
+    data_source: str = 'kiwoom'  # 기본: kiwoom, 없으면 ohlcv로 폴백
     
     # ============================================================
     # v6.4 새 필터 조건 (거래량 TOP 방식)
@@ -75,8 +75,16 @@ class BackfillConfig:
     def get_active_ohlcv_dir(self) -> Path:
         """현재 활성화된 OHLCV 디렉토리 반환"""
         if self.data_source in ('kiwoom', 'kis'):
-            return self.ohlcv_kiwoom_dir
-        return self.ohlcv_dir
+            primary = self.ohlcv_kiwoom_dir
+            fallback = self.ohlcv_dir
+        else:
+            primary = self.ohlcv_dir
+            fallback = self.ohlcv_kiwoom_dir
+        if primary.exists():
+            return primary
+        if fallback.exists():
+            return fallback
+        return primary
     
     def get_ohlcv_files(self) -> list:
         """OHLCV 파일 목록 (활성 소스 기준)"""
