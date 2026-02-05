@@ -127,6 +127,11 @@ class EnrichedStock:
     disparity_20: float = 0.0
     consecutive_up: int = 0
     volume_ratio: float = 0.0
+    # v9.0: 매물대(Volume Profile) 표시용
+    raw_vp_score: float = 6.0
+    raw_vp_above_pct: float = 0.0
+    raw_vp_below_pct: float = 0.0
+    raw_vp_tag: str = "데이터부족"
     
     # 섹터 정보
     sector: str = ""
@@ -154,11 +159,19 @@ class EnrichedStock:
             disparity = getattr(score_detail, 'raw_distance', 0)
             volume_ratio = getattr(score_detail, 'raw_volume_ratio', 0)
             consecutive_up = getattr(score_detail, 'raw_consec_days', 0)
+            vp_score = getattr(score_detail, 'raw_vp_score', 6.0)
+            vp_above = getattr(score_detail, 'raw_vp_above_pct', 0.0)
+            vp_below = getattr(score_detail, 'raw_vp_below_pct', 0.0)
+            vp_tag = getattr(score_detail, 'raw_vp_tag', "데이터부족") or "데이터부족"
         else:
             cci = getattr(score, 'cci', 0)
             disparity = getattr(score, 'disparity_20', 0)
             volume_ratio = getattr(score, 'volume_ratio', 0)
             consecutive_up = getattr(score, 'consecutive_up', 0)
+            vp_score = getattr(score, 'raw_vp_score', 6.0)
+            vp_above = getattr(score, 'raw_vp_above_pct', 0.0)
+            vp_below = getattr(score, 'raw_vp_below_pct', 0.0)
+            vp_tag = getattr(score, 'raw_vp_tag', "데이터부족") or "데이터부족"
         
         return cls(
             stock_code=getattr(score, 'stock_code', '') or getattr(score, 'code', ''),
@@ -176,6 +189,10 @@ class EnrichedStock:
             disparity_20=disparity,
             consecutive_up=consecutive_up,
             volume_ratio=volume_ratio,
+            raw_vp_score=vp_score,
+            raw_vp_above_pct=vp_above,
+            raw_vp_below_pct=vp_below,
+            raw_vp_tag=vp_tag,
             sector=getattr(score, '_sector', '') or getattr(score, 'sector', ''),
             is_leading_sector=getattr(score, '_is_leading_sector', False),
             sector_rank=getattr(score, '_sector_rank', 99),

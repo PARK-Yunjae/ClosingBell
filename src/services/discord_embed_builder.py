@@ -324,15 +324,44 @@ class DiscordEmbedBuilder:
         
         field_value = f"현재가: {current_price:,}원 ({change_rate:+.1f}%) | 시총: {self._format_market_cap(market_cap)}"
 
-        # v9.0: ???(Volume Profile) ? ? ??
+        # v9.0: 매물대(Volume Profile) 표시 (데이터 없으면 중립 기본값)
+        vp_score = None
+        vp_above = None
+        vp_below = None
+        vp_tag = ""
         detail = getattr(stock, 'score_detail', None)
-        if detail and getattr(detail, 'raw_vp_tag', ''):
-            vp_tag = getattr(detail, 'raw_vp_tag', '')
-            vp_emoji = {"????": "??", "??": "??", "???": "??", "?????": "?", "??": "?"}.get(vp_tag, "?")
-            vp_score = getattr(detail, 'raw_vp_score', 0.0)
-            vp_above = getattr(detail, 'raw_vp_above_pct', 0.0)
-            vp_below = getattr(detail, 'raw_vp_below_pct', 0.0)
-            field_value += f"\n{vp_emoji} ??? {vp_score:.0f}? [{vp_tag}] ?:{vp_above:.0f}%/??:{vp_below:.0f}%"
+        if detail:
+            vp_tag = getattr(detail, 'raw_vp_tag', '') or ""
+            vp_score = getattr(detail, 'raw_vp_score', None)
+            vp_above = getattr(detail, 'raw_vp_above_pct', None)
+            vp_below = getattr(detail, 'raw_vp_below_pct', None)
+        if not vp_tag:
+            vp_tag = getattr(stock, 'raw_vp_tag', '') or ""
+            if vp_score is None:
+                vp_score = getattr(stock, 'raw_vp_score', None)
+            if vp_above is None:
+                vp_above = getattr(stock, 'raw_vp_above_pct', None)
+            if vp_below is None:
+                vp_below = getattr(stock, 'raw_vp_below_pct', None)
+        if not vp_tag:
+            vp_tag = "데이터부족"
+        if vp_score is None:
+            vp_score = 6.0
+        if vp_above is None:
+            vp_above = 0.0
+        if vp_below is None:
+            vp_below = 0.0
+        vp_emoji = {
+            "상승여력": "🟢",
+            "중립": "🟡",
+            "저항벽": "🔴",
+            "데이터부족": "⚪",
+            "오류": "⚠️",
+        }.get(vp_tag, "📊")
+        field_value += (
+            f"\n{vp_emoji} 매물대 {vp_score:.0f}점 [{vp_tag}] "
+            f"위:{vp_above:.0f}%/아래:{vp_below:.0f}%"
+        )
         
         # DART 공시 (위험/주의만)
         dart_text = ""
