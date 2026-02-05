@@ -539,6 +539,18 @@ def check_stock(stock_code: str):
         traceback.print_exc()
 
 
+
+def run_analyze(stock_code: str, full: bool = False):
+    """Generate a short analysis report for a single code."""
+    from src.services.analysis_report import generate_analysis_report
+
+    result = generate_analysis_report(stock_code, full=full)
+    summary = getattr(result, 'summary', '')
+    report_path = getattr(result, 'report_path', '')
+    if summary:
+        print(f"Analysis: {summary}")
+    print(f"Report: {report_path}")
+
 def main():
     parser = argparse.ArgumentParser(description=APP_FULL_VERSION)
     parser.add_argument('--run', action='store_true', help='스크리닝 즉시 실행')
@@ -548,6 +560,8 @@ def main():
     parser.add_argument('--validate', action='store_true', help='설정 검증')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
     parser.add_argument('--check', type=str, metavar='CODE', help='특정 종목 점수 확인 (예: --check 074610)')
+    parser.add_argument('--analyze', type=str, metavar='CODE', help='Generate analysis report (e.g. --analyze 005930)')
+    parser.add_argument('--full', action='store_true', help='Include full broker history in analysis report')
     
     # v6.0 옵션
     parser.add_argument('--backfill', type=int, metavar='DAYS', help='과거 N일 데이터 백필 (TOP5 + 유목민)')
@@ -653,6 +667,10 @@ def main():
         return
     
     # 실행
+    if args.analyze:
+        run_analyze(args.analyze, full=args.full)
+        return
+
     if args.check:
         check_stock(args.check)
     elif args.run_test:
