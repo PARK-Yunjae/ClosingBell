@@ -32,8 +32,9 @@ LIMIT_UP_THRESHOLD = 29.5  # 상한가 기준 (%)
 VOLUME_EXPLOSION_THRESHOLD = 10_000_000  # 거래량천만 기준 (주)
 
 # OHLCV 데이터 경로
-OHLCV_DIR = Path(os.getenv('OHLCV_DIR', 'C:/Coding/data/ohlcv'))
-STOCK_MAPPING_PATH = Path(os.getenv('STOCK_MAPPING', 'C:/Coding/data/stock_mapping.csv'))
+from src.config.app_config import OHLCV_FULL_DIR
+OHLCV_DIR = OHLCV_FULL_DIR
+from src.config.app_config import MAPPING_FILE as STOCK_MAPPING_PATH
 
 # ETF 등 제외 패턴
 EXCLUDE_PATTERNS = [

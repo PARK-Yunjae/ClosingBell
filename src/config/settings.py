@@ -42,7 +42,7 @@ class KiwoomSettings:
 
 @dataclass
 class KISSettings:
-    """한국투자증권 API 설정 (레거시 - 제거 예정)"""
+    """한국투자증권 API 설정 (레거시 - v8.0에서 완전 제거 예정)"""
     app_key: str = ""
     app_secret: str = ""
     account_no: str = ""
@@ -116,7 +116,7 @@ class AISettings:
 class Settings:
     """전체 설정"""
     kiwoom: KiwoomSettings  # 키움 REST API (메인)
-    kis: KISSettings        # KIS (레거시 - 제거 예정)
+    kis: KISSettings        # KIS (레거시 - v8.0에서 제거)
     discord: DiscordSettings
     email: EmailSettings
     database: DatabaseSettings

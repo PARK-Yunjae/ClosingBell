@@ -17,7 +17,7 @@ from src.adapters.discord_notifier import (
     get_discord_notifier,
 )
 
-# KIS 클라이언트 (레거시 - 제거 예정)
+# KIS 클라이언트 (레거시 - v8.0에서 완전 제거)
 # 기존 코드 호환을 위해 별칭 제공
 def get_kis_client():
     """KIS 클라이언트 (레거시) - 키움으로 리다이렉트"""

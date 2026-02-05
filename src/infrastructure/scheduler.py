@@ -1,19 +1,20 @@
 """
-작업 스케줄러 v6.5
+작업 스케줄러 v7.0
 
 책임:
 - Cron 스케줄 관리
 - 작업 등록/해제
 - 장 운영일 체크
 
-v6.5 스케줄:
+v7.0 스케줄:
 - 12:00 프리뷰 스크리닝
 - 15:00 메인 스크리닝 (→ closing_top5_history)
-- 16:00 KIS OHLCV 수집 (정규장 기준)
+- 15:02 눌림목 스캐너
+- 15:05 Quiet Accumulation (선행 신호 탐지)
+- 16:00 OHLCV 수집 (키움 기반)
 - 16:10 글로벌 데이터 갱신
 - 16:15 결과 수집 (→ top5_daily_prices)
 - 16:20 일일 학습
-- 16:30 FDR OHLCV 갱신 (daily_data_update)
 - 16:32 유목민 종목 수집 (→ nomad_candidates)
 - 16:37 기업정보 크롤링
 - 16:39 뉴스 수집 (→ nomad_news)
@@ -40,7 +41,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from src.config.settings import settings
-from src.services.data_updater import run_data_update, update_global_data, run_kis_data_update
+from src.services.data_updater import run_data_update, update_global_data
 from src.services.result_collector import run_result_collection
 from src.services.learner_service import run_daily_learning
 
@@ -343,23 +344,27 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("dip_scanner 모듈 없음 - 눌림목 스캔 스킵")
         
+                # 15:05 Quiet Accumulation 스크리너 (v7.0 선행 신호 탐지)
+        try:
+            from src.services.quiet_accumulation import run_quiet_accumulation
+            self.add_job(
+                job_id='quiet_accumulation',
+                func=run_quiet_accumulation,
+                hour=main_hour,
+                minute=main_minute + 5,  # 15:05
+            )
+        except ImportError:
+            logger.warning("quiet_accumulation 모듈 없음 - 스킵")
+            
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
-        # 16:00 KIS OHLCV 데이터 수집 (정규장 기준 - 운영용)
+        # 16:00 OHLCV 데이터 수집 (키움 기반)
         self.add_job(
-            job_id='kis_data_update',
-            func=run_kis_data_update,
-            hour=16,
-            minute=0,
-        )
-        
-        # 16:05 FDR OHLCV 데이터 갱신 (프리장 포함 - 백테스팅용)
-        self.add_job(
-            job_id='daily_data_update',
+            job_id='ohlcv_update',
             func=run_data_update,
             hour=16,
-            minute=30,
+            minute=0,
         )
         
         # 16:10 글로벌 데이터 갱신 (나스닥/다우/환율/코스피/코스닥)
@@ -461,7 +466,7 @@ class ScreenerScheduler:
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v6.3: 종가매매 + TOP5 + KIS/FDR OHLCV + 유목민 + 뉴스 + 기업정보 + AI분석)")
+        logger.info("기본 스케줄 설정 완료 (v7.0: 종가매매 + TOP5 + OHLCV + 유목민 + 뉴스 + 기업정보 + AI분석)")
     
     def start(self):
         """스케줄러 시작"""

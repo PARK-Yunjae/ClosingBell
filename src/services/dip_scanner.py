@@ -86,17 +86,13 @@ class DipScanner:
     
     def _get_ohlcv_dir(self) -> Path:
         """OHLCV 디렉토리 경로"""
-        # settings에서 가져오기 시도
-        if hasattr(settings, 'kis') and hasattr(settings.kis, 'ohlcv_dir'):
-            return Path(settings.kis.ohlcv_dir)
-        # 기본값
-        return Path(r"C:\Coding\data\ohlcv")
+        from src.config.app_config import OHLCV_FULL_DIR
+        return OHLCV_FULL_DIR
     
     def _get_mapping_path(self) -> Path:
         """종목 매핑 파일 경로"""
-        if hasattr(settings, 'kis') and hasattr(settings.kis, 'stock_mapping_path'):
-            return Path(settings.kis.stock_mapping_path)
-        return Path(r"C:\Coding\data\stock_mapping.csv")
+        from src.config.app_config import MAPPING_FILE
+        return MAPPING_FILE
     
     def _init_db(self):
         """DB 초기화"""

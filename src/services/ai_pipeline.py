@@ -1,5 +1,5 @@
 """
-AI Pipeline v6.5
+AI Pipeline v7.0
 
 TOP5 종목 배치 분석 (5종목 1회 호출)
 

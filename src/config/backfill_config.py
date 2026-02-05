@@ -1,5 +1,5 @@
 """
-ClosingBell v6.4 백필 설정
+ClosingBell v7.0 백필 설정
 
 v6.4 변경사항:
 - TV200 조건검색 대신 거래량 TOP 방식 사용
@@ -12,6 +12,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 import os
+from src.config.app_config import DATA_DIR, OHLCV_FULL_DIR, OHLCV_DIR, GLOBAL_DIR, MAPPING_FILE
 
 
 @dataclass
@@ -19,13 +20,13 @@ class BackfillConfig:
     """백필 설정"""
     
     # 데이터 경로 (Windows 환경)
-    ohlcv_dir: Path = Path(r"C:\Coding\data\ohlcv")          # FDR (백테스팅용)
-    ohlcv_kis_dir: Path = Path(r"C:\Coding\data\ohlcv_kis")  # KIS (운영용)
-    stock_mapping_path: Path = Path(r"C:\Coding\data\stock_mapping.csv")
-    global_data_dir: Path = Path(r"C:\Coding\data\global")
+    ohlcv_dir: Path = OHLCV_FULL_DIR  # 3년+ 전체 데이터
+    ohlcv_kiwoom_dir: Path = OHLCV_DIR  # 키움 기반 (운영용)
+    stock_mapping_path: Path = MAPPING_FILE
+    global_data_dir: Path = GLOBAL_DIR
     
     # 데이터 소스 선택: 'fdr' 또는 'kis'
-    data_source: str = 'kis'  # 기본값을 KIS로 변경
+    data_source: str = 'kiwoom'  # v7.0: 키움 기반
     
     # ============================================================
     # v6.4 새 필터 조건 (거래량 TOP 방식)
@@ -73,8 +74,8 @@ class BackfillConfig:
     
     def get_active_ohlcv_dir(self) -> Path:
         """현재 활성화된 OHLCV 디렉토리 반환"""
-        if self.data_source == 'kis':
-            return self.ohlcv_kis_dir
+        if self.data_source in ('kiwoom', 'kis'):
+            return self.ohlcv_kiwoom_dir
         return self.ohlcv_dir
     
     def get_ohlcv_files(self) -> list:

@@ -36,7 +36,7 @@ try:
         APP_VERSION, APP_FULL_VERSION, SIDEBAR_TITLE, FOOTER_TOP5,
     )
 except ImportError:
-    APP_VERSION = "v6.5"
+    APP_VERSION = "v7.0"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
     SIDEBAR_TITLE = "🔔 ClosingBell"
     FOOTER_TOP5 = f"{APP_FULL_VERSION} | D+1 ~ D+20 수익률 분석"
@@ -50,8 +50,8 @@ except ImportError:
     def get_sector_from_mapping(code):
         return None
 
-# OHLCV 파일 경로 (Windows)
-OHLCV_PATH = Path("C:/Coding/data/ohlcv")
+# OHLCV 파일 경로 (환경변수 또는 기본값)
+OHLCV_PATH = Path(os.getenv("DATA_DIR", "C:/Coding/data")) / "ohlcv"
 
 st.set_page_config(
     page_title="종가매매 TOP5",

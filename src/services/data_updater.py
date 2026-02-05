@@ -1,5 +1,5 @@
 """
-OHLCV + 글로벌 데이터 자동 갱신 스크립트 (data_updater.py) v5.4
+OHLCV + 글로벌 데이터 자동 갱신 (data_updater.py) v7.0
 """
 
 import logging
@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 # ============================================
 # 설정
 # ============================================
-DATA_DIR = Path(r"C:\Coding\data\ohlcv")  # 종목별 OHLCV
-GLOBAL_DIR = Path(r"C:\Coding\data\global")  # 글로벌 데이터
-MAPPING_FILE = Path(r"C:\Coding\data\stock_mapping.csv")
+from src.config.app_config import OHLCV_FULL_DIR as DATA_DIR, GLOBAL_DIR, MAPPING_FILE
 
 API_DELAY = 0.3
 MAX_STOCKS_PER_RUN = 3000  # v5.2: API 제한 여유있으므로 전체 갱신
@@ -464,46 +462,10 @@ def run_full_data_update(max_stocks: int = MAX_STOCKS_PER_RUN) -> dict:
 # KIS OHLCV 수집 (정규장 기준)
 # ============================================
 
-KIS_DATA_DIR = Path(r"C:\Coding\data\ohlcv_kis")
+# run_kis_data_update 제거 - run_data_update로 통합 (v7.0)
 
 
 def run_kis_data_update(days: int = 5) -> dict:
-    """
-    KIS API로 OHLCV 데이터 수집 (정규장 기준)
-    
-    v6.5.2: scripts 모듈 의존성 제거, DATA_DIR(ohlcv) 폴더 직접 사용
-    
-    Args:
-        days: 최근 며칠치 업데이트
-        
-    Returns:
-        수집 결과 통계
-    """
-    logger.info("=" * 50)
-    logger.info("📊 KIS OHLCV 데이터 갱신 시작")
-    logger.info("=" * 50)
-    
-    today = date.today()
-    
-    if not is_market_open(today):
-        logger.info("휴장일 - 데이터 수집 스킵")
-        return {'updated': 0, 'failed': 0, 'skipped': 0}
-    
-    # DATA_DIR 폴더 확인
-    if not DATA_DIR.exists():
-        logger.warning(f"OHLCV 폴더 없음: {DATA_DIR}")
-        return {'updated': 0, 'failed': 0, 'skipped': 0, 'error': 'ohlcv_dir_not_found'}
-    
-    try:
-        # 기존 run_data_update 함수 재사용
-        result = run_data_update(max_stocks=MAX_STOCKS_PER_RUN)
-        
-        logger.info("=" * 50)
-        logger.info(f"📊 KIS 데이터 갱신 완료: 성공 {result.get('updated', 0)}, 실패 {result.get('failed', 0)}")
-        logger.info("=" * 50)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"KIS OHLCV 갱신 실패: {e}")
-        return {'updated': 0, 'failed': 1, 'skipped': 0, 'error': str(e)}
+    """레거시 호환 래퍼 - v7.0에서 run_data_update로 통합"""
+    logger.warning("run_kis_data_update는 deprecated입니다. run_data_update를 사용하세요.")
+    return run_data_update(max_stocks=MAX_STOCKS_PER_RUN)

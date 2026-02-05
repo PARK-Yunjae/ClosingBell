@@ -1,5 +1,5 @@
 """
-Discord Embed Builder v6.5
+Discord Embed Builder v7.0
 
 웹훅 메시지 생성 통합 모듈
 
@@ -437,6 +437,19 @@ class DiscordEmbedBuilder:
         
         if bonus_str != "-":
             field_value += f"\n🎁 보너스: {bonus_str}"
+        
+        # v7.1: 거래원 이상신호 태그
+        broker_adj = getattr(stock, '_broker_adj', None)
+        if broker_adj:
+            broker_bonus = getattr(stock, '_broker_bonus', 0)
+            field_value += (
+                f"\n{broker_adj.tag} 거래원 {broker_adj.anomaly_score}점 (+{broker_bonus})"
+            )
+            if broker_adj.anomalies:
+                top_anomaly = broker_adj.anomalies[0]
+                if len(top_anomaly) > 40:
+                    top_anomaly = top_anomaly[:37] + "..."
+                field_value += f"\n└ {top_anomaly}"
         
         # DART + 재무 추가
         field_value += dart_text

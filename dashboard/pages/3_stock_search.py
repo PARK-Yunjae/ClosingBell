@@ -11,6 +11,7 @@ ClosingBell - 종목 검색 페이지
 import streamlit as st
 import pandas as pd
 import sys
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -24,7 +25,7 @@ try:
         APP_VERSION, APP_FULL_VERSION, SIDEBAR_TITLE, FOOTER_SEARCH,
     )
 except ImportError:
-    APP_VERSION = "v6.5"
+    APP_VERSION = "v7.0"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
     SIDEBAR_TITLE = "🔔 ClosingBell"
     FOOTER_SEARCH = f"{APP_FULL_VERSION} | 종목 상세 분석"
@@ -68,8 +69,8 @@ def get_repositories():
 repos = get_repositories()
 
 
-# OHLCV 차트 로드 (FDR 우선, 로컬 파일 폴백)
-OHLCV_PATH = Path("C:/Coding/data/ohlcv_kis")
+# OHLCV 차트 로드 (키움 기반, 로컬 파일 폴백)
+OHLCV_PATH = Path(os.getenv("DATA_DIR", "C:/Coding/data")) / "ohlcv_kiwoom"
 
 @st.cache_data(ttl=3600)
 def load_ohlcv(stock_code: str, days: int = 60):

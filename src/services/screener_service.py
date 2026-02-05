@@ -31,6 +31,7 @@ from typing import List, Optional, Dict
 
 from src.config.settings import settings
 from src.config.constants import get_top_n_count, MIN_DAILY_DATA_COUNT
+from src.config.app_config import MAPPING_FILE
 from src.utils.stock_filters import filter_universe_stocks
 from src.domain.models import StockData, ScreeningResult, ScreeningStatus
 from src.domain.score_calculator import (
@@ -111,7 +112,7 @@ def filter_by_cci(scores: list, limit: int = CCI_HARD_LIMIT) -> tuple:
 
 
 class ScreenerService:
-    """스크리닝 서비스 v6.5 (키움 REST API 기반)"""
+    """스크리닝 서비스 v7.0 (키움 REST API 기반)"""
     
     def __init__(
         self,
@@ -196,6 +197,22 @@ class ScreenerService:
             # ================================================
             market_cap_info = self._load_market_cap_info(scores_filtered)
             
+            # ================================================
+            # v7.1: 거래원 이상신호 보너스 적용
+            # ================================================
+            broker_adjustments = {}
+            try:
+                from src.services.broker_signal import apply_broker_bonus
+                scores_filtered, broker_adjustments = apply_broker_bonus(
+                    scores_filtered, top_n=20
+                )
+                if broker_adjustments:
+                    logger.info(f"거래원 보너스: {len(broker_adjustments)}개 종목 적용")
+            except ImportError:
+                logger.debug("broker_signal 모듈 없음, 건너뜀")
+            except Exception as e:
+                logger.warning(f"거래원 스캔 실패 (무시): {e}")
+            
             # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
             top_n_count = get_top_n_count()
             
@@ -259,6 +276,7 @@ class ScreenerService:
                 "market_cap_info": market_cap_info,  # v6.2
                 "leading_sectors_text": leading_sectors_text,  # v6.3
                 "sector_stats": sector_stats,  # v6.3
+                "broker_adjustments": broker_adjustments,  # v7.1: 거래원 이상신호
             }
             
             # 4. DB 저장
@@ -632,7 +650,7 @@ class ScreenerService:
             
             # stock_mapping.csv 경로
             mapping_paths = [
-                Path(r"C:\Coding\data\stock_mapping.csv"),
+                MAPPING_FILE,  # from app_config
                 Path("data/stock_mapping.csv"),
                 Path(__file__).parent.parent.parent / "data" / "stock_mapping.csv",
             ]

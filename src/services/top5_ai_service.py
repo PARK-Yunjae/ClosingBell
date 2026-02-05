@@ -1,5 +1,5 @@
 """
-종가매매 TOP5 AI 분석 서비스 v6.5.1
+종가매매 TOP5 AI 분석 서비스 v7.0
 
 뉴스는 메모리에서만 사용하고 DB 저장 안 함
 AI 분석 결과(summary, risk_level, recommendation)만 DB 저장

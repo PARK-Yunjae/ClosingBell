@@ -1,5 +1,5 @@
 """
-상수 정의 모듈 v5.0 - 소프트 필터 방식 (점수제)
+상수 정의 모듈 v7.0 - 소프트 필터 방식 (점수제)
 """
 
 from enum import Enum
@@ -96,16 +96,16 @@ class DefaultWeights:
     change: float = 1.0
 
 class ErrorCode(Enum):
-    SCREEN_001 = "한투 API 인증 실패"
-    SCREEN_002 = "한투 API 호출 실패"
+    SCREEN_001 = "키움 API 인증 실패"
+    SCREEN_002 = "키움 API 호출 실패"
     SCREEN_003 = "필터링 종목 0개"
     SCREEN_004 = "점수 계산 실패"
     SCREEN_005 = "DB 저장 실패"
     NOTIFY_001 = "웹훅 URL 무효"
     NOTIFY_002 = "Rate Limit"
     NOTIFY_003 = "네트워크 오류"
-    KIS_001 = "토큰 발급 실패"
-    KIS_002 = "토큰 만료"
+    KIWOOM_001 = "토큰 발급 실패"
+    KIWOOM_002 = "토큰 만료"
     DB_001 = "연결 실패"
     DB_002 = "쿼리 실행 실패"
 

@@ -1,8 +1,8 @@
 """
-기업 정보 수집 서비스 v6.5
+기업 정보 수집 서비스 v7.0
 ===========================
 
-v6.5: DART API 기반으로 변경 (네이버 크롤링은 fallback)
+v7.0: DART API 기반 (네이버 크롤링은 fallback)
 
 ## 수집 항목 (DART)
 - 기업개황: 회사명, 대표자, 업종코드, 설립일
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # 상수
 API_DELAY = 0.3  # 크롤링 간격 (초)
 BASE_URL = "https://finance.naver.com"
-STOCK_MAPPING_PATH = Path(r"C:\Coding\data\stock_mapping.csv")
+from src.config.app_config import MAPPING_FILE as STOCK_MAPPING_PATH
 
 # 종목 매핑 캐시
 _stock_mapping_cache: Optional[Dict[str, str]] = None

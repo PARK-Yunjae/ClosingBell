@@ -24,7 +24,7 @@ try:
     )
 except ImportError:
     # fallback
-    APP_VERSION = "v6.5"
+    APP_VERSION = "v7.0"
     APP_NAME = "ClosingBell"
     APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
     AI_ENGINE = "Gemini 2.5 Flash"
@@ -182,7 +182,7 @@ def calc_nomad_win_rates():
         from pathlib import Path
         
         db_path = Path(__file__).parent.parent / "data" / "screener.db"
-        ohlcv_path = Path("C:/Coding/data/ohlcv_kis")
+        ohlcv_path = Path(os.getenv("DATA_DIR", str(Path(__file__).parent.parent))) / "ohlcv_kiwoom"
         
         if not db_path.exists():
             return None

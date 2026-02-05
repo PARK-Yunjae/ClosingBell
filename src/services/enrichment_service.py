@@ -1,5 +1,5 @@
 """
-EnrichmentService v6.5
+EnrichmentService v7.0
 
 TOP5 종목에 기업정보/공시/뉴스를 한 번에 붙이는 서비스
 

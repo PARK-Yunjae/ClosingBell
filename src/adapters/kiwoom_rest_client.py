@@ -418,6 +418,8 @@ class KiwoomRestClient:
                 logger.warning(f"일봉 파싱 오류 ({stock_code}): {e}")
                 continue
         
+        # ka10081은 최신순(역순) 반환 → 시간순(오래된→최신)으로 정렬
+        prices.reverse()
         return prices
     
     # ========================================
@@ -447,8 +449,8 @@ class KiwoomRestClient:
             change_rate = self._parse_float(data.get('flu_rt', '0'))
             volume = self._parse_int(data.get('trde_qty', '0'))
             
-            # 시가총액: ka10001에는 직접 제공되지 않음
-            market_cap = 0
+            # 시가총액: mac 필드 (억원 단위)
+            market_cap = self._parse_int(data.get('mac', '0'))
             
             return CurrentPrice(
                 code=stock_code,
