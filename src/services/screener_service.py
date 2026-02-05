@@ -258,6 +258,7 @@ class ScreenerService:
                         logger.warning(f"[매물대] 키움 클라이언트 로드 실패: {e}")
                         kiwoom_client = None
                         kiwoom_available = False
+                vp_data_cache = None
                 for score in scores_filtered:
                     code = score.stock_code
                     current_price = score.current_price
@@ -266,28 +267,33 @@ class ScreenerService:
                         vp_meta = ""
                         if use_kiwoom and kiwoom_client is not None and kiwoom_available:
                             try:
-                                data = kiwoom_client.get_volume_profile(
-                                    stock_code=code,
-                                    cycle_tp=str(vp_cfg.cycle),
-                                    prpscnt=str(vp_cfg.bands),
-                                    cur_prc_entry=str(vp_cfg.cur_entry),
-                                    prps_cnctr_rt=str(vp_cfg.concentration_rate),
-                                    stex_tp=str(vp_cfg.stex_tp),
-                                    trde_qty_tp=str(vp_cfg.trde_qty_tp),
-                                    tr_id=str(vp_cfg.api_id),
-                                )
-                                # 응답에 리스트 데이터가 없으면 Kiwoom VP 비활성화
-                                if isinstance(data, dict) and not any(
-                                    isinstance(v, list) and v for v in data.values()
-                                ):
-                                    logger.warning("[매물대] 키움 VP 응답에 리스트 데이터 없음 - 로컬로 전환")
-                                    kiwoom_available = False
-                                    data = {}
+                                if vp_data_cache is None:
+                                    data = kiwoom_client.get_volume_profile(
+                                        stock_code=code,
+                                        cycle_tp=str(vp_cfg.cycle),
+                                        prpscnt=str(vp_cfg.bands),
+                                        cur_prc_entry=str(vp_cfg.cur_entry),
+                                        prps_cnctr_rt=str(vp_cfg.concentration_rate),
+                                        mrkt_tp=str(vp_cfg.market),
+                                        stex_tp=str(vp_cfg.stex_tp),
+                                        tr_id=str(vp_cfg.api_id),
+                                    )
+                                    # ???????????????? ?????Kiwoom VP ??????
+                                    if isinstance(data, dict) and not any(
+                                        isinstance(v, list) and v for v in data.values()
+                                    ):
+                                        logger.warning("[?????] ??? VP ?????????????????? - ????????")
+                                        kiwoom_available = False
+                                        data = {}
+                                    vp_data_cache = data
+                                else:
+                                    data = vp_data_cache
                                 vp_result = calc_volume_profile_from_kiwoom(
                                     data=data,
                                     current_price=current_price,
                                     n_days=vp_cfg.cycle,
                                     cur_entry=vp_cfg.cur_entry,
+                                    stock_code=code,
                                 )
                                 vp_meta = f"kiwoom/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
                             except Exception as e:

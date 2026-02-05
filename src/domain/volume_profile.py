@@ -264,6 +264,7 @@ def calc_volume_profile_from_kiwoom(
     current_price: float,
     n_days: int,
     cur_entry: int = 0,
+    stock_code: Optional[str] = None,
 ) -> VolumeProfileResult:
     """키움 매물대 응답을 VolumeProfileResult로 변환."""
     if not data:
@@ -286,11 +287,27 @@ def calc_volume_profile_from_kiwoom(
 
     bands: List[VolumeProfileBand] = []
     for _, items in list_candidates:
-        # 매물대 리스트 후보 탐색
+        # 매물대 리스트 키 탐색
         if not isinstance(items[0], dict):
             continue
+        if stock_code:
+            items = [
+                item for item in items
+                if str(item.get("stk_cd", "")).strip() == stock_code
+            ]
+            if not items:
+                continue
         if not any(
-            k in items[0] for k in ["prps_pric", "prps_pric_strt", "prps_pric_end", "price", "pric"]
+            k in items[0]
+            for k in [
+                "prps_pric",
+                "prps_pric_strt",
+                "prps_pric_end",
+                "pric_strt",
+                "pric_end",
+                "price",
+                "pric",
+            ]
         ):
             continue
 

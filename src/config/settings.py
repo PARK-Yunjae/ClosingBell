@@ -125,14 +125,16 @@ class BrokerSettings:
 class VolumeProfileSettings:
     """v9.0: 매물대(Volume Profile) 설정"""
     source: str = "auto"           # auto | kiwoom | local
-    cycle: int = 100               # 50~300 (일)
+    cycle: int = 100               # 50~300 (??
     bands: int = 10                # 매물대 수
     cur_entry: int = 0             # 0: 현재가 밴드 제외, 1: 포함
-    concentration_rate: int = 70   # 매물집중비율(%)
-    stex_tp: str = "3"             # 0: 전체, 1: KOSPI, 2: KOSDAQ, 3: 전체
-    api_id: str = "ka10024"        # 매물대집중요청 TR ID (문서에 따라 변경)
-    trde_qty_tp: str = "0"         # 거래량 구분 (문서 기준)
-    endpoint: str = ""             # 미지정 시 기본 엔드포인트 사용
+    concentration_rate: int = 70   # 매물대집중비율(%)
+    market: str = "000"            # 000:??, 001:???, 101:???
+    stex_tp: str = "3"             # 1:KRX, 2:NXT, 3:??
+    api_id: str = "ka10025"        # ??????? TR ID (?? ??)
+    trde_qty_tp: str = "0"         # (?? ???) ??? ??
+    endpoint: str = ""             # ??? ? ?? ??? ??
+
 
 
 @dataclass
@@ -240,8 +242,9 @@ def load_settings() -> Settings:
         bands=int(os.getenv("VP_BANDS", "10")),
         cur_entry=int(os.getenv("VP_CUR_ENTRY", "0")),
         concentration_rate=int(os.getenv("VP_CNCTR_RT", "70")),
+        market=os.getenv("VP_MRKT_TP", "000"),
         stex_tp=os.getenv("VP_STEX_TP", "3"),
-        api_id=os.getenv("VP_API_ID", "ka10024"),
+        api_id=os.getenv("VP_API_ID", "ka10025"),
         trde_qty_tp=os.getenv("VP_TRDE_QTY_TP", "0"),
         endpoint=os.getenv("VP_ENDPOINT", "").strip(),
     )

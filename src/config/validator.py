@@ -203,6 +203,9 @@ def validate_vp_settings(result: ValidationResult):
         result.add_warning(f"VP_BANDS 범위 오류: {vp.bands} (권장 5~30)")
     if vp.cur_entry not in (0, 1):
         result.add_warning(f"VP_CUR_ENTRY 값이 올바르지 않습니다: {vp.cur_entry} (0|1)")
+
+    if str(vp.market) not in {"000", "001", "101"}:
+        result.add_warning(f"VP_MRKT_TP ?? ???? ????: {vp.market} (000|001|101)")
     if str(vp.trde_qty_tp) not in {"0", "1", "2"}:
         result.add_warning(f"VP_TRDE_QTY_TP 값이 올바르지 않습니다: {vp.trde_qty_tp}")
 
