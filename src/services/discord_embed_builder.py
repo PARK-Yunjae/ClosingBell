@@ -323,6 +323,16 @@ class DiscordEmbedBuilder:
         # ============================================================
         
         field_value = f"현재가: {current_price:,}원 ({change_rate:+.1f}%) | 시총: {self._format_market_cap(market_cap)}"
+
+        # v9.0: ???(Volume Profile) ? ? ??
+        detail = getattr(stock, 'score_detail', None)
+        if detail and getattr(detail, 'raw_vp_tag', ''):
+            vp_tag = getattr(detail, 'raw_vp_tag', '')
+            vp_emoji = {"????": "??", "??": "??", "???": "??", "?????": "?", "??": "?"}.get(vp_tag, "?")
+            vp_score = getattr(detail, 'raw_vp_score', 0.0)
+            vp_above = getattr(detail, 'raw_vp_above_pct', 0.0)
+            vp_below = getattr(detail, 'raw_vp_below_pct', 0.0)
+            field_value += f"\n{vp_emoji} ??? {vp_score:.0f}? [{vp_tag}] ?:{vp_above:.0f}%/??:{vp_below:.0f}%"
         
         # DART 공시 (위험/주의만)
         dart_text = ""

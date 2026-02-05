@@ -169,6 +169,11 @@ class ScoreDetailV5:
     raw_volume_ratio: float = 0.0
     raw_upper_wick_ratio: float = 0.0
     raw_broker_anomaly: int = 0     # 🆕 거래원 anomaly_score 원점수
+    # v9.0: 매물대(Volume Profile) 표시용 (총점 미반영)
+    raw_vp_score: float = 6.0       # 0~13 (중립 6)
+    raw_vp_above_pct: float = 0.0   # 위 매물 %
+    raw_vp_below_pct: float = 0.0   # 아래 지지 %
+    raw_vp_tag: str = "데이터부족"   # 상승여력/중립/저항벽/데이터부족
     is_cci_rising: bool = False
     is_ma20_3day_up: bool = False
     is_high_eq_close: bool = False

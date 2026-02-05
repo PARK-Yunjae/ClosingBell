@@ -30,7 +30,7 @@ from typing import List, Optional, Dict
 
 from src.config.settings import settings
 from src.config.constants import get_top_n_count, MIN_DAILY_DATA_COUNT
-from src.config.app_config import MAPPING_FILE
+from src.config.app_config import MAPPING_FILE, OHLCV_FULL_DIR
 from src.utils.stock_filters import filter_universe_stocks
 from src.domain.models import StockData, ScreeningResult, ScreeningStatus
 from src.domain.score_calculator import (
@@ -38,6 +38,7 @@ from src.domain.score_calculator import (
     StockScoreV5,
     format_discord_embed,
 )
+from src.domain.volume_profile import calc_volume_profile_from_csv, VP_SCORE_NEUTRAL
 from src.adapters.kiwoom_rest_client import get_kiwoom_client, KiwoomRestClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
 from src.infrastructure.repository import (
@@ -231,6 +232,38 @@ class ScreenerService:
                     logger.debug("broker_signal 모듈 없음, 건너뜀")
                 except Exception as e:
                     logger.warning(f"거래원 스캔 실패 (무시): {e}")
+
+            # ================================================
+            # v9.0: 매물대(Volume Profile) 표시용 계산 (총점 미반영)
+            # ================================================
+            try:
+                logger.info("[매물대] Volume Profile 계산 시작...")
+                vp_count = 0
+                for score in scores_filtered:
+                    code = score.stock_code
+                    current_price = score.current_price
+                    try:
+                        vp_result = calc_volume_profile_from_csv(
+                            stock_code=code,
+                            current_price=current_price,
+                            ohlcv_dir=OHLCV_FULL_DIR,
+                            n_days=100,
+                        )
+                        score.score_detail.raw_vp_score = vp_result.score
+                        score.score_detail.raw_vp_above_pct = vp_result.above_pct
+                        score.score_detail.raw_vp_below_pct = vp_result.below_pct
+                        score.score_detail.raw_vp_tag = vp_result.tag
+                        if vp_result.tag != "데이터부족":
+                            vp_count += 1
+                    except Exception as e:
+                        logger.debug(f"VP {code} 오류: {e}")
+                        score.score_detail.raw_vp_score = VP_SCORE_NEUTRAL
+                        score.score_detail.raw_vp_above_pct = 0.0
+                        score.score_detail.raw_vp_below_pct = 0.0
+                        score.score_detail.raw_vp_tag = "오류"
+                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료")
+            except Exception as e:
+                logger.warning(f"[매물대] 계산 실패 (무시): {e}")
             
             # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
             top_n_count = get_top_n_count()
