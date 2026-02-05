@@ -107,6 +107,7 @@ def validate_kis_settings(result: ValidationResult):
 def validate_discord_settings(result: ValidationResult):
     """Discord 설정 검증"""
     webhook_url = settings.discord.webhook_url
+    layout = getattr(settings.discord, "layout", "detailed")
     
     if not webhook_url:
         result.add_warning(
@@ -119,6 +120,11 @@ def validate_discord_settings(result: ValidationResult):
     elif not re.match(r'^https://discord\.com/api/webhooks/\d+/.+$', webhook_url):
         result.add_warning(
             f"DISCORD_WEBHOOK_URL 형식이 올바르지 않습니다: {webhook_url[:50]}..."
+        )
+
+    if layout not in {"compact", "detailed"}:
+        result.add_warning(
+            f"DISCORD_LAYOUT 값이 올바르지 않습니다: {layout} (compact|detailed)"
         )
 
 

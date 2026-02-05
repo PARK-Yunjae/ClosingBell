@@ -45,6 +45,7 @@ class DiscordSettings:
     """디스코드 웹훅 설정"""
     webhook_url: str
     enabled: bool = True
+    layout: str = "detailed"
     
     def __post_init__(self):
         # DASHBOARD_ONLY 모드에서는 Discord 검증 스킵
@@ -157,9 +158,13 @@ def load_settings() -> Settings:
     if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
         discord_enabled = False
     
+    discord_layout = os.getenv("DISCORD_LAYOUT", "detailed").strip('"').lower()
+    if discord_layout not in {"compact", "detailed"}:
+        discord_layout = "detailed"
     discord = DiscordSettings(
         webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip('"'),
         enabled=discord_enabled,
+        layout=discord_layout,
     )
     
     # Email 설정

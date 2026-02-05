@@ -324,18 +324,25 @@ class DiscordNotifier:
         """텍스트 메시지 발송 (v5 호환용 별칭)"""
         return self.send_simple_message(content)
     
-    def send_embed(self, embed: dict) -> bool:
-        """Embed 메시지 발송 (v5용)
+    def send_embed(self, embed) -> bool:
+        """Embed 메시지 발송 (단일 또는 여러 개)
         
         Args:
-            embed: Discord Embed 딕셔너리
+            embed: Discord Embed 딕셔너리 또는 리스트
             
         Returns:
             발송 성공 여부
         """
-        payload = {"embeds": [embed]}
-        result = self._send(payload)
-        return result.success
+        embeds = embed if isinstance(embed, list) else [embed]
+        last_result = None
+        for i, item in enumerate(embeds, 1):
+            payload = {"embeds": [item]}
+            last_result = self._send(payload)
+            if not last_result.success:
+                return False
+            if i < len(embeds):
+                time.sleep(0.3)
+        return bool(last_result and last_result.success)
     
     def send_top5(
         self, 
