@@ -34,7 +34,11 @@ def run_healthcheck() -> Tuple[List[HealthcheckItem], bool]:
         try:
             from src.adapters.kiwoom_rest_client import get_kiwoom_client
             client = get_kiwoom_client()
-            token = client.get_access_token()
+            token = None
+            if hasattr(client, "get_access_token"):
+                token = client.get_access_token()
+            elif hasattr(client, "_get_token"):
+                token = client._get_token()
             if token:
                 results.append(HealthcheckItem("Kiwoom", "OK", "토큰 발급 성공"))
             else:

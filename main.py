@@ -27,6 +27,13 @@ import argparse
 import logging
 from datetime import datetime
 
+# 콘솔 인코딩 이슈 방지 (Windows cp949 등)
+try:
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
+except Exception:
+    pass
+
 from src.config.settings import settings
 from src.config.app_config import APP_FULL_VERSION
 from src.infrastructure.database import init_database
@@ -614,9 +621,9 @@ def main():
             if args.validate:
                 print_settings_summary()
                 if result.valid:
-                    print("\n✅ 설정 검증 완료")
+                    print("\n설정 검증 완료")
                 else:
-                    print("\n❌ 설정 검증 실패")
+                    print("\n설정 검증 실패")
                     sys.exit(1)
                 return
         else:

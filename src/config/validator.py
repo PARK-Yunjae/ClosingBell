@@ -262,7 +262,7 @@ def validate_settings(raise_on_error: bool = True) -> ValidationResult:
 def print_settings_summary():
     """현재 설정 요약 출력"""
     print("\n" + "=" * 60)
-    print("📋 현재 설정 요약")
+    print("현재 설정 요약")
     print("=" * 60)
     
     # 키움 설정
