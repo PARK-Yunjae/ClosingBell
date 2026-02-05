@@ -582,6 +582,12 @@ def main():
     
     args = parser.parse_args()
     
+    # --analyze 는 조용히 실행 (요약 + 보고서 경로만 출력)
+    if args.analyze:
+        logging.basicConfig(level=logging.ERROR)
+        run_analyze(args.analyze, full=args.full)
+        return
+    
     # 로깅 설정
     init_logging()
     logger = logging.getLogger(__name__)
@@ -667,10 +673,6 @@ def main():
         return
     
     # 실행
-    if args.analyze:
-        run_analyze(args.analyze, full=args.full)
-        return
-
     if args.check:
         check_stock(args.check)
     elif args.run_test:
