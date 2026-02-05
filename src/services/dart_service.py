@@ -16,6 +16,7 @@ import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from src.services.http_utils import request_with_retry, redact_url, mask_text
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,18 @@ class DartService:
         url = f"{self.BASE_URL}/{endpoint}"
         
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = request_with_retry(
+                "GET",
+                url,
+                params=params,
+                timeout=10,
+                max_retries=2,
+                backoff=1.0,
+                logger=logger,
+                context=f"DART API {redact_url(url)}",
+            )
+            if response is None:
+                return None
             response.raise_for_status()
             
             data = response.json()
@@ -267,10 +279,10 @@ class DartService:
             return data
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"DART API 요청 실패: {e}")
+            logger.error(f"DART API 요청 실패: {mask_text(str(e))}")
             return None
         except Exception as e:
-            logger.error(f"DART API 처리 실패: {e}")
+            logger.error(f"DART API 처리 실패: {mask_text(str(e))}")
             return None
     
     def get_corp_code(self, stock_code: str) -> Optional[str]:
@@ -302,7 +314,18 @@ class DartService:
             url = f"{self.BASE_URL}/corpCode.xml"
             params = {'crtfc_key': self.api_key}
             
-            response = requests.get(url, params=params, timeout=30)
+            response = request_with_retry(
+                "GET",
+                url,
+                params=params,
+                timeout=30,
+                max_retries=2,
+                backoff=1.0,
+                logger=logger,
+                context=f"DART CorpCode {redact_url(url)}",
+            )
+            if response is None:
+                return
             response.raise_for_status()
             
             # ZIP 파일 해제
@@ -321,7 +344,7 @@ class DartService:
             logger.info(f"DART 기업코드 로드: {len(self._corp_code_cache)}개")
             
         except Exception as e:
-            logger.error(f"기업코드 로드 실패: {e}")
+            logger.error(f"기업코드 로드 실패: {mask_text(str(e))}")
     
     def get_recent_disclosures(
         self, 

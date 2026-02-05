@@ -41,6 +41,8 @@ import logging
 import urllib.request
 from pathlib import Path
 from typing import Dict, Optional, Any
+
+from src.services.http_utils import urlopen_with_retry, redact_url, mask_text
 from html import unescape
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -185,10 +187,20 @@ def fetch_html(url: str, encoding: str = 'euc-kr') -> Optional[str]:
     """HTML 가져오기"""
     try:
         request = urllib.request.Request(url, headers=HEADERS)
-        response = urllib.request.urlopen(request, timeout=15)
+        safe_url = redact_url(url)
+        response = urlopen_with_retry(
+            request,
+            timeout=15,
+            max_retries=2,
+            backoff=1.0,
+            logger=logger,
+            context=f"Company Info {safe_url}",
+        )
+        if response is None:
+            return None
         return response.read().decode(encoding, errors='ignore')
     except Exception as e:
-        logger.warning(f"Fetch 실패: {url} - {e}")
+        logger.warning(f"Fetch 실패: {redact_url(url)} - {mask_text(str(e))}")
         return None
 
 

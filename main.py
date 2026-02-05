@@ -561,6 +561,7 @@ def main():
     parser.add_argument('--run-test', action='store_true', help='테스트 모드')
     parser.add_argument('--no-alert', action='store_true', help='알림 없음')
     parser.add_argument('--validate', action='store_true', help='설정 검증')
+    parser.add_argument('--healthcheck', action='store_true', help='외부 서비스 연결 점검')
     parser.add_argument('--init-db', action='store_true', help='DB 초기화')
     parser.add_argument('--check', type=str, metavar='CODE', help='특정 종목 점수 확인 (예: --check 074610)')
     parser.add_argument('--analyze', type=str, metavar='CODE', help='Generate analysis report (e.g. --analyze 005930)')
@@ -590,6 +591,17 @@ def main():
         logging.basicConfig(level=logging.ERROR)
         run_analyze(args.analyze, full=args.full)
         return
+
+    if args.healthcheck:
+        init_logging()
+        from src.services.healthcheck_service import run_healthcheck
+        results, ok = run_healthcheck()
+        print("\n" + "=" * 60)
+        print("Healthcheck")
+        print("=" * 60)
+        for item in results:
+            print(f"  {item.name}: {item.status} - {item.message}")
+        sys.exit(0 if ok else 1)
     
     # 로깅 설정
     init_logging()

@@ -18,6 +18,7 @@ from datetime import date
 from bs4 import BeautifulSoup
 
 from src.config.settings import settings
+from src.services.http_utils import request_with_retry, redact_url, mask_text
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,18 @@ def fetch_naver_company_info(stock_code: str) -> Dict:
     try:
         url = f"https://finance.naver.com/item/main.naver?code={stock_code}"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = request_with_retry(
+            "GET",
+            url,
+            headers=headers,
+            timeout=10,
+            max_retries=2,
+            backoff=1.0,
+            logger=logger,
+            context=f"Naver Finance {redact_url(url)}",
+        )
+        if resp is None:
+            return {}
         soup = BeautifulSoup(resp.text, 'html.parser')
         
         info = {}
@@ -109,7 +121,7 @@ def fetch_naver_company_info(stock_code: str) -> Dict:
         
         return info
     except Exception as e:
-        logger.warning(f"기업정보 수집 실패 ({stock_code}): {e}")
+        logger.warning(f"기업정보 수집 실패 ({stock_code}): {mask_text(str(e))}")
         return {}
 
 

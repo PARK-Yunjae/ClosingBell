@@ -35,6 +35,7 @@ from src.domain.models import (
     NotifyResult,
     NotifyChannel,
 )
+from src.services.http_utils import mask_text
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +484,7 @@ class DiscordNotifier:
             if response.status_code == 400:
                 error_text = response.text[:500]
                 error_msg = f"HTTP 400: {error_text}"
-                logger.error(f"❌ Discord 400 에러: {error_msg}")
+                logger.error(f"❌ Discord 400 에러: {mask_text(error_msg)}")
                 
                 # errors.log에 상세 기록
                 self._log_payload_error(payload, error_msg)
@@ -504,9 +505,17 @@ class DiscordNotifier:
                     response_code=response.status_code,
                 )
             
+            # 5xx ?? ?? ???
+            if response.status_code >= 500:
+                if retry_count < self.max_retries:
+                    wait_time = self.retry_delay * (2 ** retry_count)
+                    logger.warning(f"Discord ?? ?? {response.status_code}, {wait_time}? ? ???")
+                    time.sleep(wait_time)
+                    return self._send(payload, retry_count + 1)
+
             # 기타 에러
             error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-            logger.error(f"Discord 알림 실패: {error_msg}")
+            logger.error(f"Discord 알림 실패: {mask_text(error_msg)}")
             
             return NotifyResult(
                 channel=NotifyChannel.DISCORD,
@@ -516,10 +525,11 @@ class DiscordNotifier:
             )
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Discord 요청 에러: {e}")
+            logger.error(f"Discord 요청 에러: {mask_text(str(e))}")
             
             if retry_count < self.max_retries:
-                time.sleep(self.retry_delay)
+                wait_time = self.retry_delay * (2 ** retry_count)
+                time.sleep(wait_time)
                 return self._send(payload, retry_count + 1)
             
             return NotifyResult(

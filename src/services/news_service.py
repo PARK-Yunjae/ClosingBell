@@ -28,6 +28,8 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 from html import unescape
 
+from src.services.http_utils import urlopen_with_retry, redact_url, mask_text
+
 from dotenv import load_dotenv
 
 from src.infrastructure.repository import (
@@ -105,7 +107,17 @@ def search_naver_news(query: str, display: int = 30, sort: str = 'date') -> List
         request.add_header("X-Naver-Client-Id", NAVER_CLIENT_ID)
         request.add_header("X-Naver-Client-Secret", NAVER_CLIENT_SECRET)
         
-        response = urllib.request.urlopen(request, timeout=10)
+        safe_url = redact_url(url)
+        response = urlopen_with_retry(
+            request,
+            timeout=10,
+            max_retries=2,
+            backoff=1.0,
+            logger=logger,
+            context=f"Naver News {safe_url}",
+        )
+        if response is None:
+            return []
         rescode = response.getcode()
         
         if rescode == 200:
@@ -137,7 +149,7 @@ def search_naver_news(query: str, display: int = 30, sort: str = 'date') -> List
             return []
             
     except Exception as e:
-        logger.error(f"네이버 뉴스 검색 실패: {e}")
+        logger.error(f"네이버 뉴스 검색 실패: {mask_text(str(e))}")
         return []
 
 
@@ -218,7 +230,7 @@ def summarize_with_gemini(stock_name: str, study_date: str, news_list: List[Dict
             news['relevance'] = 0.5
         return news_list
     except Exception as e:
-        logger.error(f"Gemini 클라이언트 초기화 실패: {e}")
+        logger.error(f"Gemini 클라이언트 초기화 실패: {mask_text(str(e))}")
         for news in news_list:
             news['summary'] = news.get('description', '')[:150]
             news['sentiment'] = 'neutral'
@@ -263,15 +275,30 @@ def summarize_with_gemini(stock_name: str, study_date: str, news_list: List[Dict
 """
     
     try:
-        # max_output_tokens 설정으로 JSON 잘림 방지
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={
-                'max_output_tokens': 4096,  # 뉴스 요약용 (여유있게)
-                'temperature': 0.3,
-            },
-        )
+        max_retries = 2
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                # max_output_tokens 설정으로 JSON 잘림 방지
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=prompt,
+                    config={
+                        'max_output_tokens': 4096,  # 뉴스 요약용 (여유있게)
+                        'temperature': 0.3,
+                    },
+                )
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Gemini 요청 실패, {wait_time}초 후 재시도: {mask_text(str(e))}")
+                    time.sleep(wait_time)
+                    continue
+                raise
+
+        if response is None:
+            raise RuntimeError("Gemini 응답 없음")
         
         result_text = response.text
         
@@ -298,7 +325,7 @@ def summarize_with_gemini(stock_name: str, study_date: str, news_list: List[Dict
         return news_list
         
     except Exception as e:
-        logger.error(f"Gemini 요약 실패: {e}")
+        logger.error(f"Gemini 요약 실패: {mask_text(str(e))}")
         for news in news_list:
             news['summary'] = news.get('description', '')[:150]
             news['sentiment'] = 'neutral'
@@ -523,4 +550,3 @@ if __name__ == "__main__":
     print(f"  대상 종목: {result.get('total', 0)}개")
     print(f"  수집 뉴스: {result.get('collected', 0)}개")
     print(f"  저장 완료: {result.get('saved', 0)}개")
-

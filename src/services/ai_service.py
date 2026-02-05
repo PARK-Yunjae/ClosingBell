@@ -23,6 +23,7 @@ from datetime import date
 from typing import Dict, Optional, List
 
 from src.config.settings import settings
+from src.services.http_utils import mask_text
 from src.infrastructure.repository import (
     get_nomad_candidates_repository,
     get_nomad_news_repository,
@@ -114,14 +115,29 @@ ROE: {candidate.get('roe', '-')}%
 """
         
         # 새 API 호출 (settings에서 설정 로드)
-        response = client.models.generate_content(
-            model=settings.ai.model,
-            contents=prompt,
-            config={
-                'max_output_tokens': settings.ai.max_output_tokens,
-                'temperature': settings.ai.temperature,
-            },
-        )
+        max_retries = 2
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.models.generate_content(
+                    model=settings.ai.model,
+                    contents=prompt,
+                    config={
+                        'max_output_tokens': settings.ai.max_output_tokens,
+                        'temperature': settings.ai.temperature,
+                    },
+                )
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"AI 요청 실패, {wait_time}초 후 재시도: {mask_text(str(e))}")
+                    time.sleep(wait_time)
+                    continue
+                raise
+
+        if response is None:
+            raise RuntimeError("Gemini 응답 없음")
         result_text = response.text
         
         # JSON 파싱
@@ -136,9 +152,9 @@ ROE: {candidate.get('roe', '-')}%
     except ImportError:
         return None, "google-genai 패키지가 설치되지 않았습니다. pip install google-genai"
     except json.JSONDecodeError as e:
-        return None, f"AI 응답 파싱 실패: {e}"
+        return None, f"AI 응답 파싱 실패: {mask_text(str(e))}"
     except Exception as e:
-        return None, f"AI 분석 실패: {e}"
+        return None, f"AI 분석 실패: {mask_text(str(e))}"
 
 
 def analyze_candidates_with_ai(study_date: str = None, limit: int = 50) -> Dict:
