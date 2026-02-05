@@ -25,8 +25,8 @@ class BackfillConfig:
     stock_mapping_path: Path = MAPPING_FILE
     global_data_dir: Path = GLOBAL_DIR
     
-    # 데이터 소스 선택: 'fdr' 또는 'kis'
-    data_source: str = 'kiwoom'  # v7.0: 키움 기반
+    # 데이터 소스 선택: 'ohlcv' 또는 'kiwoom'
+    data_source: str = 'ohlcv'  # 기본: C:\Coding\data\ohlcv
     
     # ============================================================
     # v6.4 새 필터 조건 (거래량 TOP 방식)

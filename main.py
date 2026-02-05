@@ -81,17 +81,22 @@ def print_score_detail(score: StockScoreV5, rank: int = None):
     print()
     
     # 핵심 지표
-    print(f"   [핵심 지표] (90점 만점)")
-    print(f"      CCI({d.raw_cci:.0f}):        {d.cci_score:>5.1f}/15")
-    print(f"      등락률({d.raw_change_rate:.1f}%):   {d.change_score:>5.1f}/15")
-    print(f"      이격도({d.raw_distance:.1f}%):   {d.distance_score:>5.1f}/15")
-    print(f"      연속양봉({d.raw_consec_days}일):   {d.consec_score:>5.1f}/15")
-    print(f"      거래량비({d.raw_volume_ratio:.1f}x): {d.volume_score:>5.1f}/15")
-    print(f"      캔들품질:        {d.candle_score:>5.1f}/15")
+    print(f"   [핵심 지표] (91점 만점)")
+    print(f"      CCI({d.raw_cci:.0f}):        {d.cci_score:>5.1f}/13")
+    print(f"      등락률({d.raw_change_rate:.1f}%):   {d.change_score:>5.1f}/13")
+    print(f"      이격도({d.raw_distance:.1f}%):   {d.distance_score:>5.1f}/13")
+    print(f"      연속양봉({d.raw_consec_days}일):   {d.consec_score:>5.1f}/13")
+    print(f"      거래량비({d.raw_volume_ratio:.1f}x): {d.volume_score:>5.1f}/13")
+    print(f"      캔들품질:        {d.candle_score:>5.1f}/13")
+    print(f"      거래원:          {d.broker_score:>5.1f}/13")
     
-    base_total = d.cci_score + d.change_score + d.distance_score + d.consec_score + d.volume_score + d.candle_score
+    base_total = (
+        d.cci_score + d.change_score + d.distance_score +
+        d.consec_score + d.volume_score + d.candle_score +
+        d.broker_score
+    )
     print(f"      {'─'*20}")
-    print(f"      소계:            {base_total:>5.1f}/90")
+    print(f"      소계:            {base_total:>5.1f}/91")
     print()
     
     # 보너스
@@ -99,14 +104,14 @@ def print_score_detail(score: StockScoreV5, rank: int = None):
     ma20_check = "✅" if d.is_ma20_3day_up else "❌"
     candle_check = "❌" if d.is_high_eq_close else "✅"
     
-    print(f"   [보너스] (10점 만점)")
-    print(f"      CCI 상승중 {cci_check}:    {d.cci_rising_bonus:>5.1f}/4")
+    print(f"   [보너스] (9점 만점)")
+    print(f"      CCI 상승중 {cci_check}:    {d.cci_rising_bonus:>5.1f}/3")
     print(f"      MA20 3일↑ {ma20_check}:   {d.ma20_3day_bonus:>5.1f}/3")
     print(f"      고가≠종가 {candle_check}:  {d.not_high_eq_close_bonus:>5.1f}/3")
     
     bonus_total = d.cci_rising_bonus + d.ma20_3day_bonus + d.not_high_eq_close_bonus
     print(f"      {'─'*20}")
-    print(f"      소계:            {bonus_total:>5.1f}/10")
+    print(f"      소계:            {bonus_total:>5.1f}/9")
     print()
     
     # 매도 전략

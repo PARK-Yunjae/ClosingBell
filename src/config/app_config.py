@@ -29,8 +29,8 @@ DEFAULT_DATA_DIR = r"C:\Coding\data"
 
 # 환경변수에서 로드 (없으면 기본값)
 DATA_DIR = Path(os.getenv("DATA_DIR", DEFAULT_DATA_DIR))
-OHLCV_DIR = DATA_DIR / "ohlcv_kiwoom"  # v7.0: 키움 기반
-OHLCV_FULL_DIR = DATA_DIR / "ohlcv"  # 3년+ 전체 데이터
+OHLCV_DIR = DATA_DIR / "ohlcv"  # 기본 OHLCV 데이터
+OHLCV_FULL_DIR = DATA_DIR / "ohlcv"  # 3년+ 전체 데이터 (동일 경로 사용)
 GLOBAL_DIR = DATA_DIR / "global"
 MAPPING_FILE = DATA_DIR / "stock_mapping.csv"
 GLOBAL_MERGED_FILE = DATA_DIR / "global_merged.csv"
