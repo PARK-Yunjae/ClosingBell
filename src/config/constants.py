@@ -1,5 +1,5 @@
 """
-상수 정의 모듈 v7.0 - 소프트 필터 방식 (점수제)
+상수 정의 모듈 v8.0 - 7핵심 지표 점수제 (거래원 편입)
 """
 
 from enum import Enum
@@ -11,12 +11,16 @@ MA20_PERIOD = 20
 CCI_SLOPE_PERIOD = 2
 MA20_SLOPE_PERIOD = 3
 
-# v5 점수 상수 (100점 만점)
+# v8 점수 상수 (100점 만점)
+# 핵심 7개 × 13점 = 91점 + 보너스 3개 = 9점 = 100점
 SCORE_MAX = 100.0
 SCORE_MIN = 0.0
-SCORE_PER_INDICATOR = 15.0
+SCORE_PER_INDICATOR = 13.0  # v8: 15 → 13 (7핵심 체계)
+BONUS_CCI_RISING_MAX = 3.0  # v8: 4 → 3
+BONUS_MA20_3DAY_MAX = 3.0
+BONUS_NOT_HIGH_EQ_CLOSE_MAX = 3.0
 
-# v5 등급 기준
+# v8 등급 기준 (유지)
 GRADE_S_THRESHOLD = 85
 GRADE_A_THRESHOLD = 75
 GRADE_B_THRESHOLD = 65
@@ -114,20 +118,20 @@ DISCORD_COLOR_SUCCESS = 3066993
 DISCORD_COLOR_WARNING = 16776960
 DISCORD_COLOR_ERROR = 15158332
 MSG_NO_CANDIDATES = "적합한 종목이 없습니다."
-MSG_PREVIEW_LABEL = "[프리뷰]"
-MSG_MAIN_LABEL = "[최종]"
+MSG_PREVIEW_LABEL = "🔮 감시종목 TOP5 (프리뷰)"
+MSG_MAIN_LABEL = "감시종목 TOP5"
 
 # ============================================
-# v5.2 가중치 (그리드서치 결과)
+# 레거시 호환 (v5.2 가중치 - 참조용)
 # ============================================
-# 거래량 > 등락률 > 연속양봉 = CCI = 이격도 > 캔들
-WEIGHT_VOLUME_V52 = 25      # 🔥 최고 중요!
-WEIGHT_CHANGE_V52 = 20      
-WEIGHT_CONSEC_V52 = 15      
-WEIGHT_CCI_V52 = 15         
-WEIGHT_DISTANCE_V52 = 15    
-WEIGHT_CANDLE_V52 = 10      
-WEIGHT_TOTAL_V52 = 100      # 정규화 기준
+# v8에서는 사용하지 않으나 백필/호환성을 위해 유지
+WEIGHT_VOLUME_V52 = 25
+WEIGHT_CHANGE_V52 = 20
+WEIGHT_CONSEC_V52 = 15
+WEIGHT_CCI_V52 = 15
+WEIGHT_DISTANCE_V52 = 15
+WEIGHT_CANDLE_V52 = 10
+WEIGHT_TOTAL_V52 = 100
 
 # v5.2 거래량비 필터
 VOLUME_RATIO_SOFT_MAX = 5.0    # 소프트 감점 시작

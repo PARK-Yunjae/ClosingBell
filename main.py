@@ -1,21 +1,17 @@
 """
-종가매매 스크리너 v7.0 (키움 REST API)
+ClosingBell v8.0 (키움 REST API)
 
-📊 종가매매 점수제 (100점 만점):
-   거래량비·등락률·연속양봉·CCI·이격도·캔들
+📊 감시종목 7핵심 지표 점수제 (100점 만점):
+   CCI·등락률·이격도·연속양봉·거래량비·캔들·거래원 각 13점
+   + 보너스 9점 (CCI상승3 + MA20↑3 + 고가≠종가3)
 
-📈 등급별 매도전략:
-- S등급 (85+): 시초 30% + 목표 +4%
-- A등급 (75-84): 시초 40% + 목표 +3%
-- B등급 (65-74): 시초 50% + 목표 +2.5%
-- C등급 (55-64): 시초 70% + 목표 +2%
-- D등급 (<55): 시초 전량매도
+📈 등급: S(85+) / A(75-84) / B(65-74) / C(55-64) / D(<55)
 
-🆕 v7.0 변경사항:
-- 키움증권 REST API 전환 (KIS → Kiwoom)
-- 거래대금/거래량 연속조회 (최대 300개/150개)
-- TV200 조건검색 → 거래대금+거래량 랭킹 조합
-- Discord 2000자 자동 분할
+🆕 v8.0 변경사항:
+- 거래원 7번째 핵심 지표 편입 (0~13점)
+- 스케줄 14→11개 정리
+- Discord embed 심플화 (가격+시총+DART+AI만)
+- 거래원 수급 대시보드 신규
 
 사용법:
     python main.py              # 스케줄러 모드 (17:40 자동종료)
@@ -53,16 +49,17 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  종가매매 스크리너 v7.0                                 ║
+║   🔔  ClosingBell v8.0                                       ║
 ║                                                              ║
-║   📊 점수제 (100점 만점)                                       ║
-║      CCI·등락률·이격도·연속·거래량·캔들 각 15점                  ║
-║      + 보너스 10점                                            ║
+║   📊 7핵심 지표 점수제 (100점 만점)                            ║
+║      CCI·등락률·이격도·연속·거래량·캔들·거래원 각 13점          ║
+║      + 보너스 9점 (CCI상승3 + MA20↑3 + 고가≠종가3)           ║
 ║                                                              ║
-║   🆕 v7.0 변경사항                                            ║
-║      • 키움증권 REST API 전환                                 ║
-║      • 연속조회로 300개/150개 랭킹 지원                        ║
-║      • Discord 2000자 자동 분할                               ║
+║   🆕 v8.0 변경사항                                            ║
+║      • 거래원 7번째 핵심 지표 편입 (13점)                      ║
+║      • 스케줄 14→11개 정리                                    ║
+║      • Discord embed 심플화                                   ║
+║      • 거래원 수급 대시보드 신규                                ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     """
@@ -400,9 +397,7 @@ def run_all_services():
     실행 순서:
     1. 스크리닝 (15:00)
     2. 데이터 갱신
-    3. 익일 결과 수집
-    4. 학습 (가중치 최적화)
-    5. Git 커밋
+    3. Git 커밋
     """
     logger = logging.getLogger(__name__)
     
@@ -413,7 +408,7 @@ def run_all_services():
     results = {}
     
     # 1. 스크리닝
-    print("\n[1/5] 📊 스크리닝 실행...")
+    print("\n[1/3] 📊 스크리닝 실행...")
     try:
         result = run_screening(
             screen_time=settings.screening.screening_time_main,
@@ -428,7 +423,7 @@ def run_all_services():
         logger.error(f"스크리닝 실패: {e}")
     
     # 2. 데이터 갱신
-    print("\n[2/5] 📈 데이터 갱신...")
+    print("\n[2/3] 📈 데이터 갱신...")
     try:
         from src.services.data_updater import run_data_update
         run_data_update()
@@ -437,28 +432,8 @@ def run_all_services():
         results['data_update'] = f'❌ 실패: {e}'
         logger.error(f"데이터 갱신 실패: {e}")
     
-    # 3. 익일 결과 수집
-    print("\n[3/5] 📊 익일 결과 수집...")
-    try:
-        from src.services.result_collector import run_result_collection
-        collect_result = run_result_collection()
-        results['result_collection'] = f"✅ 성공 ({collect_result.get('collected', 0)}건 수집)"
-    except Exception as e:
-        results['result_collection'] = f'❌ 실패: {e}'
-        logger.error(f"결과 수집 실패: {e}")
-    
-    # 4. 학습 (가중치 최적화)
-    print("\n[4/5] 🧠 학습 실행...")
-    try:
-        from src.services.learner_service import run_daily_learning
-        learn_result = run_daily_learning()
-        results['learning'] = '✅ 성공'
-    except Exception as e:
-        results['learning'] = f'❌ 실패: {e}'
-        logger.error(f"학습 실패: {e}")
-    
-    # 5. Git 커밋
-    print("\n[5/5] 📤 Git 커밋...")
+    # 3. Git 커밋
+    print("\n[3/3] 📤 Git 커밋...")
     try:
         from src.infrastructure.scheduler import git_auto_commit
         git_result = git_auto_commit()
@@ -489,17 +464,17 @@ def check_stock(stock_code: str):
     print(f"\n🔍 종목 점수 확인: {stock_code}")
     print("=" * 60)
     
-    from src.adapters.kis_client import get_kis_client
+    from src.adapters.kiwoom_rest_client import get_kiwoom_client
     from src.domain.models import StockData
     from src.domain.score_calculator import ScoreCalculatorV5
     from src.config.constants import MIN_DAILY_DATA_COUNT
     
-    kis_client = get_kis_client()
+    client = get_kiwoom_client()
     calculator = ScoreCalculatorV5()
     
     try:
         # 1. 종목명 조회
-        current_data = kis_client.get_current_price(stock_code)
+        current_data = client.get_current_price(stock_code)
         if not current_data:
             print(f"❌ 종목을 찾을 수 없습니다: {stock_code}")
             return
@@ -508,7 +483,7 @@ def check_stock(stock_code: str):
         print(f"📌 {stock_name} ({stock_code})")
         
         # 2. 일봉 데이터 조회
-        daily_prices = kis_client.get_daily_prices(stock_code, count=MIN_DAILY_DATA_COUNT + 10)
+        daily_prices = client.get_daily_prices(stock_code, count=MIN_DAILY_DATA_COUNT + 10)
         
         if len(daily_prices) < MIN_DAILY_DATA_COUNT:
             print(f"❌ 데이터 부족: {len(daily_prices)}일치 (최소 {MIN_DAILY_DATA_COUNT}일 필요)")
@@ -556,7 +531,7 @@ def check_stock(stock_code: str):
         print(f"   데이터 기간: {daily_prices[0].date} ~ {daily_prices[-1].date}")
         print(f"   거래대금: {trading_value:,.1f}억원")
         if change_rate < 0:
-            print(f"   ⚠️ 하락 종목은 종가매매 대상이 아닙니다")
+            print(f"   ⚠️ 하락 종목은 감시종목 대상이 아닙니다")
         
     except Exception as e:
         logger.error(f"점수 확인 실패: {e}")
@@ -586,9 +561,8 @@ def main():
     parser.add_argument('--run-company-info', action='store_true', help='유목민 기업정보 수집 (네이버금융)')
     parser.add_argument('--run-ai-analysis', action='store_true', help='유목민 AI 분석 - 오늘만 (Gemini)')
     parser.add_argument('--run-ai-analysis-all', action='store_true', help='유목민 AI 분석 - 전체 미분석 (백필 포함)')
-    parser.add_argument('--run-top5-ai', action='store_true', help='종가매매 TOP5 AI 분석 (Gemini) - 오늘만')
-    parser.add_argument('--run-top5-ai-all', action='store_true', help='종가매매 TOP5 AI 분석 - 전체 미분석 (백필용)')
-    parser.add_argument('--run-quiet', action='store_true', help='Quiet Accumulation 스크리너 (선행 신호 탐지)')
+    parser.add_argument('--run-top5-ai', action='store_true', help='감시종목 TOP5 AI 분석 (Gemini) - 오늘만')
+    parser.add_argument('--run-top5-ai-all', action='store_true', help='감시종목 TOP5 AI 분석 - 전체 미분석 (백필용)')
     parser.add_argument('--debug-universe', type=str, metavar='DATE', help='유니버스 비교 (TV200 vs 백필) - 예: --debug-universe 2026-01-23')
     parser.add_argument('--version', action='version', version=APP_FULL_VERSION)
     
@@ -671,11 +645,6 @@ def main():
     
     if args.run_top5_ai_all:
         run_top5_ai_all_cli()
-        return
-    
-    # v7.0: Quiet Accumulation 스크리너
-    if args.run_quiet:
-        run_quiet_accumulation_cli()
         return
     
     # v6.3.3: 유니버스 비교 디버그
@@ -920,10 +889,10 @@ def run_ai_analysis_all_cli():
 
 
 def run_top5_ai_cli():
-    """종가매매 TOP5 AI 분석 CLI (최신 1일)"""
+    """감시종목 TOP5 AI 분석 CLI (최신 1일)"""
     logger = logging.getLogger(__name__)
     
-    print("🤖 종가매매 TOP5 AI 분석 시작 (Gemini 2.5 Flash)...")
+    print("🤖 감시종목 TOP5 AI 분석 시작 (Gemini 2.5 Flash)...")
     
     try:
         from src.services.top5_ai_service import run_top5_ai_analysis
@@ -943,10 +912,10 @@ def run_top5_ai_cli():
 
 
 def run_top5_ai_all_cli():
-    """종가매매 TOP5 AI 분석 CLI (전체 미분석 - 백필용)"""
+    """감시종목 TOP5 AI 분석 CLI (전체 미분석 - 백필용)"""
     logger = logging.getLogger(__name__)
     
-    print("🤖 종가매매 TOP5 AI 전체 분석 시작 (백필용)...")
+    print("🤖 감시종목 TOP5 AI 전체 분석 시작 (백필용)...")
     
     try:
         from src.services.top5_ai_service import run_top5_ai_analysis_all
@@ -961,34 +930,6 @@ def run_top5_ai_all_cli():
         
     except Exception as e:
         logger.error(f"TOP5 AI 전체 분석 실패: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def run_quiet_accumulation_cli():
-    """Quiet Accumulation 스크리너 CLI (v7.0)"""
-    logger = logging.getLogger(__name__)
-    
-    print("\n🔇 Quiet Accumulation 스크리너 시작...")
-    print("   💡 거래량 폭발 전 조용한 축적 패턴 탐지")
-    print("   📊 가격 2,000~10,000원 / 변동성↓ / 거래대금↑")
-    
-    try:
-        from src.services.quiet_accumulation import run_quiet_accumulation
-        
-        stocks = run_quiet_accumulation(send_alert=True)
-        
-        print(f"\n✅ Quiet Accumulation 완료!")
-        print(f"   선정 종목: {len(stocks)}개")
-        
-        if stocks:
-            print("\n📋 TOP 5:")
-            for i, s in enumerate(stocks[:5], 1):
-                print(f"   #{i} {s.grade} {s.name} ({s.code})")
-                print(f"      {s.current_price:,}원 | 점수: {s.total_score:.0f}점")
-        
-    except Exception as e:
-        logger.error(f"Quiet Accumulation 실패: {e}")
         import traceback
         traceback.print_exc()
 

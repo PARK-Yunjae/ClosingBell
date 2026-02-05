@@ -2436,6 +2436,93 @@ def get_nomad_news_repository() -> NomadNewsRepository:
     return NomadNewsRepository()
 
 
+# ============================================================
+# v8.0: BrokerSignalRepository - 거래원 수급 신호
+# ============================================================
+
+class BrokerSignalRepository:
+    """거래원 수급 신호 저장/조회"""
+    
+    def __init__(self):
+        from src.infrastructure.database import get_database
+        self.db = get_database()
+    
+    def save_signal(
+        self,
+        screen_date: str,
+        stock_code: str,
+        stock_name: str,
+        anomaly_score: int,
+        broker_score: float,
+        tag: str = "",
+        buyers_json: str = "",
+        sellers_json: str = "",
+        unusual_score: int = 0,
+        asymmetry_score: int = 0,
+        distribution_score: int = 0,
+        foreign_score: int = 0,
+        frgn_buy: int = 0,
+        frgn_sell: int = 0,
+    ) -> bool:
+        """거래원 신호 저장 (UPSERT)"""
+        try:
+            self.db.execute("""
+                INSERT INTO broker_signals 
+                    (screen_date, stock_code, stock_name, anomaly_score, broker_score,
+                     tag, buyers_json, sellers_json, unusual_score, asymmetry_score,
+                     distribution_score, foreign_score, frgn_buy, frgn_sell)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(screen_date, stock_code) DO UPDATE SET
+                    stock_name=excluded.stock_name,
+                    anomaly_score=excluded.anomaly_score,
+                    broker_score=excluded.broker_score,
+                    tag=excluded.tag,
+                    buyers_json=excluded.buyers_json,
+                    sellers_json=excluded.sellers_json,
+                    unusual_score=excluded.unusual_score,
+                    asymmetry_score=excluded.asymmetry_score,
+                    distribution_score=excluded.distribution_score,
+                    foreign_score=excluded.foreign_score,
+                    frgn_buy=excluded.frgn_buy,
+                    frgn_sell=excluded.frgn_sell
+            """, (
+                screen_date, stock_code, stock_name, anomaly_score, broker_score,
+                tag, buyers_json, sellers_json, unusual_score, asymmetry_score,
+                distribution_score, foreign_score, frgn_buy, frgn_sell,
+            ))
+            return True
+        except Exception as e:
+            logger.error(f"broker_signals 저장 실패: {e}")
+            return False
+    
+    def get_signals_by_date(self, screen_date: str) -> list:
+        """특정 날짜의 거래원 신호 조회"""
+        return self.db.fetch_all(
+            "SELECT * FROM broker_signals WHERE screen_date = ? ORDER BY anomaly_score DESC",
+            (screen_date,)
+        )
+    
+    def get_signals_by_code(self, stock_code: str, limit: int = 20) -> list:
+        """특정 종목의 거래원 신호 이력 조회"""
+        return self.db.fetch_all(
+            "SELECT * FROM broker_signals WHERE stock_code = ? ORDER BY screen_date DESC LIMIT ?",
+            (stock_code, limit)
+        )
+    
+    def get_heatmap_data(self, days: int = 20) -> list:
+        """히트맵용 데이터 (최근 N일, 종목×날짜 anomaly_score)"""
+        return self.db.fetch_all("""
+            SELECT screen_date, stock_code, stock_name, anomaly_score, broker_score, tag
+            FROM broker_signals
+            WHERE screen_date >= date('now', ? || ' days')
+            ORDER BY screen_date DESC, anomaly_score DESC
+        """, (f"-{days}",))
+
+
+def get_broker_signal_repository() -> BrokerSignalRepository:
+    return BrokerSignalRepository()
+
+
 if __name__ == "__main__":
     # 테스트
     from src.infrastructure.database import init_database

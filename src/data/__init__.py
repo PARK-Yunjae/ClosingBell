@@ -1,24 +1,7 @@
 """
 데이터 모듈
 
-- index_monitor: 지수 모니터링 (코스피/코스닥)
-- market_regime: 시장 국면 판단 (추후 확장)
+v8.0: index_monitor 삭제 (KIS 의존 → FDR 기반 글로벌 갱신은 data_updater에서 처리)
 """
 
-from src.data.index_monitor import (
-    IndexMonitor,
-    IndexData,
-    IndexMA,
-    MarketStatus,
-    MarketMode,
-    get_index_monitor,
-)
-
-__all__ = [
-    "IndexMonitor",
-    "IndexData", 
-    "IndexMA",
-    "MarketStatus",
-    "MarketMode",
-    "get_index_monitor",
-]
+__all__ = []

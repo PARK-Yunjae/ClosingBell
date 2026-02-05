@@ -1,25 +1,19 @@
 """
-거래원 이상신호 모듈 v1.0
+거래원 이상신호 모듈 v8.0
 ========================
-ClosingBell 종가매매 Top5에 거래원 보너스/감점을 적용한다.
+ClosingBell 감시종목 TOP5의 7번째 핵심 지표 (거래원 점수 13점).
 
-사용법:
-    from src.services.broker_signal import get_broker_adjustments
-    
-    # Top20 후보의 종목코드 리스트
-    codes = [score.stock_code for score in top20]
-    adjustments = get_broker_adjustments(codes)
-    
-    # 결과: {"005930": {"bonus": 5, "tag": "⚡외국계매집", "detail": "..."}, ...}
+v8.0 변경:
+  - 외부 보너스(+3/+5/+8) → 내부 핵심 지표 (0~13점)
+  - calc_broker_score(): anomaly_score → 0~13 매핑
+  - apply_broker_bonus() → 레거시 호환용 유지
 
-동작 원리:
-    1) ka10040 (당일주요거래원): Top5 매수/매도 브로커 조회
-    2) 4가지 이상 패턴 점수화 (비주류 출현, 매수매도 비대칭, 분포이상, 외국계집중)
-    3) 이상 점수 → ClosingBell 보너스 변환:
-       - 35~49점: +3점 (Watch)
-       - 50~69점: +5점 (Alert)  
-       - 70점+:   +8점 (Critical)
-    4) "이미 터짐" 감점: 거래량 5배+ → -3점
+거래원 점수 매핑 (0~13):
+  anomaly 0~34  → 0점  (정상)
+  anomaly 35~49 → 5점  (Watch)
+  anomaly 50~69 → 9점  (Alert)
+  anomaly 70~100→ 13점 (Critical)
+  조회불가/프리뷰 → 6점 (중립)
 """
 
 import logging
@@ -273,6 +267,48 @@ class BrokerAnalyzer:
                 items.append(f"외국계 순매수 {net_ratio:.0%}")
         
         return min(score, 20), items
+
+
+# ── v8.0: anomaly_score → 거래원 점수 (0~13) ──
+
+BROKER_SCORE_NEUTRAL = 6.0  # 조회불가/프리뷰 기본값
+
+def calc_broker_score(anomaly_score: Optional[int]) -> float:
+    """
+    거래원 anomaly_score(0~100)를 핵심 지표 점수(0~13)로 변환.
+    
+    매핑:
+      0~34  → 0점  (정상: 대형 리테일 위주)
+      35~49 → 5점  (Watch: 약한 이상 신호)
+      50~69 → 9점  (Alert: 비주류/외국계 뚜렷)
+      70~100→ 13점 (Critical: 강한 매집 신호)
+      None  → 6점  (중립: 조회불가/프리뷰)
+    """
+    if anomaly_score is None:
+        return BROKER_SCORE_NEUTRAL
+    
+    if anomaly_score < 35:
+        return 0.0
+    elif anomaly_score < 50:
+        return 5.0
+    elif anomaly_score < 70:
+        return 9.0
+    else:
+        return 13.0
+
+
+def get_broker_tag(anomaly_score: Optional[int]) -> str:
+    """anomaly_score에 대한 태그 반환"""
+    if anomaly_score is None:
+        return "중립"
+    if anomaly_score < 35:
+        return "정상"
+    elif anomaly_score < 50:
+        return "Watch"
+    elif anomaly_score < 70:
+        return "Alert"
+    else:
+        return "Critical"
 
 
 # ── API 호출: kiwoom_rest_client 활용 ──

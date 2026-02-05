@@ -1,14 +1,13 @@
 """
-Discord Embed Builder v7.0
+Discord Embed Builder v8.0
 
 웹훅 메시지 생성 통합 모듈
 
-특징:
-- TOP5 / 유목민 / 일반 알림 통합
-- AI 분석 결과 포함
-- DART 공시 정보 표시
-- EnrichedStock과 호환
-- 길이 제한 처리 (1024자)
+v8.0 변경:
+- 기술지표 나열 제거 → 가격+시총+DART+AI만
+- 점수/등급 표시 제거
+- 매도전략, 보너스태그, PER/PBR 제거
+- 타이틀: "감시종목 TOP5"
 """
 
 import logging
@@ -308,160 +307,69 @@ class DiscordEmbedBuilder:
         rank: int, 
         ai_results: Dict[str, Dict] = None
     ) -> Dict:
-        """개별 종목 필드 생성"""
+        """개별 종목 필드 생성 - v8.0 심플화"""
         
         # 기본 정보 추출 (StockScoreV5 또는 EnrichedStock 호환)
         stock_code = getattr(stock, 'stock_code', '') or getattr(stock, 'code', '')
         stock_name = getattr(stock, 'stock_name', '') or getattr(stock, 'name', '')
         
-        # 점수/등급
-        score_total = getattr(stock, 'score_total', 0) or getattr(stock, 'screen_score', 0)
-        grade = getattr(stock, 'grade', '-')
-        grade_val = self._get_grade_value(grade)
-        
         # 가격 정보
         current_price = getattr(stock, 'current_price', 0) or getattr(stock, 'screen_price', 0)
         change_rate = getattr(stock, 'change_rate', 0)
-        trading_value = getattr(stock, 'trading_value', 0)
-        # ★ v6.5: market_cap 우선, _market_cap fallback (screener_service에서 동적 추가)
         market_cap = getattr(stock, 'market_cap', 0) or getattr(stock, '_market_cap', 0)
-        # ★ 거래량(주) - volume 우선, _volume fallback
-        volume = getattr(stock, 'volume', 0) or getattr(stock, '_volume', 0)
         
-        # 기술적 지표
-        score_detail = getattr(stock, 'score_detail', None)
-        if score_detail:
-            cci = getattr(score_detail, 'raw_cci', 0)
-            disparity = getattr(score_detail, 'raw_distance', 0)
-            volume_ratio = getattr(score_detail, 'raw_volume_ratio', 0)
-            consec_days = getattr(score_detail, 'raw_consec_days', 0)
-            
-            # 보너스 아이콘
-            bonus_icons = []
-            if getattr(score_detail, 'is_cci_rising', False):
-                bonus_icons.append("CCI↑")
-            if getattr(score_detail, 'is_ma20_3day_up', False):
-                bonus_icons.append("MA20↑")
-            if not getattr(score_detail, 'is_high_eq_close', True):
-                bonus_icons.append("캔들✓")
-            bonus_str = " ".join(bonus_icons) if bonus_icons else "-"
-        else:
-            # EnrichedStock에서 직접 가져오기
-            cci = getattr(stock, 'cci', 0)
-            disparity = getattr(stock, 'disparity_20', 0)
-            volume_ratio = getattr(stock, 'volume_ratio', 0)
-            consec_days = getattr(stock, 'consecutive_up', 0)
-            bonus_str = "-"
+        # ============================================================
+        # v8.0: 심플 필드 구성 (가격 + 시총 + DART + AI만)
+        # ============================================================
         
-        # 섹터 정보
-        sector = getattr(stock, '_sector', '') or getattr(stock, 'sector', '')
-        is_leading = getattr(stock, '_is_leading_sector', False) or getattr(stock, 'is_leading_sector', False)
-        sector_rank = getattr(stock, '_sector_rank', 99) or getattr(stock, 'sector_rank', 99)
+        field_value = f"현재가: {current_price:,}원 ({change_rate:+.1f}%) | 시총: {self._format_market_cap(market_cap)}"
         
-        sector_badge = ""
-        if sector:
-            if is_leading:
-                sector_badge = f"🔥 {sector} (#{sector_rank})"
-            else:
-                sector_badge = f"📁 {sector}"
-        
-        # DART 정보 (EnrichedStock에서)
+        # DART 공시 (위험/주의만)
         dart_text = ""
         risk_obj = getattr(stock, 'risk', None)
         if risk_obj:
+            dart_items = getattr(risk_obj, 'items', [])
             if getattr(risk_obj, 'has_critical_risk', False):
-                dart_text = "\n🚫 **DART 위험공시 발견!**"
+                dart_text = "\n━━━━━━━━━━\n📋 **DART 공시**\n🚫 위험 공시 발견!"
+                if dart_items:
+                    item = dart_items[0]
+                    title = getattr(item, 'title', '')
+                    date = getattr(item, 'date', '')
+                    if title:
+                        if len(title) > 40:
+                            title = title[:37] + "..."
+                        dart_text += f"\n⚠️ {title} ({date})"
             elif getattr(risk_obj, 'has_high_risk', False):
-                dart_text = "\n⚠️ **DART 주의공시**"
+                dart_text = "\n━━━━━━━━━━\n📋 **DART 공시**\n⚠️ 주의 공시"
+                if dart_items:
+                    item = dart_items[0]
+                    title = getattr(item, 'title', '')
+                    date = getattr(item, 'date', '')
+                    if title:
+                        if len(title) > 40:
+                            title = title[:37] + "..."
+                        dart_text += f"\n⚠️ {title} ({date})"
         
-        # 재무 정보 (EnrichedStock에서)
-        financial_text = ""
-        financial = getattr(stock, 'financial', None)
-        calculated = getattr(stock, 'calculated', None)
-        if financial or calculated:
-            fin_parts = []
-            if calculated:
-                per = getattr(calculated, 'per', None)
-                pbr = getattr(calculated, 'pbr', None)
-                if per:
-                    fin_parts.append(f"PER {per:.1f}")
-                if pbr:
-                    fin_parts.append(f"PBR {pbr:.2f}")
-            if fin_parts:
-                financial_text = f"\n💰 {' | '.join(fin_parts)}"
+        field_value += dart_text
         
         # AI 분석 결과
-        ai_text = ""
         if ai_results and stock_code in ai_results:
             ai = ai_results[stock_code]
             rec = ai.get('recommendation', '관망')
             risk = ai.get('risk_level', '보통')
             summary = ai.get('summary', '')
             
-            ai_text = (
-                f"\n🤖 **AI 분석**\n"
-                f"추천: {REC_EMOJI.get(rec, '❓')} **{rec}** | "
+            field_value += (
+                f"\n━━━━━━━━━━\n🤖 **AI 분석**\n"
+                f"추천: {REC_EMOJI.get(rec, '❓')} {rec} | "
                 f"위험도: {RISK_EMOJI.get(risk, '❓')} {risk}"
             )
             if summary:
-                if len(summary) > 60:
-                    summary = summary[:57] + "..."
-                ai_text += f"\n💡 {summary}"
+                if len(summary) > 80:
+                    summary = summary[:77] + "..."
+                field_value += f"\n💡 {summary}"
         
-        # 매도전략 (StockScoreV5에서)
-        sell_strategy = getattr(stock, 'sell_strategy', None)
-        strategy_text = ""
-        if sell_strategy:
-            strategy_text = (
-                f"\n━━━━━━━━━━\n"
-                f"📈 **매도전략**\n"
-                f"시초가 {sell_strategy.open_sell_ratio}% / 목표 +{sell_strategy.target_profit}%\n"
-                f"손절 {sell_strategy.stop_loss}%"
-            )
-        
-        # 필드 값 구성
-        field_value = f"**{score_total:.1f}점** {GRADE_EMOJI.get(grade_val, '❓')}{grade_val}"
-        
-        if sector_badge:
-            field_value += f" | {sector_badge}"
-        
-        field_value += f"\n현재가: {current_price:,}원 ({change_rate:+.1f}%)"
-        # ★ 시총 + 거래대금 표시
-        field_value += f"\n시총: {self._format_market_cap(market_cap)} | 거래대금: {self._format_trading_value(trading_value)}"
-        
-        field_value += f"\n━━━━━━━━━━\n📊 **핵심지표**"
-        field_value += f"\nCCI: **{cci:.0f}** | 이격도: {disparity:.1f}%"
-        # ★ 거래량에 총 거래량(주) 추가
-        volume_str = f" ({self._format_volume(volume)})" if volume else ""
-        field_value += f"\n거래량: {volume_ratio:.1f}배{volume_str} | 연속: {consec_days}일"
-        
-        if bonus_str != "-":
-            field_value += f"\n🎁 보너스: {bonus_str}"
-        
-        # v7.1: 거래원 이상신호 태그
-        broker_adj = getattr(stock, '_broker_adj', None)
-        if broker_adj:
-            broker_bonus = getattr(stock, '_broker_bonus', 0)
-            field_value += (
-                f"\n{broker_adj.tag} 거래원 {broker_adj.anomaly_score}점 (+{broker_bonus})"
-            )
-            if broker_adj.anomalies:
-                top_anomaly = broker_adj.anomalies[0]
-                if len(top_anomaly) > 40:
-                    top_anomaly = top_anomaly[:37] + "..."
-                field_value += f"\n└ {top_anomaly}"
-        
-        # DART + 재무 추가
-        field_value += dart_text
-        field_value += financial_text
-        
-        # AI 분석 추가
-        field_value += ai_text
-        
-        # 매도전략 추가
-        field_value += strategy_text
-        
-        # 길이 제한 적용 (Discord field value 1024자 제한)
+        # 길이 제한 적용
         field_value = self._truncate(field_value, DISCORD_FIELD_VALUE_LIMIT)
         
         return {
@@ -471,16 +379,8 @@ class DiscordEmbedBuilder:
         }
     
     def _build_grade_legend(self) -> str:
-        """등급 설명 텍스트"""
-        return (
-            "```\n"
-            "🏆S(85+): 시초30% + 목표+4% (손절-3%)\n"
-            "🥇A(75-84): 시초40% + 목표+3% (손절-2.5%)\n"
-            "🥈B(65-74): 시초50% + 목표+2.5% (손절-2%)\n"
-            "🥉C(55-64): 시초70% + 목표+2% (손절-1.5%)\n"
-            "⚠️D(<55): 시초 전량매도 권장 (손절-1%)\n"
-            "```"
-        )
+        """등급 설명 텍스트 - v8.0 제거"""
+        return ""
     
     # ============================================================
     # TOP5 Compact Embed (간략 버전)

@@ -17,3 +17,8 @@ icon = "📚"
 path = "pages/3_stock_search.py"
 name = "종목 검색"
 icon = "🔍"
+
+[[pages]]
+path = "pages/4_broker_flow.py"
+name = "거래원 수급"
+icon = "🏢"

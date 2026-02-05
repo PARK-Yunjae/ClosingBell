@@ -736,6 +736,8 @@ class Database:
             
             if len(tables) > 0:
                 logger.debug("v6.3.2 마이그레이션 스킵 (이미 적용됨)")
+                # v8 마이그레이션도 연쇄 실행
+                self.run_migration_v8()
                 return True
             
             logger.info("v6.3.2 마이그레이션 시작 (TV200 스냅샷)...")
@@ -751,14 +753,89 @@ class Database:
             
             if len(tables) == 1:
                 logger.info(f"v6.3.2 마이그레이션 완료: {SCHEMA_VERSION}")
+                # v8 마이그레이션도 연쇄 실행
+                self.run_migration_v8()
                 return True
             else:
                 logger.error("v6.3.2 마이그레이션 검증 실패")
                 return False
-                return False
                 
         except Exception as e:
-            logger.error(f"v6.0 마이그레이션 실패: {e}")
+            logger.error(f"v6.3.2 마이그레이션 실패: {e}")
+            return False
+    
+    def run_migration_v8(self):
+        """v8.0 마이그레이션 (broker_signals 테이블 + closing_top5_history ALTER)"""
+        try:
+            # broker_signals 테이블 존재 여부 확인
+            tables = self.fetch_all(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+                ('broker_signals',)
+            )
+            
+            if len(tables) > 0:
+                logger.debug("v8.0 마이그레이션 스킵 (이미 적용됨)")
+                return True
+            
+            logger.info("v8.0 마이그레이션 시작 (거래원 수급 테이블)...")
+            
+            # broker_signals 신규 테이블
+            self.execute_script("""
+                CREATE TABLE IF NOT EXISTS broker_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    screen_date DATE NOT NULL,
+                    stock_code TEXT NOT NULL,
+                    stock_name TEXT NOT NULL,
+                    anomaly_score INTEGER NOT NULL DEFAULT 0,
+                    broker_score REAL NOT NULL DEFAULT 0,
+                    tag TEXT,
+                    buyers_json TEXT,
+                    sellers_json TEXT,
+                    unusual_score INTEGER DEFAULT 0,
+                    asymmetry_score INTEGER DEFAULT 0,
+                    distribution_score INTEGER DEFAULT 0,
+                    foreign_score INTEGER DEFAULT 0,
+                    frgn_buy INTEGER DEFAULT 0,
+                    frgn_sell INTEGER DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(screen_date, stock_code)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_broker_signals_date 
+                    ON broker_signals(screen_date);
+                CREATE INDEX IF NOT EXISTS idx_broker_signals_code 
+                    ON broker_signals(stock_code);
+                CREATE INDEX IF NOT EXISTS idx_broker_signals_anomaly 
+                    ON broker_signals(anomaly_score);
+            """)
+            
+            # closing_top5_history ALTER TABLE (기존 테이블에 컬럼 추가)
+            alter_columns = [
+                ("broker_score", "REAL DEFAULT 0"),
+                ("broker_anomaly_score", "INTEGER DEFAULT 0"),
+                ("broker_tag", "TEXT"),
+                ("score_version", "TEXT DEFAULT 'v7'"),
+            ]
+            
+            # 기존 컬럼 확인
+            cols = self.fetch_all("PRAGMA table_info(closing_top5_history)")
+            existing_cols = {c['name'] for c in cols}
+            
+            for col_name, col_type in alter_columns:
+                if col_name not in existing_cols:
+                    try:
+                        self.execute(
+                            f"ALTER TABLE closing_top5_history ADD COLUMN {col_name} {col_type}"
+                        )
+                        logger.info(f"  ALTER TABLE: {col_name} 추가")
+                    except Exception as e:
+                        logger.debug(f"  ALTER TABLE 스킵 ({col_name}): {e}")
+            
+            logger.info("v8.0 마이그레이션 완료")
+            return True
+            
+        except Exception as e:
+            logger.error(f"v8.0 마이그레이션 실패: {e}")
             return False
     
     def update_next_day_is_top3(self):

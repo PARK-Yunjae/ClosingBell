@@ -2,7 +2,7 @@
 ClosingBell 대시보드
 ====================
 
-📊 종가매매 TOP5 20일 추적 + 유목민 공부법
+📊 감시종목 TOP5 20일 추적 + 유목민 공부법
 
 실행 방법:
 - cd dashboard && streamlit run app.py
@@ -24,7 +24,7 @@ try:
     )
 except ImportError:
     # fallback
-    APP_VERSION = "v7.0"
+    APP_VERSION = "v8.0"
     APP_NAME = "ClosingBell"
     APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
     AI_ENGINE = "Gemini 2.5 Flash"
@@ -62,9 +62,10 @@ st.set_page_config(
 with st.sidebar:
     st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
-    st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
+    st.page_link("pages/1_top5_tracker.py", label="감시종목 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
     st.page_link("pages/3_stock_search.py", label="종목 검색")
+    st.page_link("pages/4_broker_flow.py", label="거래원 수급")
     st.markdown("---")
 
 # ==================== Repository 싱글톤 ====================
@@ -88,7 +89,7 @@ def get_cached_repositories():
 
 # ==================== 헤더 ====================
 st.title(f"🔔 {APP_FULL_VERSION}")
-st.markdown("**종가매매 TOP5 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
+st.markdown("**감시종목 TOP5 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
 st.markdown("---")
 
 
@@ -374,7 +375,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     top5_summary = load_top5_summary()
-    st.markdown("### 📈 종가매매 TOP5")
+    st.markdown("### 📈 감시종목 TOP5")
     if top5_summary['dates_count'] > 0:
         st.success(f"✅ {top5_summary['dates_count']}일 데이터 | 최신: {top5_summary['latest_date']}")
     else:
@@ -555,7 +556,7 @@ st.sidebar.markdown(f"""
 - DART + 네이버 기업정보
 
 **전략:**
-- 종가매매 TOP5 (점수제)
+- 감시종목 TOP5 (점수제)
 - 익일 시가 매도
 """)
 

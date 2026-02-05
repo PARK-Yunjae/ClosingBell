@@ -1,5 +1,5 @@
 """
-OHLCV + 글로벌 데이터 자동 갱신 (data_updater.py) v7.0
+OHLCV + 글로벌 데이터 자동 갱신 (data_updater.py) v8.0
 """
 
 import logging
@@ -10,6 +10,7 @@ from typing import Optional, List
 import pandas as pd
 
 from src.adapters.kiwoom_rest_client import get_kiwoom_client
+from src.utils.market_calendar import is_market_open
 
 logger = logging.getLogger(__name__)
 
@@ -19,26 +20,7 @@ logger = logging.getLogger(__name__)
 from src.config.app_config import OHLCV_FULL_DIR as DATA_DIR, GLOBAL_DIR, MAPPING_FILE
 
 API_DELAY = 0.3
-MAX_STOCKS_PER_RUN = 3000  # v5.2: API 제한 여유있으므로 전체 갱신
-
-# 공휴일
-HOLIDAYS_2025_2026 = {
-    date(2025, 1, 1), date(2025, 1, 28), date(2025, 1, 29), date(2025, 1, 30),
-    date(2025, 3, 1), date(2025, 5, 5), date(2025, 5, 6), date(2025, 6, 6),
-    date(2025, 8, 15), date(2025, 10, 3), date(2025, 10, 5), date(2025, 10, 6),
-    date(2025, 10, 7), date(2025, 10, 8), date(2025, 10, 9), date(2025, 12, 25),
-    date(2026, 1, 1),
-}
-
-def is_market_open(check_date: date = None) -> bool:
-    """장 운영일 체크"""
-    if check_date is None:
-        check_date = date.today()
-    if check_date.weekday() >= 5:
-        return False
-    if check_date in HOLIDAYS_2025_2026:
-        return False
-    return True
+MAX_STOCKS_PER_RUN = 3000
 
 
 def get_last_date_in_csv(file_path: Path) -> Optional[date]:
@@ -133,7 +115,8 @@ def update_single_stock(code: str, last_date: date, today: date) -> bool:
         new_rows = []
         for price in prices:
             price_date = pd.Timestamp(price.date)
-            if price_date not in df_existing.index and price.date > last_date:
+            price_date_as_date = price.date if isinstance(price.date, date) else pd.Timestamp(price.date).date()
+            if price_date not in df_existing.index and price_date_as_date > last_date:
                 new_rows.append({
                     'date': price_date,
                     'open': price.open,
@@ -456,16 +439,3 @@ def run_full_data_update(max_stocks: int = MAX_STOCKS_PER_RUN) -> dict:
         'ohlcv': ohlcv_result,
         'global': global_result,
     }
-
-
-# ============================================
-# KIS OHLCV 수집 (정규장 기준)
-# ============================================
-
-# run_kis_data_update 제거 - run_data_update로 통합 (v7.0)
-
-
-def run_kis_data_update(days: int = 5) -> dict:
-    """레거시 호환 래퍼 - v7.0에서 run_data_update로 통합"""
-    logger.warning("run_kis_data_update는 deprecated입니다. run_data_update를 사용하세요.")
-    return run_data_update(max_stocks=MAX_STOCKS_PER_RUN)

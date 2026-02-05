@@ -41,20 +41,6 @@ class KiwoomSettings:
 
 
 @dataclass
-class KISSettings:
-    """한국투자증권 API 설정 (레거시 - v8.0에서 완전 제거 예정)"""
-    app_key: str = ""
-    app_secret: str = ""
-    account_no: str = ""
-    base_url: str = "https://openapi.koreainvestment.com:9443"
-    hts_id: Optional[str] = None
-    
-    def __post_init__(self):
-        # 더 이상 KIS는 검증하지 않음 - 키움으로 전환됨
-        pass
-
-
-@dataclass
 class DiscordSettings:
     """디스코드 웹훅 설정"""
     webhook_url: str
@@ -113,15 +99,38 @@ class AISettings:
 
 
 @dataclass
+class ScheduleSettings:
+    """v8.0: 스케줄 시간 설정 (.env에서 오버라이드 가능)"""
+    ohlcv_time: str = "16:00"
+    global_data_time: str = "16:10"
+    nomad_collect_time: str = "16:32"
+    company_crawl_time: str = "16:37"
+    news_collect_time: str = "16:39"
+    nomad_ai_time: str = "16:40"
+    top5_ai_time: str = "16:45"
+    git_commit_time: str = "17:00"
+    auto_shutdown_time: str = "17:30"
+
+
+@dataclass
+class BrokerSettings:
+    """v8.0: 거래원 스캔 설정"""
+    scan_top_n: int = 20           # 상위 N개 종목만 스캔
+    api_delay: float = 0.15        # ka10040 호출 간격 (초)
+    neutral_score: float = 6.0     # 조회불가/프리뷰 기본 점수
+
+
+@dataclass
 class Settings:
-    """전체 설정"""
+    """전체 설정 v8.0"""
     kiwoom: KiwoomSettings  # 키움 REST API (메인)
-    kis: KISSettings        # KIS (레거시 - v8.0에서 제거)
     discord: DiscordSettings
     email: EmailSettings
     database: DatabaseSettings
     screening: ScreeningSettings
     ai: AISettings
+    schedule: ScheduleSettings       # 🆕 v8.0
+    broker: BrokerSettings           # 🆕 v8.0
     
     # 로깅
     log_level: str = "INFO"
@@ -141,15 +150,6 @@ def load_settings() -> Settings:
         secret_key=os.getenv("KIWOOM_SECRETKEY", "").strip('"'),
         base_url=os.getenv("KIWOOM_BASE_URL", "https://api.kiwoom.com"),
         use_mock=os.getenv("KIWOOM_USE_MOCK", "false").lower() == "true",
-    )
-    
-    # KIS 설정 (레거시 - 제거 예정, 빈 값으로 초기화)
-    kis = KISSettings(
-        app_key=os.getenv("KIS_APP_KEY", "").strip('"'),
-        app_secret=os.getenv("KIS_APP_SECRET", "").strip('"'),
-        account_no=os.getenv("KIS_ACCOUNT_NO", "").strip('"'),
-        base_url=os.getenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443"),
-        hts_id=os.getenv("KIS_HTS_ID") or os.getenv("hts_id", "").strip() or None,
     )
     
     # Discord 설정 (DASHBOARD_ONLY면 자동 비활성화)
@@ -193,14 +193,35 @@ def load_settings() -> Settings:
         temperature=float(os.getenv("GEMINI_TEMPERATURE", "0.3")),
     )
     
+    # v8.0: 스케줄 설정
+    schedule = ScheduleSettings(
+        ohlcv_time=os.getenv("SCHEDULE_OHLCV_TIME", "16:00"),
+        global_data_time=os.getenv("SCHEDULE_GLOBAL_DATA_TIME", "16:10"),
+        nomad_collect_time=os.getenv("SCHEDULE_NOMAD_COLLECT_TIME", "16:32"),
+        company_crawl_time=os.getenv("SCHEDULE_COMPANY_CRAWL_TIME", "16:37"),
+        news_collect_time=os.getenv("SCHEDULE_NEWS_COLLECT_TIME", "16:39"),
+        nomad_ai_time=os.getenv("SCHEDULE_NOMAD_AI_TIME", "16:40"),
+        top5_ai_time=os.getenv("SCHEDULE_TOP5_AI_TIME", "16:45"),
+        git_commit_time=os.getenv("SCHEDULE_GIT_COMMIT_TIME", "17:00"),
+        auto_shutdown_time=os.getenv("SCHEDULE_AUTO_SHUTDOWN_TIME", "17:30"),
+    )
+    
+    # v8.0: 거래원 설정
+    broker = BrokerSettings(
+        scan_top_n=int(os.getenv("BROKER_SCAN_TOP_N", "20")),
+        api_delay=float(os.getenv("BROKER_API_DELAY", "0.15")),
+        neutral_score=float(os.getenv("BROKER_NEUTRAL_SCORE", "6.0")),
+    )
+    
     return Settings(
         kiwoom=kiwoom,
-        kis=kis,
         discord=discord,
         email=email,
         database=database,
         screening=screening,
         ai=ai,
+        schedule=schedule,
+        broker=broker,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_path=Path(os.getenv("LOG_PATH", str(BASE_DIR / "logs" / "screener.log"))),
     )

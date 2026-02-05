@@ -1,31 +1,23 @@
 """
-점수 산출기 v7.0 - 구간 최적화 점수제
+점수 산출기 v8.0 - 7핵심 지표 체계 (거래원 편입)
 
 📊 9.5년 백테스트 최적 구간 기반 (2016-2025)
 ===========================================
-🏆 구간 최적화로 역전 현상 해결:
-   - CCI 160~180: 67.2% 승률 (최적)
-   - 등락률 4~6%: 스윗스팟
-   - 이격도 2~8%: 최적 구간
-   - 연속양봉 1~3일: 최적, 5일+ 위험
-
 🎯 점수 체계 (100점 만점):
-  - 핵심 6개 지표: 각 15점 (총 90점) - 구간 최적화
-  - 보너스 조건 3개: 각 3~4점 (총 10점)
-  
-📈 등급 및 매도 전략:
-  - S등급 (85+): 시초가 30% + 목표 +4%
-  - A등급 (75-84): 시초가 40% + 목표 +3%
-  - B등급 (65-74): 시초가 50% + 목표 +2.5%
-  - C등급 (55-64): 시초가 70% + 목표 +2%
-  - D등급 (<55): 시초가 전량매도
+  - 핵심 7개 지표: 각 13점 (총 91점)
+    CCI + 등락률 + 이격도 + 연속양봉 + 거래량비율 + 캔들 + 🆕거래원
+  - 보너스 조건 3개: 각 3점 (총 9점)
+    CCI상승(3) + MA20↑(3) + 고가≠종가(3)
 
-🔧 v6.5 변경사항:
-  - 단순 선형 → 구간 최적화 (역전 현상 해결)
-  - CCI: 160~180 만점, 180+ 감점
-  - 등락률: 4~6% 만점, 8%+ 추격매수 감점
-  - 이격도: 2~8% 만점, 15%+ 과열 감점
-  - 연속양봉: 1~3일 만점, 5일+ 급락위험 감점
+📈 등급:
+  - S등급 (85+) / A등급 (75-84) / B등급 (65-74)
+  - C등급 (55-64) / D등급 (<55)
+
+🔧 v8.0 변경사항:
+  - 핵심 6개 → 7개 (거래원 13점 편입)
+  - 각 지표 max 15→13 비례 축소
+  - CCI상승 보너스 max 4→3
+  - 거래원 외부 가산 → 내부 통합
 """
 
 import logging
@@ -154,17 +146,18 @@ def get_sell_strategy(score: float) -> SellStrategy:
 
 @dataclass
 class ScoreDetailV5:
-    """v5 점수 상세 (100점 만점)"""
-    # 핵심 지표 (각 15점, 총 90점)
-    cci_score: float = 0.0          # CCI 점수 (0~15)
-    change_score: float = 0.0       # 등락률 점수 (0~15)
-    distance_score: float = 0.0     # 이격도 점수 (0~15)
-    consec_score: float = 0.0       # 연속양봉 점수 (0~15)
-    volume_score: float = 0.0       # 거래량비율 점수 (0~15)
-    candle_score: float = 0.0       # 캔들품질 점수 (0~15)
+    """v8 점수 상세 (100점 만점) - 7핵심 체계"""
+    # 핵심 지표 (각 13점, 총 91점)
+    cci_score: float = 0.0          # CCI 점수 (0~13)
+    change_score: float = 0.0       # 등락률 점수 (0~13)
+    distance_score: float = 0.0     # 이격도 점수 (0~13)
+    consec_score: float = 0.0       # 연속양봉 점수 (0~13)
+    volume_score: float = 0.0       # 거래량비율 점수 (0~13)
+    candle_score: float = 0.0       # 캔들품질 점수 (0~13)
+    broker_score: float = 0.0       # 🆕 거래원 점수 (0~13)
     
-    # 보너스 조건 (총 10점)
-    cci_rising_bonus: float = 0.0   # CCI 상승 보너스 (0~4)
+    # 보너스 조건 (총 9점)
+    cci_rising_bonus: float = 0.0   # CCI 상승 보너스 (0~3)
     ma20_3day_bonus: float = 0.0    # MA20 3일상승 보너스 (0~3)
     not_high_eq_close_bonus: float = 0.0  # 고가≠종가 보너스 (0~3)
     
@@ -175,6 +168,7 @@ class ScoreDetailV5:
     raw_consec_days: int = 0
     raw_volume_ratio: float = 0.0
     raw_upper_wick_ratio: float = 0.0
+    raw_broker_anomaly: int = 0     # 🆕 거래원 anomaly_score 원점수
     is_cci_rising: bool = False
     is_ma20_3day_up: bool = False
     is_high_eq_close: bool = False
@@ -189,14 +183,15 @@ class ScoreDetailV5:
     
     @property
     def total(self) -> float:
-        """총점 (100점 만점)"""
+        """총점 (100점 만점) - 7핵심 + 보너스3"""
         base = (
             self.cci_score +
             self.change_score +
             self.distance_score +
             self.consec_score +
             self.volume_score +
-            self.candle_score
+            self.candle_score +
+            self.broker_score      # 🆕 거래원
         )
         bonus = (
             self.cci_rising_bonus +
@@ -272,94 +267,91 @@ class StockScoreV5:
 # ============================================================
 
 def calc_cci_score(cci: float) -> float:
-    """CCI 점수 (15점 만점) - v6.5 단순화
+    """CCI 점수 (13점 만점) - v8.0
     
     최적 구간: 160~180 (만점)
     멀어질수록 점진적 감점
     음수: 많이 감점
     """
     if cci is None:
-        return 7.5
+        return 6.5
     
     # 음수: 많이 감점
     if cci < 0:
-        return max(0, 5 + cci * 0.05)  # 0 → 5점, -100 → 0점
+        return max(0, 4.33 + cci * 0.0433)  # 0 → 4.33점, -100 → 0점
     
     # 최적 구간: 160~180 (만점)
     if 160 <= cci <= 180:
-        return 15.0
+        return 13.0
     
     # 160 미만: 점진적 감점 (거리에 비례)
     if cci < 160:
         distance = 160 - cci
-        return max(5, 15 - distance * 0.0625)  # 160pt 떨어지면 10점 감점
+        return max(4.33, 13 - distance * 0.0542)  # 비례축소
     
     # 180 초과: 점진적 감점 (과열)
     distance = cci - 180
-    return max(3, 15 - distance * 0.1)  # 120pt 떨어지면 12점 감점
+    return max(2.6, 13 - distance * 0.0867)  # 비례축소
 
 
 def calc_change_score(change_rate: float) -> float:
-    """등락률 점수 (15점 만점) - v6.5 단순화
+    """등락률 점수 (13점 만점) - v8.0
     
     최적 구간: 4~6% (만점)
     멀어질수록 점진적 감점
-    음수: 많이 감점
-    25%+: 많이 감점 (추격매수 위험)
     """
     if change_rate is None:
-        return 7.5
+        return 6.5
     
     # 음수: 많이 감점
     if change_rate < 0:
-        return max(0, 5 + change_rate * 0.5)  # 0% → 5점, -10% → 0점
+        return max(0, 4.33 + change_rate * 0.433)  # 0% → 4.33점, -10% → 0점
     
     # 25%+: 많이 감점 (급등 추격 위험)
     if change_rate >= 25:
-        return 2.0
+        return 1.73
     
     # 최적 구간: 4~6% (만점)
     if 4 <= change_rate <= 6:
-        return 15.0
+        return 13.0
     
     # 4% 미만: 점진적 감점
     if change_rate < 4:
         distance = 4 - change_rate
-        return max(7, 15 - distance * 2)  # 4pt 떨어지면 8점 감점
+        return max(6.07, 13 - distance * 1.733)  # 비례축소
     
     # 6% 초과: 점진적 감점 (추격매수 위험 증가)
     distance = change_rate - 6
-    return max(3, 15 - distance * 0.63)  # 19pt 떨어지면 12점 감점
+    return max(2.6, 13 - distance * 0.546)  # 비례축소
 
 
 def calc_distance_score(distance: float) -> float:
-    """이격도 점수 (15점 만점) - v6.5 단순화
+    """이격도 점수 (13점 만점) - v8.0
     
     최적 구간: 2~8% (만점)
     멀어질수록 점진적 감점
-    음수: 많이 감점 (MA20 아래)
     """
     if distance is None:
-        return 7.5
+        return 6.5
     
     # 음수: 많이 감점 (MA20 아래 = 약세)
     if distance < 0:
-        return max(0, 5 + distance * 0.5)  # 0% → 5점, -10% → 0점
+        return max(0, 4.33 + distance * 0.433)  # 0% → 4.33점, -10% → 0점
     
     # 최적 구간: 2~8% (만점)
     if 2 <= distance <= 8:
-        return 15.0
+        return 13.0
     
     # 2% 미만: 점진적 감점 (아직 덜 올랐음)
     if distance < 2:
-        return max(10, 15 - (2 - distance) * 2.5)  # 2pt 떨어지면 5점 감점
+        return max(8.67, 13 - (2 - distance) * 2.167)  # 비례축소
     
     # 8% 초과: 점진적 감점 (과열)
-    return max(3, 15 - (distance - 8) * 0.6)  # 20pt 떨어지면 12점 감점
+    return max(2.6, 13 - (distance - 8) * 0.52)  # 비례축소
 
 
 def calc_consec_score(consec_days: int) -> float:
-    """연속양봉 점수 (15점 만점) - v6.5 단순화
+    """연속양봉 점수 (13점 만점) - v8.0
     
     최적 구간: 2~3일 (만점)
     멀어질수록 점진적 감점
@@ -369,36 +361,32 @@ def calc_consec_score(consec_days: int) -> float:
     
     # 최적 구간: 2~3일 (만점)
     if 2 <= consec_days <= 3:
-        return 15.0
+        return 13.0
     
     # 0~1일: 점진적 감점 (모멘텀 부족)
     if consec_days < 2:
-        return 7 + consec_days * 4  # 0일 → 7점, 1일 → 11점
+        return 6.07 + consec_days * 3.47  # 0일 → 6.07점, 1일 → 9.53점
     
     # 4일+: 점진적 감점 (과열/급락 위험)
-    return max(2, 15 - (consec_days - 3) * 3)  # 4일 → 12점, 5일 → 9점, 6일 → 6점
+    return max(1.73, 13 - (consec_days - 3) * 2.6)  # 비례축소
 
 
 def calc_volume_score(volume_ratio: float) -> float:
-    """거래량비율 점수 (15점 만점) - 단순 선형
+    """거래량비율 점수 (13점 만점) - v8.0
     
-    v6.2.3: 단순 선형 정규화
-    - 1배 → 0점
-    - 5배 → 15점
-    
-    범위: (volume_ratio - 1) / 4 * 15
+    단순 선형: 1~5배를 0~13으로 정규화
     """
     if volume_ratio is None:
-        return 7.5
+        return 6.5
     
     # 1배 미만은 0점
     if volume_ratio < 1:
         return 0.0
     
-    # 단순 선형: 1~5배를 0~15로 정규화
+    # 단순 선형: 1~5배를 0~13으로 정규화
     normalized = (volume_ratio - 1) / 4
     normalized = max(0, min(1, normalized))  # 0~1 클램프
-    return normalized * 15
+    return normalized * 13
 
 
 def calc_candle_score(
@@ -406,13 +394,9 @@ def calc_candle_score(
     upper_wick_ratio: float,
     lower_wick_ratio: float = 0.0,
 ) -> float:
-    """캔들품질 점수 (15점 만점) - 단순 선형
+    """캔들품질 점수 (13점 만점) - v8.0
     
-    v6.2.3: 양봉 + 아래꼬리 기반 단순 계산
-    - 양봉: 7.5점
-    - 아래꼬리(0~3%): 0~7.5점
-    
-    범위: (is_bullish * 0.5 + lower_wick * 0.5) * 15
+    양봉: 6.5점 + 아래꼬리(0~3%): 0~6.5점
     """
     # 양봉 점수: 양봉이면 0.5, 음봉이면 0
     bullish_score = 1.0 if is_bullish else 0.0
@@ -424,7 +408,7 @@ def calc_candle_score(
     
     # 합산
     total = bullish_score * 0.5 + lower_score * 0.5
-    return total * 15
+    return total * 13
 
 
 # ============================================================
@@ -432,7 +416,7 @@ def calc_candle_score(
 # ============================================================
 
 def calc_cci_rising_bonus(cci_values: List[float]) -> Tuple[float, bool]:
-    """CCI 상승 보너스 (4점)"""
+    """CCI 상승 보너스 (3점) - v8.0"""
     if not cci_values or len(cci_values) < 2:
         return 0.0, False
     
@@ -442,15 +426,14 @@ def calc_cci_rising_bonus(cci_values: List[float]) -> Tuple[float, bool]:
         # 상승폭에 따라 보너스 차등
         rise_amount = cci_values[-1] - cci_values[-2]
         if rise_amount > 20:
-            return 4.0, True
-        elif rise_amount > 10:
-            return 3.5, True
-        elif rise_amount > 5:
             return 3.0, True
-        else:
+        elif rise_amount > 10:
             return 2.5, True
+        elif rise_amount > 5:
+            return 2.0, True
+        else:
+            return 1.5, True
     else:
-        # CCI 하락 시 감점 (0점, 하락 표시)
         return 0.0, False
 
 
@@ -527,7 +510,7 @@ def calculate_volume_ratio(prices: List[DailyPrice]) -> float:
 # ============================================================
 
 class ScoreCalculatorV5:
-    """점수 계산기 v6.2.3 - 단순 선형 점수제 (100점 만점)"""
+    """점수 계산기 v8.0 - 7핵심 지표 점수제 (100점 만점)"""
     
     def __init__(self, weights: Optional[Weights] = None):
         """
@@ -539,10 +522,12 @@ class ScoreCalculatorV5:
     def calculate_single_score(
         self,
         stock: StockData,
+        broker_score: float = 6.0,       # 🆕 외부에서 주입 (기본: 중립 6점)
+        broker_anomaly: int = 0,          # 🆕 거래원 anomaly 원점수
     ) -> Optional[StockScoreV5]:
-        """단일 종목 점수 계산 - v6.2.3 단순 선형
+        """단일 종목 점수 계산 - v8.0 7핵심 체계
         
-        100점 만점 = 핵심 90점 + 보너스 10점
+        100점 만점 = 핵심 91점(7×13) + 보너스 9점(3×3)
         """
         from src.domain.indicators import calculate_cci, calculate_ma, calculate_rsi
         
@@ -589,11 +574,10 @@ class ScoreCalculatorV5:
         # 캔들 정보
         is_bullish = today.is_bullish
         upper_wick_ratio = today.upper_wick_ratio
-        # v6.2.3: lower_wick_ratio 추가 (아래꼬리 / 종가 * 100)
         lower_wick_ratio = (today.lower_wick / today.close * 100) if today.close > 0 else 0.0
         
         # ============================================================
-        # 핵심 점수 계산 (각 15점, 총 90점)
+        # 핵심 점수 계산 (각 13점, 총 91점) - v8.0
         # ============================================================
         
         cci_score = calc_cci_score(cci)
@@ -602,9 +586,10 @@ class ScoreCalculatorV5:
         consec_score = calc_consec_score(consec_days)
         volume_score = calc_volume_score(volume_ratio)
         candle_score = calc_candle_score(is_bullish, upper_wick_ratio, lower_wick_ratio)
+        # broker_score는 외부에서 주입됨 (screener_service에서 계산)
         
         # ============================================================
-        # 보너스 점수 계산 (총 10점)
+        # 보너스 점수 계산 (총 9점) - v8.0
         # ============================================================
         
         cci_rising_bonus, is_cci_rising = calc_cci_rising_bonus(cci_values)
@@ -618,24 +603,26 @@ class ScoreCalculatorV5:
         # ============================================================
         
         score_detail = ScoreDetailV5(
-            # 핵심 점수
+            # 핵심 점수 (7개)
             cci_score=cci_score,
             change_score=change_score,
             distance_score=distance_score,
             consec_score=consec_score,
             volume_score=volume_score,
             candle_score=candle_score,
+            broker_score=broker_score,          # 🆕
             # 보너스 점수
             cci_rising_bonus=cci_rising_bonus,
             ma20_3day_bonus=ma20_3day_bonus,
             not_high_eq_close_bonus=not_high_eq_close_bonus,
-            # 원시값 (v5.1: 추가 필드)
+            # 원시값
             raw_cci=cci or 0.0,
             raw_change_rate=change_rate,
             raw_distance=distance or 0.0,
             raw_consec_days=consec_days,
             raw_volume_ratio=volume_ratio,
             raw_upper_wick_ratio=upper_wick_ratio,
+            raw_broker_anomaly=broker_anomaly,  # 🆕
             is_cci_rising=is_cci_rising,
             is_ma20_3day_up=is_ma20_3day_up,
             is_high_eq_close=is_high_eq_close,
@@ -728,16 +715,17 @@ def format_score_display(score: StockScoreV5, rank: int = None) -> str:
         f"├ 거래대금: {score.trading_value:.0f}억",
         f"├ 총점: **{score.score_total:.1f}점** {grade_emoji[score.grade]} {score.grade.value}등급",
         f"│",
-        f"├ 📊 핵심지표 (90점)",
-        f"│  ├ CCI({d.raw_cci:.0f}): {d.cci_score:.1f}/15",
-        f"│  ├ 등락률({d.raw_change_rate:.1f}%): {d.change_score:.1f}/15",
-        f"│  ├ 이격도({d.raw_distance:.1f}%): {d.distance_score:.1f}/15",
-        f"│  ├ 연속양봉({d.raw_consec_days}일): {d.consec_score:.1f}/15",
-        f"│  ├ 거래량비({d.raw_volume_ratio:.1f}x): {d.volume_score:.1f}/15",
-        f"│  └ 캔들품질: {d.candle_score:.1f}/15",
+        f"├ 📊 핵심지표 (91점)",
+        f"│  ├ CCI({d.raw_cci:.0f}): {d.cci_score:.1f}/13",
+        f"│  ├ 등락률({d.raw_change_rate:.1f}%): {d.change_score:.1f}/13",
+        f"│  ├ 이격도({d.raw_distance:.1f}%): {d.distance_score:.1f}/13",
+        f"│  ├ 연속양봉({d.raw_consec_days}일): {d.consec_score:.1f}/13",
+        f"│  ├ 거래량비({d.raw_volume_ratio:.1f}x): {d.volume_score:.1f}/13",
+        f"│  ├ 캔들품질: {d.candle_score:.1f}/13",
+        f"│  └ 거래원: {d.broker_score:.1f}/13",
         f"│",
-        f"├ 🎁 보너스 (10점)",
-        f"│  ├ CCI상승 {cci_check}: {d.cci_rising_bonus:.1f}/4",
+        f"├ 🎁 보너스 (9점)",
+        f"│  ├ CCI상승 {cci_check}: {d.cci_rising_bonus:.1f}/3",
         f"│  ├ MA20 3일↑ {ma20_check}: {d.ma20_3day_bonus:.1f}/3",
         f"│  └ 고가≠종가 {candle_check}: {d.not_high_eq_close_bonus:.1f}/3",
         f"│",
@@ -872,7 +860,7 @@ def format_discord_embed(
         "color": 3066993,  # 녹색
         "fields": fields,
         "footer": {
-            "text": "v6.3 | 단순 선형 점수제 + 주도섹터 | 100점 만점"
+            "text": "v8.0 | 7핵심 지표 점수제 (거래원 편입) | 100점 만점"
         }
     }
 
@@ -910,36 +898,36 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
     print("=" * 60)
-    print("v6.2.3 점수 계산기 테스트")
+    print("v8.0 점수 계산기 테스트 (13점 만점)")
     print("=" * 60)
     
-    print("\n[CCI 점수 테스트] (15점 만점) - v6.2.3 단순 선형")
+    print("\n[CCI 점수 테스트] (13점 만점)")
     for cci in [50, 100, 140, 160, 170, 180, 200, 250, 300]:
         score = calc_cci_score(cci)
         bar = "█" * int(score)
         opt = " ★최적" if 160 <= cci <= 180 else ""
         print(f"  CCI {cci:3d}: {score:5.1f}점 {bar}{opt}")
     
-    print("\n[등락률 점수 테스트] (15점 만점)")
+    print("\n[등락률 점수 테스트] (13점 만점)")
     for change in [-3, 0, 1, 2, 5, 8, 10, 15, 20]:
         score = calc_change_score(change)
         bar = "█" * int(score)
         print(f"  등락률 {change:3d}%: {score:5.1f}점 {bar}")
     
-    print("\n[이격도 점수 테스트] (15점 만점)")
+    print("\n[이격도 점수 테스트] (13점 만점)")
     for dist in [-5, -2, 0, 2, 5, 8, 10, 15, 20]:
         score = calc_distance_score(dist)
         bar = "█" * int(score)
         print(f"  이격도 {dist:3d}%: {score:5.1f}점 {bar}")
     
-    print("\n[연속양봉 점수 테스트] (15점 만점) - v6.2.3 단순 선형")
+    print("\n[연속양봉 점수 테스트] (13점 만점)")
     for days in [0, 1, 2, 3, 4, 5, 6, 7, 10]:
         score = calc_consec_score(days)
         bar = "█" * int(score)
         warn = " ⚠️위험" if days >= 5 else ""
         print(f"  연속 {days:2d}일: {score:5.1f}점 {bar}{warn}")
     
-    print("\n[거래량비율 점수 테스트] (15점 만점)")
+    print("\n[거래량비율 점수 테스트] (13점 만점)")
     for ratio in [0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0, 12.0]:
         score = calc_volume_score(ratio)
         bar = "█" * int(score)

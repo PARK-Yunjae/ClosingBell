@@ -1,5 +1,5 @@
 """
-종가매매 TOP5 20일 추적 대시보드
+감시종목 TOP5 20일 추적 대시보드
 ================================
 
 OHLCV 파일 기반 차트 + 가독성 개선
@@ -54,7 +54,7 @@ except ImportError:
 OHLCV_PATH = Path(os.getenv("DATA_DIR", "C:/Coding/data")) / "ohlcv"
 
 st.set_page_config(
-    page_title="종가매매 TOP5",
+    page_title="감시종목 TOP5",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -64,12 +64,12 @@ st.set_page_config(
 with st.sidebar:
     st.markdown(f"## {SIDEBAR_TITLE}")
     st.page_link("app.py", label="홈")
-    st.page_link("pages/1_top5_tracker.py", label="종가매매 TOP5")
+    st.page_link("pages/1_top5_tracker.py", label="감시종목 TOP5")
     st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
     st.page_link("pages/3_stock_search.py", label="종목 검색")
     st.markdown("---")
 
-st.title("📊 종가매매 TOP5 20일 추적")
+st.title("📊 감시종목 TOP5 20일 추적")
 st.markdown(f"**D+1 ~ D+20 수익률 분석** | _{APP_VERSION} 구간 최적화 점수제_")
 st.markdown("---")
 

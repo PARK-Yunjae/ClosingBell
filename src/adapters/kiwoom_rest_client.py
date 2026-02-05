@@ -405,9 +405,12 @@ class KiwoomRestClient:
         
         for item in chart_list[:count]:
             try:
+                dt_str = item.get('dt', '').strip()
+                if not dt_str:
+                    continue  # 상폐/데이터없는 종목 스킵
                 # 키움 API 필드명: open_pric, high_pric, low_pric, cur_prc
                 prices.append(DailyPrice(
-                    date=item.get('dt', ''),
+                    date=datetime.strptime(dt_str, '%Y%m%d').date(),
                     open=self._parse_int(item.get('open_pric', '0')),
                     high=self._parse_int(item.get('high_pric', '0')),
                     low=self._parse_int(item.get('low_pric', '0')),
@@ -609,6 +612,9 @@ class KiwoomRestClient:
                     'name': item.get('stk_nm', ''),
                     'rank': len(results) + 1,
                     'volume': self._parse_int(item.get('trde_qty', '0')),
+                    'current_price': self._parse_int(item.get('cur_prc', '0')),
+                    'change_rate': self._parse_float(item.get('flu_rt', '0')),
+                    'trading_value': self._parse_int(item.get('trde_prica', '0')),
                 })
             
             # 연속조회 불가능하면 종료
@@ -624,22 +630,17 @@ class KiwoomRestClient:
         self,
         min_trading_value: int = 15000,   # 백만원 단위 (150억 = 15000)
         min_change_rate: float = 1.0,
-        max_change_rate: float = 30.0,
-        min_price: int = 2000,
-        max_price: int = 99999999,
+        max_change_rate: float = 29.0,
         volume_rank_limit: int = 150,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-        """유니버스 조회 (TV200 대체)
+        """유니버스 조회 (TV200 대체) - v8.0 OR 방식
         
-        명세서 알고리즘:
-        1) ka10032에서 300개 조회
-        2) ka10030에서 150개 조회 → {code: rank} 딕셔너리
-        3) 필터링:
-           - volume_rank_dict에 존재 (거래량 150위 이내)
-           - trde_prica >= 15000 (백만원 단위 = 150억)
-           - 1.0 <= flu_rt <= 30.0
-           - 2000 <= cur_prc <= 10000
-        4) trde_prica desc 정렬 (이미 정렬되어 있음)
+        알고리즘:
+        1) ka10032에서 거래대금 상위 300개 조회
+        2) ka10030에서 거래량 상위 150개 조회
+        3) 합집합(OR)으로 후보 풀 구성 (중복 제거)
+        4) 필터링: 등락률 1~29%
+        5) 거래대금 desc 정렬
         
         Returns:
             (종목 정보 리스트, 코드→이름 딕셔너리)
@@ -650,63 +651,67 @@ class KiwoomRestClient:
         trading_value_stocks = self.get_trading_value_rank(market_type="0", count=300)
         logger.info(f"  [Step1] ka10032 거래대금 상위: {len(trading_value_stocks)}개")
         
-        # Step 2: 거래량 상위 150개 조회 → 딕셔너리
+        # Step 2: 거래량 상위 150개 조회
         volume_stocks = self.get_volume_rank(market_type="0", count=volume_rank_limit)
-        volume_rank_dict = {item['code']: item['rank'] for item in volume_stocks}
         logger.info(f"  [Step2] ka10030 거래량 상위: {len(volume_stocks)}개")
         
-        # Step 3: 필터링
+        # Step 3: OR 합집합 (거래대금 기준 + 거래량에만 있는 종목 추가)
+        candidates = {}  # code → stock dict
+        volume_rank_dict = {}
+        
+        # 거래대금 목록 먼저 등록
+        for stock in trading_value_stocks:
+            candidates[stock['code']] = stock
+        
+        # 거래량 목록에서 없는 것만 추가
+        volume_only_count = 0
+        for item in volume_stocks:
+            volume_rank_dict[item['code']] = item['rank']
+            if item['code'] not in candidates:
+                # 거래량 목록에만 있는 종목 → 후보에 추가
+                candidates[item['code']] = {
+                    'code': item['code'],
+                    'name': item['name'],
+                    'current_price': item.get('current_price', 0),
+                    'change_rate': item.get('change_rate', 0.0),
+                    'trading_value': item.get('trading_value', 0),
+                    'volume': item.get('volume', 0),
+                }
+                volume_only_count += 1
+        
+        logger.info(f"  [Step3] OR 합집합: {len(candidates)}개 (거래량에서만 추가: {volume_only_count}개)")
+        
+        # Step 4: 필터링
         filtered = []
         names_dict = {}
         
-        # 필터링 통계
         stats = {
-            'volume_rank_fail': 0,
-            'trading_value_fail': 0,
             'change_rate_fail': 0,
-            'price_fail': 0,
             'passed': 0,
         }
         
-        for stock in trading_value_stocks:
-            code = stock['code']
+        for code, stock in candidates.items():
             name = stock['name']
             
-            # 조건 1: 거래량 150위 이내
-            if code not in volume_rank_dict:
-                stats['volume_rank_fail'] += 1
-                continue
-            
-            # 조건 2: 거래대금 >= 150억 (백만원 단위로 15000)
-            if stock['trading_value'] < min_trading_value:
-                stats['trading_value_fail'] += 1
-                continue
-            
-            # 조건 3: 등락률 1% ~ 30%
+            # 등락률 1% ~ 29%
             change_rate = stock['change_rate']
             if not (min_change_rate <= change_rate <= max_change_rate):
                 stats['change_rate_fail'] += 1
                 continue
             
-            # 조건 4: 가격 2,000 ~ 10,000원
-            price = stock['current_price']
-            if not (min_price <= price <= max_price):
-                stats['price_fail'] += 1
-                continue
-            
-            # 모든 조건 통과
+            # 통과
             stats['passed'] += 1
-            stock['volume_rank'] = volume_rank_dict[code]
+            stock['volume_rank'] = volume_rank_dict.get(code, 999)
+            stock['in_volume_top'] = code in volume_rank_dict
             filtered.append(stock)
             names_dict[code] = name
         
-        # 로그 (운영자가 수치만 봐도 이상 감지 가능)
+        # 거래대금 순 정렬
+        filtered.sort(key=lambda x: x.get('trading_value', 0), reverse=True)
+        
         logger.info(
-            f"  [Step3] 조건 필터링 결과:\n"
-            f"    - 거래량순위 탈락: {stats['volume_rank_fail']}개\n"
-            f"    - 거래대금 미달: {stats['trading_value_fail']}개\n"
+            f"  [Step4] 필터링 결과:\n"
             f"    - 등락률 범위외: {stats['change_rate_fail']}개\n"
-            f"    - 가격 범위외: {stats['price_fail']}개\n"
             f"    - 최종 통과: {stats['passed']}개"
         )
         

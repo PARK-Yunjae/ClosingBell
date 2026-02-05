@@ -1,12 +1,11 @@
 """
-스크리닝 서비스 v7.0 (키움 REST API)
+스크리닝 서비스 v8.0 (키움 REST API)
 
 책임:
 - 스크리닝 플로우 제어
 - 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
 - 최소한의 하드필터 (데이터부족, 하락종목만 제외)
 - 나머지 조건은 모두 점수로 반영 (소프트 필터)
-- 글로벌 지표 필터 (나스닥/환율)
 
 v7.0 변경사항:
 - 키움증권 REST API 전환 (KIS → Kiwoom)
@@ -141,26 +140,6 @@ class ScreenerService:
         logger.info(f"스크리닝 시작: {screen_date} {screen_time}")
         
         try:
-            # 0. 글로벌 지표 조회 (v5.4)
-            global_adjustment = 0
-            global_info = ""
-            try:
-                from src.data.index_monitor import get_global_indicators
-                global_ind = get_global_indicators()
-                global_adjustment = global_ind.get_score_adjustment()
-                
-                if global_ind.nasdaq_change is not None:
-                    global_info = f"나스닥 {global_ind.nasdaq_change:+.1f}%({global_ind.nasdaq_trend})"
-                    if global_ind.usdkrw_change is not None:
-                        global_info += f" / 환율 {global_ind.usdkrw_change:+.1f}%({global_ind.fx_trend})"
-                    
-                    if global_adjustment != 0:
-                        global_info += f" → 점수 {global_adjustment:+d}점"
-                    
-                    logger.info(f"글로벌 지표: {global_info}")
-            except Exception as e:
-                logger.warning(f"글로벌 지표 조회 실패: {e}")
-            
             # 1. 유니버스 조회
             stocks = self._get_universe()
             if not stocks:
@@ -180,13 +159,6 @@ class ScreenerService:
             # 3. 점수 계산
             scores = self.calculator.calculate_scores(stock_data_list)
             
-            # 3-1. 글로벌 지표 점수 조정 (v5.4)
-            if global_adjustment != 0:
-                for score in scores:
-                    score.score_total = min(100, score.score_total + global_adjustment)
-                    # grade/sell_strategy는 score_total 기반 property로 자동 계산됨
-                logger.info(f"글로벌 점수 조정: {global_adjustment:+d}점 적용")
-            
             # ================================================
             # v6.2: CCI 하드 필터 적용
             # ================================================
@@ -198,20 +170,67 @@ class ScreenerService:
             market_cap_info = self._load_market_cap_info(scores_filtered)
             
             # ================================================
-            # v7.1: 거래원 이상신호 보너스 적용
+            # v8.0: 거래원 스캔 (Top20 → calc_broker_score → score_detail에 반영)
+            # 프리뷰(12:00)는 장중 변동 → broker_score=6(중립) 고정
             # ================================================
             broker_adjustments = {}
-            try:
-                from src.services.broker_signal import apply_broker_bonus
-                scores_filtered, broker_adjustments = apply_broker_bonus(
-                    scores_filtered, top_n=20
-                )
-                if broker_adjustments:
-                    logger.info(f"거래원 보너스: {len(broker_adjustments)}개 종목 적용")
-            except ImportError:
-                logger.debug("broker_signal 모듈 없음, 건너뜀")
-            except Exception as e:
-                logger.warning(f"거래원 스캔 실패 (무시): {e}")
+            if not is_preview:
+                try:
+                    from src.services.broker_signal import (
+                        get_broker_adjustments, calc_broker_score, BROKER_SCORE_NEUTRAL
+                    )
+                    codes_top20 = [s.stock_code for s in scores_filtered[:20]]
+                    broker_adjustments = get_broker_adjustments(codes_top20)
+                    
+                    # 거래원 점수를 score_detail에 직접 반영 + score_total 재계산
+                    for score in scores_filtered:
+                        adj = broker_adjustments.get(score.stock_code)
+                        if adj:
+                            bs = calc_broker_score(adj.anomaly_score)
+                            score.score_detail.broker_score = bs
+                            score.score_detail.raw_broker_anomaly = adj.anomaly_score
+                        else:
+                            # 이상 미감지 → 0점 (정상)
+                            score.score_detail.broker_score = 0.0
+                            score.score_detail.raw_broker_anomaly = 0
+                        # score_total 재계산
+                        score.score_total = score.score_detail.total
+                    
+                    # 재정렬
+                    scores_filtered.sort(key=lambda x: (-x.score_total, -x.trading_value))
+                    for i, s in enumerate(scores_filtered, 1):
+                        s.rank = i
+                    
+                    if broker_adjustments:
+                        logger.info(f"거래원 v8: {len(broker_adjustments)}개 이상감지")
+                        
+                        # v8: broker_signals DB 저장
+                        try:
+                            from src.infrastructure.repository import get_broker_signal_repository
+                            import json as _json
+                            broker_repo = get_broker_signal_repository()
+                            for code, adj in broker_adjustments.items():
+                                broker_repo.save_signal(
+                                    screen_date=screen_date,
+                                    stock_code=code,
+                                    stock_name=getattr(adj, 'stock_code', code),
+                                    anomaly_score=adj.anomaly_score,
+                                    broker_score=calc_broker_score(adj.anomaly_score),
+                                    tag=adj.tag,
+                                    buyers_json="",  # TODO: raw data 전달 시 저장
+                                    sellers_json="",
+                                    unusual_score=adj.unusual_score,
+                                    asymmetry_score=adj.asymmetry_score,
+                                    distribution_score=adj.distribution_score,
+                                    foreign_score=adj.foreign_score,
+                                )
+                            logger.info(f"broker_signals DB 저장: {len(broker_adjustments)}건")
+                        except Exception as db_err:
+                            logger.warning(f"broker_signals DB 저장 실패 (무시): {db_err}")
+                except ImportError:
+                    logger.debug("broker_signal 모듈 없음, 건너뜀")
+                except Exception as e:
+                    logger.warning(f"거래원 스캔 실패 (무시): {e}")
             
             # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
             top_n_count = get_top_n_count()
@@ -272,7 +291,7 @@ class ScreenerService:
                 "status": "SUCCESS",
                 "is_preview": is_preview,
                 "error_message": None,
-                "global_info": global_info,  # v5.4
+                "global_info": "",  # v8.0: 글로벌 점수 조정 제거
                 "market_cap_info": market_cap_info,  # v6.2
                 "leading_sectors_text": leading_sectors_text,  # v6.3
                 "sector_stats": sector_stats,  # v6.3
@@ -339,9 +358,7 @@ class ScreenerService:
             raw_stocks, names_dict = self.broker_client.get_rank_universe(
                 min_trading_value=15000,  # 150억 (백만원 단위)
                 min_change_rate=1.0,
-                max_change_rate=30.0,
-                min_price=2000,
-                max_price=10000,
+                max_change_rate=29.0,
                 volume_rank_limit=150,
             )
             
@@ -797,16 +814,16 @@ class ScreenerService:
             logger.error(f"TOP5 저장 실패: {e}")
     
     def _send_alert(self, result: Dict, is_preview: bool):
-        """알림 발송 (종가매매 TOP5) v6.5 - DART+AI 배치 통합"""
+        """알림 발송 (감시종목 TOP5) v6.5 - DART+AI 배치 통합"""
         try:
             top_n = result["top_n"]
             cci_filtered = result.get("cci_filtered_out", 0)
             large_cap_top5 = result.get("large_cap_top5", [])
             leading_sectors_text = result.get("leading_sectors_text", "")
             
-            # 종가매매 TOP5 발송
+            # 감시종목 TOP5 발송
             if not top_n:
-                self.discord_notifier.send_message("📊 종가매매: 적합한 종목 없음")
+                self.discord_notifier.send_message("📊 감시종목: 적합한 종목 없음")
                 return
             
             # ============================================================
@@ -836,7 +853,7 @@ class ScreenerService:
                 ai_results = pipeline_result.get('ai_results', {})
                 
                 # CCI 필터 정보 추가
-                title = "[프리뷰] 종가매매 TOP5" if is_preview else "종가매매 TOP5"
+                title = "🔮 감시종목 TOP5 (프리뷰)" if is_preview else "감시종목 TOP5"
                 if cci_filtered > 0:
                     title += f" (CCI과열 {cci_filtered}개 제외)"
                 
@@ -877,47 +894,29 @@ class ScreenerService:
             logger.error(f"알림 에러: {e}")
     
     def _send_alert_legacy(self, top_n: list, cci_filtered: int, leading_sectors_text: str, is_preview: bool):
-        """v6.4 방식 알림 (fallback용)"""
+        """v8.0 fallback 알림 (파이프라인 실패 시)"""
         try:
-            # v6.4: AI 분석 실행 (종목당 5~10초, 총 30초~1분)
-            ai_results = {}
-            try:
-                from src.services.webhook_ai_helper import analyze_top5_for_webhook
-                logger.info("🤖 웹훅용 AI 분석 시작 (legacy)...")
-                ai_results = analyze_top5_for_webhook(top_n)
-                logger.info(f"🤖 AI 분석 완료: {len(ai_results)}개")
-            except Exception as e:
-                logger.warning(f"AI 분석 실패 (웹훅은 계속 발송): {e}")
-            
-            # v6.4: AI 결과 포함 Embed 생성
-            title = "[프리뷰] 종가매매 TOP5" if is_preview else "🔔 종가매매 TOP5"
+            title = "🔮 감시종목 TOP5 (프리뷰)" if is_preview else "감시종목 TOP5"
             if cci_filtered > 0:
                 title += f" (CCI과열 {cci_filtered}개 제외)"
             
-            # AI 결과가 있으면 AI 포함 버전, 없으면 기존 버전
-            if ai_results:
-                from src.domain.score_calculator_patch import format_discord_embed_with_ai
-                embed = format_discord_embed_with_ai(
-                    top_n, 
-                    title=title,
-                    leading_sectors_text=leading_sectors_text,
-                    ai_results=ai_results,
-                )
-            else:
-                embed = format_discord_embed(
-                    top_n, 
-                    title=title,
-                    leading_sectors_text=leading_sectors_text,
-                )
+            from src.services.discord_embed_builder import DiscordEmbedBuilder
+            embed_builder = DiscordEmbedBuilder()
+            embed = embed_builder.build_top5_embed(
+                stocks=top_n,
+                title=title,
+                leading_sectors_text=leading_sectors_text,
+                run_type="preview" if is_preview else "main",
+            )
             
             success = self.discord_notifier.send_embed(embed)
             if success:
-                logger.info("종가매매 Discord 발송 완료 (legacy)" + (" (AI 포함)" if ai_results else ""))
+                logger.info("감시종목 Discord 발송 완료 (fallback)")
             else:
-                logger.warning("종가매매 Discord 발송 실패")
+                logger.warning("감시종목 Discord 발송 실패")
                 
         except Exception as e:
-            logger.error(f"Legacy 알림 에러: {e}")
+            logger.error(f"Fallback 알림 에러: {e}")
     
     def _send_large_cap_alert(self, large_cap_stocks: list):
         """v6.2: 대기업 TOP5 별도 알림"""
@@ -941,7 +940,7 @@ class ScreenerService:
     def _print_results(self, top_n: List[StockScoreV5]):
         """콘솔 출력 v6.2"""
         print("\n" + "=" * 60)
-        print("🔔 종가매매 TOP5")
+        print("🔔 감시종목 TOP5")
         print("=" * 60)
         
         if not top_n:

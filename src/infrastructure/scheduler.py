@@ -1,27 +1,29 @@
 """
-작업 스케줄러 v7.0
+작업 스케줄러 v8.0
 
 책임:
 - Cron 스케줄 관리
 - 작업 등록/해제
 - 장 운영일 체크
 
-v7.0 스케줄:
-- 12:00 프리뷰 스크리닝
-- 15:00 메인 스크리닝 (→ closing_top5_history)
-- 15:02 눌림목 스캐너
-- 15:05 Quiet Accumulation (선행 신호 탐지)
+v8.0 스케줄 (14→11개):
+- 12:00 프리뷰 스크리닝 (감시종목 TOP5)
+- 15:00 메인 스크리닝 (감시종목 TOP5)
 - 16:00 OHLCV 수집 (키움 기반)
-- 16:10 글로벌 데이터 갱신
-- 16:15 결과 수집 (→ top5_daily_prices)
-- 16:20 일일 학습
-- 16:32 유목민 종목 수집 (→ nomad_candidates)
+- 16:10 글로벌 데이터 갱신 (FDR)
+- 16:32 유목민 종목 수집
 - 16:37 기업정보 크롤링
-- 16:39 뉴스 수집 (→ nomad_news)
+- 16:39 뉴스 수집
 - 16:40 AI 분석 (유목민)
-- 16:45 TOP5 AI 분석
+- 16:45 감시종목 AI 분석
 - 17:00 Git 커밋
 - 17:30 자동 종료
+
+삭제 (v7→v8):
+- 15:02 눌림목 스캐너
+- 15:05 Quiet Accumulation
+- 16:15 결과 수집
+- 16:20 일일 학습
 
 의존성:
 - APScheduler
@@ -42,74 +44,12 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MI
 
 from src.config.settings import settings
 from src.services.data_updater import run_data_update, update_global_data
-from src.services.result_collector import run_result_collection
-from src.services.learner_service import run_daily_learning
+from src.utils.market_calendar import is_market_open, HOLIDAYS_KR
 
 logger = logging.getLogger(__name__)
 
 
-# 한국 공휴일 (2025~2026년, 필요시 추가)
-HOLIDAYS_2025_2026 = {
-    # 2025년
-    date(2025, 1, 1),    # 신정
-    date(2025, 1, 28),   # 설날 연휴
-    date(2025, 1, 29),   # 설날
-    date(2025, 1, 30),   # 설날 연휴
-    date(2025, 3, 1),    # 삼일절
-    date(2025, 5, 5),    # 어린이날
-    date(2025, 5, 6),    # 대체공휴일
-    date(2025, 6, 6),    # 현충일
-    date(2025, 8, 15),   # 광복절
-    date(2025, 10, 3),   # 개천절
-    date(2025, 10, 5),   # 추석 연휴
-    date(2025, 10, 6),   # 추석
-    date(2025, 10, 7),   # 추석 연휴
-    date(2025, 10, 8),   # 대체공휴일
-    date(2025, 10, 9),   # 한글날
-    date(2025, 12, 25),  # 크리스마스
-    # 2026년
-    date(2026, 1, 1),    # 신정
-    date(2026, 2, 16),   # 설날 연휴
-    date(2026, 2, 17),   # 설날
-    date(2026, 2, 18),   # 설날 연휴
-    date(2026, 3, 1),    # 삼일절
-    date(2026, 3, 2),    # 대체공휴일
-    date(2026, 5, 5),    # 어린이날
-    date(2026, 5, 25),   # 부처님오신날
-    date(2026, 6, 6),    # 현충일
-    date(2026, 8, 15),   # 광복절
-    date(2026, 8, 17),   # 대체공휴일
-    date(2026, 9, 24),   # 추석 연휴
-    date(2026, 9, 25),   # 추석
-    date(2026, 9, 26),   # 추석 연휴
-    date(2026, 10, 3),   # 개천절
-    date(2026, 10, 5),   # 대체공휴일
-    date(2026, 10, 9),   # 한글날
-    date(2026, 12, 25),  # 크리스마스
-}
-
-
-def is_market_open(check_date: Optional[date] = None) -> bool:
-    """장 운영일 체크
-    
-    Args:
-        check_date: 확인할 날짜 (기본: 오늘)
-        
-    Returns:
-        장 운영 여부
-    """
-    if check_date is None:
-        check_date = date.today()
-    
-    # 주말 체크
-    if check_date.weekday() >= 5:  # 토(5), 일(6)
-        return False
-    
-    # 공휴일 체크
-    if check_date in HOLIDAYS_2025_2026:
-        return False
-    
-    return True
+# is_market_open()과 HOLIDAYS_KR은 src.utils.market_calendar에서 import
 
 
 def market_day_wrapper(func: Callable) -> Callable:
@@ -304,7 +244,7 @@ class ScreenerScheduler:
         logger.info(f"Heartbeat 등록: {self.HEARTBEAT_INTERVAL_MINUTES}분 간격")
     
     def setup_default_schedules(self):
-        """기본 스케줄 설정 - v6.0 (종가매매 + TOP5 20일 추적 + 유목민)"""
+        """기본 스케줄 설정 - v8.0 (감시종목 TOP5 + 유목민)"""
         from src.services.screener_service import (
             run_main_screening,
             run_preview_screening,
@@ -331,31 +271,6 @@ class ScreenerScheduler:
             minute=main_minute,
         )
         
-        # 15:02 눌림목 스크리너 (TOP5 직후 실행)
-        # ※ 최근 5일 급등 종목 중 오늘 눌림목 발생 종목 탐지
-        try:
-            from src.services.dip_scanner import run_dip_scan
-            self.add_job(
-                job_id='dip_scan',
-                func=run_dip_scan,
-                hour=main_hour,
-                minute=main_minute + 2,  # 15:02
-            )
-        except ImportError:
-            logger.warning("dip_scanner 모듈 없음 - 눌림목 스캔 스킵")
-        
-                # 15:05 Quiet Accumulation 스크리너 (v7.0 선행 신호 탐지)
-        try:
-            from src.services.quiet_accumulation import run_quiet_accumulation
-            self.add_job(
-                job_id='quiet_accumulation',
-                func=run_quiet_accumulation,
-                hour=main_hour,
-                minute=main_minute + 5,  # 15:05
-            )
-        except ImportError:
-            logger.warning("quiet_accumulation 모듈 없음 - 스킵")
-            
         # Heartbeat 작업 추가 (5분마다)
         self._add_heartbeat_job()
         
@@ -373,22 +288,6 @@ class ScreenerScheduler:
             func=update_global_data,
             hour=16,
             minute=10,
-        )
-        
-        # 16:15 익일 결과 수집 (승률 추적 + v6.0 TOP5 20일 추적)
-        self.add_job(
-            job_id='result_collection',
-            func=run_result_collection,
-            hour=16,
-            minute=15,
-        )
-        
-        # 16:20 일일 학습 (상관관계 분석 + 가중치 조정)
-        self.add_job(
-            job_id='daily_learning',
-            func=run_daily_learning,
-            hour=16,
-            minute=20,
         )
         
         # 16:32 유목민 공부법 (상한가/거래량천만 → nomad_candidates)
@@ -466,7 +365,7 @@ class ScreenerScheduler:
             check_market_day=False,  # 휴장일에도 종료
         )
         
-        logger.info("기본 스케줄 설정 완료 (v7.0: 종가매매 + TOP5 + OHLCV + 유목민 + 뉴스 + 기업정보 + AI분석)")
+        logger.info("기본 스케줄 설정 완료 (v8.0: 감시종목 + OHLCV + 글로벌 + 유목민 + 뉴스 + 기업정보 + AI분석)")
     
     def start(self):
         """스케줄러 시작"""
