@@ -4,7 +4,7 @@ ClosingBell 앱 전역 설정
 - 데이터 경로 (절대경로)
 - 표시 문구
 
-v8.0 - 7핵심 지표 + 거래원 편입 + 감시종목 리네임
+v9.0 - 종목 심층 분석 도구 + 매물대 표시 + 분석 리포트
 """
 
 from pathlib import Path
@@ -13,7 +13,7 @@ import os
 # ============================================================
 # 버전 정보
 # ============================================================
-APP_VERSION = "v8.0"
+APP_VERSION = "v9.0"
 APP_NAME = "ClosingBell"
 AI_ENGINE = "Gemini 2.5 Flash"
 BROKER_API = "키움증권 REST API"

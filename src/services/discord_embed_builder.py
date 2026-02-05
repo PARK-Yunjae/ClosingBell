@@ -1,13 +1,11 @@
 """
-Discord Embed Builder v8.0
+Discord Embed Builder v9.0
 
 웹훅 메시지 생성 통합 모듈
 
-v8.0 변경:
-- 기술지표 나열 제거 → 가격+시총+DART+AI만
-- 점수/등급 표시 제거
-- 매도전략, 보너스태그, PER/PBR 제거
-- 타이틀: "감시종목 TOP5"
+v9.0 변경:
+- 매물대(Volume Profile) 한줄 요약 표시
+- 기술지표 나열 제거 → 가격+시총+DART+AI 중심
 """
 
 import logging
@@ -79,7 +77,7 @@ RANK_EMOJI = {
 class DiscordEmbedBuilder:
     """Discord Embed 생성기"""
     
-    def __init__(self, version: str = "v7.0"):
+    def __init__(self, version: str = "v9.0"):
         self.version = version
     
     def _truncate(self, text: str, max_length: int = DISCORD_FIELD_VALUE_LIMIT, suffix: str = "...") -> str:

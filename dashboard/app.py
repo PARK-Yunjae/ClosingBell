@@ -24,7 +24,7 @@ try:
     )
 except ImportError:
     # fallback
-    APP_VERSION = "v8.0"
+    APP_VERSION = "v9.0"
     APP_NAME = "ClosingBell"
     APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
     AI_ENGINE = "Gemini 2.5 Flash"

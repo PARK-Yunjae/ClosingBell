@@ -36,7 +36,7 @@ try:
         APP_VERSION, APP_FULL_VERSION, SIDEBAR_TITLE, FOOTER_TOP5,
     )
 except ImportError:
-    APP_VERSION = "v7.0"
+    APP_VERSION = "v9.0"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
     SIDEBAR_TITLE = "🔔 ClosingBell"
     FOOTER_TOP5 = f"{APP_FULL_VERSION} | D+1 ~ D+20 수익률 분석"

@@ -29,7 +29,7 @@ try:
         MSG_COMPANY_INFO_AUTO,
     )
 except ImportError:
-    APP_VERSION = "v7.0"
+    APP_VERSION = "v9.0"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
     AI_ENGINE = "Gemini 2.5 Flash"
     SIDEBAR_TITLE = "🔔 ClosingBell"
