@@ -190,6 +190,23 @@ def validate_screening_settings(result: ValidationResult):
         )
 
 
+def validate_vp_settings(result: ValidationResult):
+    """매물대 설정 검증"""
+    vp = getattr(settings, "vp", None)
+    if not vp:
+        return
+    if vp.source not in {"auto", "kiwoom", "local"}:
+        result.add_warning(f"VP_SOURCE 값이 올바르지 않습니다: {vp.source}")
+    if vp.cycle < 10 or vp.cycle > 300:
+        result.add_warning(f"VP_CYCLE 범위 오류: {vp.cycle} (권장 50~300)")
+    if vp.bands < 2 or vp.bands > 60:
+        result.add_warning(f"VP_BANDS 범위 오류: {vp.bands} (권장 5~30)")
+    if vp.cur_entry not in (0, 1):
+        result.add_warning(f"VP_CUR_ENTRY 값이 올바르지 않습니다: {vp.cur_entry} (0|1)")
+    if str(vp.trde_qty_tp) not in {"0", "1", "2"}:
+        result.add_warning(f"VP_TRDE_QTY_TP 값이 올바르지 않습니다: {vp.trde_qty_tp}")
+
+
 def validate_env_file_exists(result: ValidationResult):
     """.env 파일 존재 확인"""
     env_path = BASE_DIR / ".env"
@@ -240,6 +257,7 @@ def validate_settings(raise_on_error: bool = True) -> ValidationResult:
     validate_database_settings(result)
     validate_log_settings(result)
     validate_screening_settings(result)
+    validate_vp_settings(result)
     
     # 결과 로깅
     if result.valid:

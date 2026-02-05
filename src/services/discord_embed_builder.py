@@ -222,16 +222,20 @@ class DiscordEmbedBuilder:
         vp_tag = ""
         vp_above = None
         vp_below = None
+        vp_meta = ""
         if detail:
             vp_tag = getattr(detail, "raw_vp_tag", "") or ""
             vp_above = getattr(detail, "raw_vp_above_pct", None)
             vp_below = getattr(detail, "raw_vp_below_pct", None)
+            vp_meta = getattr(detail, "raw_vp_meta", "") or ""
         if not vp_tag:
             vp_tag = getattr(stock, "raw_vp_tag", "") or ""
         if vp_above is None:
             vp_above = getattr(stock, "raw_vp_above_pct", 0.0)
         if vp_below is None:
             vp_below = getattr(stock, "raw_vp_below_pct", 0.0)
+        if not vp_meta:
+            vp_meta = getattr(stock, "raw_vp_meta", "") or ""
         if not vp_tag:
             vp_tag = "데이터부족"
 
@@ -247,7 +251,16 @@ class DiscordEmbedBuilder:
         if label == "중립" and vp_tag not in {"상승", "저항", "중립"}:
             reason = vp_tag
 
-        return label, reason, float(vp_above or 0.0), float(vp_below or 0.0)
+        return label, reason, float(vp_above or 0.0), float(vp_below or 0.0), vp_meta
+
+    def _format_vp_meta(self, vp_meta: str) -> str:
+        if not vp_meta:
+            return ""
+        # 형태: "source/100d/10b/cur0"
+        parts = vp_meta.split("/")
+        if len(parts) >= 3:
+            return f"{parts[1]}/{parts[2]}/{parts[3] if len(parts) > 3 else ''}".strip("/")
+        return vp_meta
 
     def _sanitize_embed(self, embed: Dict) -> Dict:
         """Apply Discord length limits with ellipsis."""
@@ -506,14 +519,16 @@ class DiscordEmbedBuilder:
             except Exception:
                 change_rate = 0.0
 
-            vp_label, _, _, _ = self._resolve_vp(stock)
+            vp_label, _, _, _, vp_meta = self._resolve_vp(stock)
+            vp_meta_short = self._format_vp_meta(vp_meta)
             ai = ai_results.get(str(stock_code), ai_results.get(stock_code, {}))
             rec = self._normalize_ai_rec(ai.get("recommendation", "관망"))
             risk = self._normalize_ai_risk(ai.get("risk_level", "보통"))
             ai_label = f"{rec}({risk})"
             dart = "🚫" if self._has_dart_risk(stock) else "-"
+            vp_meta_text = f" {vp_meta_short}" if vp_meta_short else ""
             lines.append(
-                f"{i}. {stock_name}({stock_code}) | {change_rate:+.1f}% | {vp_label} | {ai_label} | {dart}"
+                f"{i}. {stock_name}({stock_code}) | {change_rate:+.1f}% | {vp_label}{vp_meta_text} | {ai_label} | {dart}"
             )
 
         if not lines:
@@ -550,12 +565,14 @@ class DiscordEmbedBuilder:
         name_line = f"#{rank} {stock_name}({stock_code}) {arrow}{change_rate:+.1f}%{dart_suffix}"
 
         price_display = f"₩{current_price:,}" if current_price else "-"
-        vp_label, vp_reason, vp_above, vp_below = self._resolve_vp(stock)
+        vp_label, vp_reason, vp_above, vp_below, vp_meta = self._resolve_vp(stock)
         vp_display = vp_label if not vp_reason else f"{vp_label}({vp_reason})"
         vp_emoji = VP_STATUS_EMOJI.get(vp_label, "🟡")
+        vp_meta_short = self._format_vp_meta(vp_meta)
+        vp_meta_text = f" [{vp_meta_short}]" if vp_meta_short else ""
         line1 = (
             f"{price_display} | 시총 {self._format_market_cap(market_cap)} | "
-            f"VP: {vp_emoji}{vp_display} (위{vp_above:.0f}%/아래{vp_below:.0f}%)"
+            f"VP: {vp_emoji}{vp_display} (위{vp_above:.0f}%/아래{vp_below:.0f}%){vp_meta_text}"
         )
 
         ai = ai_results.get(str(stock_code), ai_results.get(stock_code, {}))
@@ -675,12 +692,14 @@ class DiscordEmbedBuilder:
         vp_above = None
         vp_below = None
         vp_tag = ""
+        vp_meta = ""
         detail = getattr(stock, 'score_detail', None)
         if detail:
             vp_tag = getattr(detail, 'raw_vp_tag', '') or ""
             vp_score = getattr(detail, 'raw_vp_score', None)
             vp_above = getattr(detail, 'raw_vp_above_pct', None)
             vp_below = getattr(detail, 'raw_vp_below_pct', None)
+            vp_meta = getattr(detail, 'raw_vp_meta', '') or ""
         if not vp_tag:
             vp_tag = getattr(stock, 'raw_vp_tag', '') or ""
             if vp_score is None:
@@ -689,6 +708,8 @@ class DiscordEmbedBuilder:
                 vp_above = getattr(stock, 'raw_vp_above_pct', None)
             if vp_below is None:
                 vp_below = getattr(stock, 'raw_vp_below_pct', None)
+        if not vp_meta:
+            vp_meta = getattr(stock, 'raw_vp_meta', '') or ""
         if not vp_tag:
             vp_tag = "데이터부족"
         if vp_score is None:
@@ -704,9 +725,11 @@ class DiscordEmbedBuilder:
             "데이터부족": "⚪",
             "오류": "⚠️",
         }.get(vp_tag, "📊")
+        vp_meta_short = self._format_vp_meta(vp_meta)
+        vp_meta_text = f" [{vp_meta_short}]" if vp_meta_short else ""
         field_value += (
             f"\n{vp_emoji} 매물대 {vp_score:.0f}점 [{vp_tag}] "
-            f"위:{vp_above:.0f}%/아래:{vp_below:.0f}%"
+            f"위:{vp_above:.0f}%/아래:{vp_below:.0f}%{vp_meta_text}"
         )
         
         # DART 공시 (위험/주의만)

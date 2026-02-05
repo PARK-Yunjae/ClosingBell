@@ -132,6 +132,7 @@ class EnrichedStock:
     raw_vp_above_pct: float = 0.0
     raw_vp_below_pct: float = 0.0
     raw_vp_tag: str = "데이터부족"
+    raw_vp_meta: str = ""
     
     # 섹터 정보
     sector: str = ""
@@ -163,6 +164,7 @@ class EnrichedStock:
             vp_above = getattr(score_detail, 'raw_vp_above_pct', 0.0)
             vp_below = getattr(score_detail, 'raw_vp_below_pct', 0.0)
             vp_tag = getattr(score_detail, 'raw_vp_tag', "데이터부족") or "데이터부족"
+            vp_meta = getattr(score_detail, 'raw_vp_meta', "") or ""
         else:
             cci = getattr(score, 'cci', 0)
             disparity = getattr(score, 'disparity_20', 0)
@@ -172,6 +174,7 @@ class EnrichedStock:
             vp_above = getattr(score, 'raw_vp_above_pct', 0.0)
             vp_below = getattr(score, 'raw_vp_below_pct', 0.0)
             vp_tag = getattr(score, 'raw_vp_tag', "데이터부족") or "데이터부족"
+            vp_meta = getattr(score, 'raw_vp_meta', "") or ""
         
         return cls(
             stock_code=getattr(score, 'stock_code', '') or getattr(score, 'code', ''),
@@ -193,6 +196,7 @@ class EnrichedStock:
             raw_vp_above_pct=vp_above,
             raw_vp_below_pct=vp_below,
             raw_vp_tag=vp_tag,
+            raw_vp_meta=vp_meta,
             sector=getattr(score, '_sector', '') or getattr(score, 'sector', ''),
             is_leading_sector=getattr(score, '_is_leading_sector', False),
             sector_rank=getattr(score, '_sector_rank', 99),

@@ -122,6 +122,20 @@ class BrokerSettings:
 
 
 @dataclass
+class VolumeProfileSettings:
+    """v9.0: 매물대(Volume Profile) 설정"""
+    source: str = "auto"           # auto | kiwoom | local
+    cycle: int = 100               # 50~300 (일)
+    bands: int = 10                # 매물대 수
+    cur_entry: int = 0             # 0: 현재가 밴드 제외, 1: 포함
+    concentration_rate: int = 70   # 매물집중비율(%)
+    stex_tp: str = "3"             # 0: 전체, 1: KOSPI, 2: KOSDAQ, 3: 전체
+    api_id: str = "ka10024"        # 매물대집중요청 TR ID (문서에 따라 변경)
+    trde_qty_tp: str = "0"         # 거래량 구분 (문서 기준)
+    endpoint: str = ""             # 미지정 시 기본 엔드포인트 사용
+
+
+@dataclass
 class Settings:
     """전체 설정 v8.0"""
     kiwoom: KiwoomSettings  # 키움 REST API (메인)
@@ -132,6 +146,7 @@ class Settings:
     ai: AISettings
     schedule: ScheduleSettings       # 🆕 v8.0
     broker: BrokerSettings           # 🆕 v8.0
+    vp: VolumeProfileSettings        # v9.0
     
     # 로깅
     log_level: str = "INFO"
@@ -217,6 +232,19 @@ def load_settings() -> Settings:
         api_delay=float(os.getenv("BROKER_API_DELAY", "0.15")),
         neutral_score=float(os.getenv("BROKER_NEUTRAL_SCORE", "6.0")),
     )
+
+    # v9.0: 매물대 설정
+    vp = VolumeProfileSettings(
+        source=os.getenv("VP_SOURCE", "auto").lower(),
+        cycle=int(os.getenv("VP_CYCLE", "100")),
+        bands=int(os.getenv("VP_BANDS", "10")),
+        cur_entry=int(os.getenv("VP_CUR_ENTRY", "0")),
+        concentration_rate=int(os.getenv("VP_CNCTR_RT", "70")),
+        stex_tp=os.getenv("VP_STEX_TP", "3"),
+        api_id=os.getenv("VP_API_ID", "ka10024"),
+        trde_qty_tp=os.getenv("VP_TRDE_QTY_TP", "0"),
+        endpoint=os.getenv("VP_ENDPOINT", "").strip(),
+    )
     
     return Settings(
         kiwoom=kiwoom,
@@ -227,6 +255,7 @@ def load_settings() -> Settings:
         ai=ai,
         schedule=schedule,
         broker=broker,
+        vp=vp,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_path=Path(os.getenv("LOG_PATH", str(BASE_DIR / "logs" / "screener.log"))),
     )

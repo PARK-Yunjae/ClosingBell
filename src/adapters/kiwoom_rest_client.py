@@ -184,6 +184,7 @@ class KiwoomRestClient:
         'stock_info': '/api/dostk/stkinfo',    # ka10001 주식기본정보
         'daily_chart': '/api/dostk/chart',     # ka10081 일봉차트
         'rank_info': '/api/dostk/rkinfo',      # ka10030/ka10032 거래량/거래대금 상위
+        'volume_profile': '/api/dostk/stkinfo',  # ka10024 매물대집중요청 (문서 기준)
     }
     
     # Rate Limit: 초당 10회 (안전하게 0.12초 간격)
@@ -467,6 +468,66 @@ class KiwoomRestClient:
         except Exception as e:
             logger.error(f"현재가 파싱 오류 ({stock_code}): {e}")
             raise
+
+    # ========================================
+    # 매물대 집중 요청 (ka10024)
+    # ========================================
+    def get_volume_profile(
+        self,
+        stock_code: str,
+        cycle_tp: str = "100",
+        prpscnt: str = "10",
+        cur_prc_entry: str = "0",
+        prps_cnctr_rt: str = "70",
+        stex_tp: str = "3",
+        tr_id: str = "ka10024",
+        mrkt_tp: str = "0",
+        trde_qty_tp: str = "0",
+    ) -> Dict[str, Any]:
+        """
+        매물대 집중 요청 (표시용)
+        - cycle_tp: 50/100/150/200/250/300
+        - prpscnt: 매물대 수
+        - cur_prc_entry: 현재가 진입 포함 여부 (0/1)
+        - prps_cnctr_rt: 매물집중비율
+        """
+        body = {
+            "stk_cd": stock_code,
+            "mrkt_tp": mrkt_tp,
+            "prps_cnctr_rt": prps_cnctr_rt,
+            "cur_prc_entry": cur_prc_entry,
+            "prpscnt": prpscnt,
+            "cycle_tp": cycle_tp,
+            "stex_tp": stex_tp,
+            "trde_qty_tp": trde_qty_tp,
+        }
+
+        data = self._request(
+            "POST",
+            settings.vp.endpoint or self.ENDPOINTS['volume_profile'],
+            tr_id,
+            body,
+        )
+
+        # 문서/버전 차이 대응: stk_cd 미지원이면 재시도
+        if data.get("return_code", 0) != 0:
+            fallback_body = {
+                "mrkt_tp": mrkt_tp,
+                "prps_cnctr_rt": prps_cnctr_rt,
+                "cur_prc_entry": cur_prc_entry,
+                "prpscnt": prpscnt,
+                "cycle_tp": cycle_tp,
+                "stex_tp": stex_tp,
+                "trde_qty_tp": trde_qty_tp,
+            }
+            data = self._request(
+                "POST",
+                settings.vp.endpoint or self.ENDPOINTS['volume_profile'],
+                tr_id,
+                fallback_body,
+            )
+
+        return data
     
     # ========================================
     # 거래대금 상위 조회 (ka10032) - v7.0 연속조회 지원

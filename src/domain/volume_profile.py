@@ -257,6 +257,107 @@ def calc_volume_profile_from_csv(
     if not csv_path.exists():
         logger.debug(f"VP: {stock_code} CSV 없음")
         return _empty_result(current_price, n_days)
+
+
+def calc_volume_profile_from_kiwoom(
+    data: dict,
+    current_price: float,
+    n_days: int,
+    cur_entry: int = 0,
+) -> VolumeProfileResult:
+    """키움 매물대 응답을 VolumeProfileResult로 변환."""
+    if not data:
+        return _empty_result(current_price, n_days)
+
+    # list 형태 응답 추출 (키 이름은 문서/버전에 따라 다름)
+    list_candidates = []
+    for key, value in data.items():
+        if isinstance(value, list) and value:
+            list_candidates.append((key, value))
+
+    def _find_float(item: dict, keys: list) -> Optional[float]:
+        for k in keys:
+            if k in item:
+                try:
+                    return float(str(item.get(k, "0")).replace(",", ""))
+                except (ValueError, TypeError):
+                    return None
+        return None
+
+    bands: List[VolumeProfileBand] = []
+    for _, items in list_candidates:
+        # 매물대 리스트 후보 탐색
+        if not isinstance(items[0], dict):
+            continue
+        if not any(
+            k in items[0] for k in ["prps_pric", "prps_pric_strt", "prps_pric_end", "price", "pric"]
+        ):
+            continue
+
+        for item in items:
+            low = _find_float(item, ["prps_pric_strt", "pric_strt", "price_low", "low", "prps_low"])
+            high = _find_float(item, ["prps_pric_end", "pric_end", "price_high", "high", "prps_high"])
+            if low is None and high is None:
+                price = _find_float(item, ["prps_pric", "price", "pric"])
+                if price is not None:
+                    low = price
+                    high = price
+            if low is None or high is None:
+                continue
+
+            pct = _find_float(item, ["prps_rt", "prps_ratio", "ratio", "pct"])
+            vol = _find_float(item, ["prps_qty", "volume", "qty", "trde_qty"])
+            if pct is None:
+                pct = 0.0
+            if vol is None:
+                vol = 0.0
+
+            bands.append(
+                VolumeProfileBand(
+                    price_low=low,
+                    price_high=high,
+                    volume=vol,
+                    pct=pct,
+                    is_current=(low <= current_price <= high),
+                )
+            )
+        break
+
+    if not bands:
+        return _empty_result(current_price, n_days)
+
+    # above/below 계산
+    above_pct = sum(b.pct for b in bands if b.price_low > current_price)
+    below_pct = sum(b.pct for b in bands if b.price_high < current_price)
+    current_pct = sum(b.pct for b in bands if b.is_current)
+
+    if cur_entry == 1:
+        below_pct += current_pct
+
+    # POC
+    poc_idx = max(range(len(bands)), key=lambda i: bands[i].pct)
+    poc_price = (bands[poc_idx].price_low + bands[poc_idx].price_high) / 2.0
+    current_idx = next((i for i, b in enumerate(bands) if b.is_current), poc_idx)
+
+    score, tag, a_s, b_s, p_b = _calc_supply_score(
+        above_pct, below_pct, current_pct, poc_idx, current_idx, len(bands)
+    )
+
+    return VolumeProfileResult(
+        bands=bands,
+        current_price=current_price,
+        period_days=n_days,
+        above_pct=round(above_pct, 2),
+        below_pct=round(below_pct, 2),
+        current_pct=round(current_pct, 2),
+        poc_price=round(poc_price, 0),
+        poc_pct=round(bands[poc_idx].pct, 2),
+        score=score,
+        tag=tag,
+        above_score=a_s,
+        below_score=b_s,
+        poc_bonus=p_b,
+    )
     
     try:
         df = pd.read_csv(csv_path, parse_dates=['date'])

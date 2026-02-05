@@ -38,7 +38,12 @@ from src.domain.score_calculator import (
     StockScoreV5,
     format_discord_embed,
 )
-from src.domain.volume_profile import calc_volume_profile_from_csv, VP_SCORE_NEUTRAL
+from src.domain.volume_profile import (
+    calc_volume_profile_from_csv,
+    calc_volume_profile_from_kiwoom,
+    VP_SCORE_NEUTRAL,
+)
+from src.config.settings import settings
 from src.adapters.kiwoom_rest_client import get_kiwoom_client, KiwoomRestClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
 from src.infrastructure.repository import (
@@ -239,20 +244,84 @@ class ScreenerService:
             try:
                 logger.info("[매물대] Volume Profile 계산 시작...")
                 vp_count = 0
+                vp_cfg = settings.vp
+                vp_source = vp_cfg.source
+                use_kiwoom = (vp_source in {"auto", "kiwoom"})
+                use_local = (vp_source in {"auto", "local"})
+                kiwoom_client = None
+                kiwoom_available = True
+                if use_kiwoom and os.getenv("DASHBOARD_ONLY", "").lower() != "true":
+                    try:
+                        from src.adapters.kiwoom_rest_client import get_kiwoom_client
+                        kiwoom_client = get_kiwoom_client()
+                    except Exception as e:
+                        logger.warning(f"[매물대] 키움 클라이언트 로드 실패: {e}")
+                        kiwoom_client = None
+                        kiwoom_available = False
                 for score in scores_filtered:
                     code = score.stock_code
                     current_price = score.current_price
                     try:
-                        vp_result = calc_volume_profile_from_csv(
-                            stock_code=code,
-                            current_price=current_price,
-                            ohlcv_dir=OHLCV_FULL_DIR,
-                            n_days=100,
-                        )
+                        vp_result = None
+                        vp_meta = ""
+                        if use_kiwoom and kiwoom_client is not None and kiwoom_available:
+                            try:
+                                data = kiwoom_client.get_volume_profile(
+                                    stock_code=code,
+                                    cycle_tp=str(vp_cfg.cycle),
+                                    prpscnt=str(vp_cfg.bands),
+                                    cur_prc_entry=str(vp_cfg.cur_entry),
+                                    prps_cnctr_rt=str(vp_cfg.concentration_rate),
+                                    stex_tp=str(vp_cfg.stex_tp),
+                                    trde_qty_tp=str(vp_cfg.trde_qty_tp),
+                                    tr_id=str(vp_cfg.api_id),
+                                )
+                                # 응답에 리스트 데이터가 없으면 Kiwoom VP 비활성화
+                                if isinstance(data, dict) and not any(
+                                    isinstance(v, list) and v for v in data.values()
+                                ):
+                                    logger.warning("[매물대] 키움 VP 응답에 리스트 데이터 없음 - 로컬로 전환")
+                                    kiwoom_available = False
+                                    data = {}
+                                vp_result = calc_volume_profile_from_kiwoom(
+                                    data=data,
+                                    current_price=current_price,
+                                    n_days=vp_cfg.cycle,
+                                    cur_entry=vp_cfg.cur_entry,
+                                )
+                                vp_meta = f"kiwoom/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                            except Exception as e:
+                                logger.debug(f"VP(kiwoom) {code} 오류: {e}")
+                                vp_result = None
+
+                        if vp_result is not None and vp_result.tag == "데이터부족":
+                            vp_result = None
+
+                        if vp_result is None and use_local:
+                            vp_result = calc_volume_profile_from_csv(
+                                stock_code=code,
+                                current_price=current_price,
+                                ohlcv_dir=OHLCV_FULL_DIR,
+                                n_days=vp_cfg.cycle,
+                                n_bands=vp_cfg.bands,
+                            )
+                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+
+                        if vp_result is None:
+                            vp_result = calc_volume_profile_from_csv(
+                                stock_code=code,
+                                current_price=current_price,
+                                ohlcv_dir=OHLCV_FULL_DIR,
+                                n_days=vp_cfg.cycle,
+                                n_bands=vp_cfg.bands,
+                            )
+                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+
                         score.score_detail.raw_vp_score = vp_result.score
                         score.score_detail.raw_vp_above_pct = vp_result.above_pct
                         score.score_detail.raw_vp_below_pct = vp_result.below_pct
                         score.score_detail.raw_vp_tag = vp_result.tag
+                        score.score_detail.raw_vp_meta = vp_meta
                         if vp_result.tag != "데이터부족":
                             vp_count += 1
                     except Exception as e:
@@ -261,6 +330,7 @@ class ScreenerService:
                         score.score_detail.raw_vp_above_pct = 0.0
                         score.score_detail.raw_vp_below_pct = 0.0
                         score.score_detail.raw_vp_tag = "오류"
+                        score.score_detail.raw_vp_meta = ""
                 logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료")
             except Exception as e:
                 logger.warning(f"[매물대] 계산 실패 (무시): {e}")

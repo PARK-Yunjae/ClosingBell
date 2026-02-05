@@ -161,6 +161,13 @@ class ScoreDetail:
     raw_ma20: float = 0.0       # MA20 원시값
     raw_cci_slope: float = 0.0  # CCI 기울기 원시값
     raw_ma20_slope: float = 0.0 # MA20 기울기 원시값
+
+    # v9.0: 매물대 표시용
+    raw_vp_score: float = 6.0
+    raw_vp_above_pct: float = 0.0
+    raw_vp_below_pct: float = 0.0
+    raw_vp_tag: str = "데이터부족"
+    raw_vp_meta: str = ""
     
     def total(self, weights: Weights) -> float:
         """가중 합계 점수 (100점 만점으로 정규화)
