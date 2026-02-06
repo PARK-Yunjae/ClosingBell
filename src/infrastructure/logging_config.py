@@ -99,18 +99,18 @@ class TracebackFormatter(logging.Formatter):
 class RedactingFilter(logging.Filter):
     """???? ??? ??"""
     _patterns = [
-        re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE),
-        re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s]+)"),
-        re.compile(r"(?i)(secret\s*[:=]\s*)([^\s]+)"),
-        re.compile(r"(https?://[^\s]+)"),
+        (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), r"\1<REDACTED>"),
+        (re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s]+)"), r"\1<REDACTED>"),
+        (re.compile(r"(?i)(secret\s*[:=]\s*)([^\s]+)"), r"\1<REDACTED>"),
+        (re.compile(r"https://discord\.com/api/webhooks/\S+", re.IGNORECASE), "https://discord.com/api/webhooks/<REDACTED>"),
     ]
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = str(record.getMessage())
             redacted = msg
-            for pattern in self._patterns:
-                redacted = pattern.sub(r"\1<REDACTED>", redacted)
+            for pattern, repl in self._patterns:
+                redacted = pattern.sub(repl, redacted)
             if redacted != msg:
                 record.msg = redacted
                 record.args = ()
@@ -157,6 +157,12 @@ def setup_logging(
     )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(TracebackFormatter(file_format))
+    
+    # 민감정보 마스킹 필터
+    redactor = RedactingFilter()
+    console_handler.addFilter(redactor)
+    file_handler.addFilter(redactor)
+    error_handler.addFilter(redactor)
     
     # 루트 로거 설정
     root_logger = logging.getLogger()
