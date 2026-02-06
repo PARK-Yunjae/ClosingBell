@@ -14,6 +14,9 @@ try:
 except Exception:
     pd = None
 
+if os.getenv("STREAMLIT_SERVER_HEADLESS", "").lower() == "true":
+    os.environ.setdefault("DASHBOARD_ONLY", "true")
+
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -46,6 +49,23 @@ def _sidebar_nav():
     st.page_link("pages/5_stock_analysis.py", label="종목 심층 분석")
 
 
+def _apply_styles(hide_sidebar: bool = False) -> None:
+    base = """
+    <style>
+    .cb-card { padding:12px;border:1px solid #e8e8e8;border-radius:12px;margin:6px 0;background:#fafafa; }
+    .cb-title { font-size:18px;font-weight:700;margin:8px 0; }
+    </style>
+    """
+    if hide_sidebar:
+        base += """
+        <style>
+        [data-testid="stSidebar"] { display: none !important; }
+        [data-testid="stSidebarNav"] { display: none !important; }
+        </style>
+        """
+    st.markdown(base, unsafe_allow_html=True)
+
+
 def _fix_text(text: str) -> str:
     if not text:
         return ""
@@ -62,6 +82,25 @@ def _fix_text(text: str) -> str:
     for k, v in mapping.items():
         fixed = fixed.replace(k, v)
     return fixed
+
+
+SECTION_TITLE_MAP = {
+    "Holdings Snapshot": "보유/관찰 현황",
+    "OHLCV Summary": "가격/거래 요약",
+    "Volume Profile": "매물대 요약",
+    "Technical Analysis": "기술 지표",
+    "Broker Flow": "거래원 수급",
+    "News & Disclosures": "뉴스/공시",
+    "DART Company Profile": "기업정보(DART)",
+    "Entry/Exit Plan": "진입/이탈 계획",
+    "Easy Summary": "쉬운 요약",
+    "AI Summary": "AI 요약",
+    "Summary": "최종 요약",
+}
+
+
+def _section_title(key: str) -> str:
+    return SECTION_TITLE_MAP.get(key, key)
 
 
 def _badge(text: str, color: str) -> str:
@@ -219,6 +258,26 @@ def _parse_technical(lines: List[str]) -> Dict[str, str]:
     return result
 
 
+def _interpret_cci(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    if value >= 100:
+        return "과열 경향"
+    if value <= -100:
+        return "과매도 경향"
+    return "중립 구간"
+
+
+def _interpret_rsi(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    if value >= 70:
+        return "과열 경향"
+    if value <= 30:
+        return "과매도 경향"
+    return "중립 구간"
+
+
 def _highlight_disclosures(disclosures: List[str]) -> List[Dict[str, str]]:
     rules = [
         ("유상증자", "주의", "#ffb74d"),
@@ -253,7 +312,7 @@ def _render_cards(items: List[str], title: str):
     for item in items:
         st.markdown(
             f"""
-            <div style="padding:10px;border:1px solid #e8e8e8;border-radius:10px;margin:6px 0;background:#fafafa;">
+            <div class="cb-card">
               {item}
             </div>
             """,
@@ -269,7 +328,7 @@ def _render_badge_cards(items: List[Dict[str, str]], title: str):
     for item in items:
         st.markdown(
             f"""
-            <div style="padding:10px;border:1px solid #e8e8e8;border-radius:10px;margin:6px 0;background:#fff;">
+            <div class="cb-card" style="background:#fff;">
               {_badge(item['tag'], item['color'])} {item['text']}
             </div>
             """,
@@ -363,14 +422,16 @@ _sidebar_nav()
 
 st.title("🧾 종목 심층 분석 (v9.0)")
 st.caption(APP_FULL_VERSION)
+hide_sidebar = st.toggle("메뉴 숨기기", value=False)
+_apply_styles(hide_sidebar)
 
 dashboard_only = os.getenv("DASHBOARD_ONLY", "").lower() == "true"
 missing_kiwoom = not os.getenv("KIWOOM_APPKEY") or not os.getenv("KIWOOM_SECRETKEY")
 read_only = dashboard_only or missing_kiwoom
 if dashboard_only:
-    st.info("보기 전용: 스케줄러에서 생성된 리포트만 표시합니다.")
+    st.info("보기 전용 모드입니다. 스케줄러가 만든 리포트만 보여줍니다.")
 if missing_kiwoom:
-    st.warning("키움 API 키가 없어 온라인에서 리포트 생성이 비활성화됩니다.")
+    st.warning("키움 API 키가 없어 온라인 리포트 생성은 꺼져 있습니다.")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -434,25 +495,48 @@ if report_path and report_path.exists():
     tabs = st.tabs(["요약", "차트", "리포트"])
 
     with tabs[0]:
+        if "AI Summary" in sections:
+            st.markdown(f"### {_section_title('AI Summary')}")
+            st.markdown(_lines_to_markdown(sections["AI Summary"]))
+
+        if "Easy Summary" in sections:
+            st.markdown(f"### {_section_title('Easy Summary')}")
+            st.markdown(_lines_to_markdown(sections["Easy Summary"]))
+            st.caption("쉬운 요약은 숫자 지표를 일상 언어로 풀어쓴 내용입니다.")
+
         for key in ["Holdings Snapshot", "OHLCV Summary", "Volume Profile", "Broker Flow"]:
             if key in sections:
-                st.markdown(f"### {key}")
+                st.markdown(f"### {_section_title(key)}")
                 st.markdown(_lines_to_markdown(sections[key]))
+                if key == "Volume Profile":
+                    st.caption("매물대는 거래가 많이 쌓인 가격대를 뜻합니다.")
 
         if "Technical Analysis" in sections:
             tech = _parse_technical(sections["Technical Analysis"])
             if tech:
-                st.markdown("### 기술 지표 요약")
+                st.markdown(f"### {_section_title('Technical Analysis')}")
                 cols = st.columns(3)
-                cols[0].metric("CCI(14)", tech.get("CCI", "-"))
-                cols[1].metric("RSI(14)", tech.get("RSI", "-"))
+                cci_val = tech.get("CCI", "-")
+                rsi_val = tech.get("RSI", "-")
+                cols[0].metric("CCI(14)", cci_val)
+                cols[1].metric("RSI(14)", rsi_val)
                 cols[2].metric("MACD", tech.get("MACD", "-"))
-                st.caption(f"MA: {tech.get('MA', '-')}")
-                st.caption(f"Bollinger: {tech.get('BOLL', '-')}")
+                try:
+                    cci_num = float(str(cci_val).strip())
+                    st.caption(f"CCI 해석: {_interpret_cci(cci_num)}")
+                except Exception:
+                    pass
+                try:
+                    rsi_num = float(str(rsi_val).strip())
+                    st.caption(f"RSI 해석: {_interpret_rsi(rsi_num)}")
+                except Exception:
+                    pass
+                st.caption(f"이동평균선: {tech.get('MA', '-')}")
+                st.caption(f"볼린저밴드: {tech.get('BOLL', '-')}")
 
         fin = _fetch_financials(code) if code else {}
         if fin:
-            st.markdown("### 재무 핵심")
+            st.markdown("### 재무 요약")
             c1, c2, c3 = st.columns(3)
             rev = fin.get("revenue")
             rev_prev = fin.get("prev_revenue")
@@ -481,26 +565,21 @@ if report_path and report_path.exists():
                 st.caption(f"순이익률: {(net/rev*100):.1f}%")
 
         if "News & Disclosures" in sections:
-            st.markdown("### 뉴스 & 공시")
+            st.markdown(f"### {_section_title('News & Disclosures')}")
             news, disclosures = _parse_news_disclosures(sections["News & Disclosures"])
-            _render_cards(news[:8], "뉴스")
+            _render_cards(news[:12], "뉴스")
             badges = _highlight_disclosures(disclosures)
-            _render_badge_cards(badges[:8], "공시 하이라이트")
-            _render_cards(disclosures[:8], "공시 전체")
+            _render_badge_cards(badges[:12], "공시 하이라이트")
+            _render_cards(disclosures[:12], "공시 전체")
 
         if "DART Company Profile" in sections:
             with st.expander("기업정보 / 재무 / 최대주주 / 감사의견", expanded=False):
                 st.markdown(_lines_to_markdown(sections["DART Company Profile"]))
 
-        ai_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if ai_key:
-            with st.expander("AI 요약", expanded=False):
-                if st.button("AI 요약 생성"):
-                    summary = _ai_summary(report_path.read_text(encoding="utf-8"))
-                    if summary:
-                        st.markdown(summary)
-                    else:
-                        st.caption("AI 요약 생성 실패")
+        for key in ["Entry/Exit Plan", "Summary"]:
+            if key in sections:
+                st.markdown(f"### {_section_title(key)}")
+                st.markdown(_lines_to_markdown(sections[key]))
 
     with tabs[1]:
         if code and code.isdigit():
