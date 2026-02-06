@@ -294,8 +294,12 @@ def _interpret_rsi(value: Optional[float]) -> str:
 
 
 def _classify_news(items: List[str]) -> List[Dict[str, str]]:
-    positive = ["호재", "수주", "계약", "공급", "실적", "흑자", "턴어라운드", "신제품", "기술", "특허", "승인", "상승"]
-    negative = ["적자", "손실", "경고", "조사", "거래정지", "상장폐지", "소송", "리콜", "하락", "유상증자", "전환사채"]
+    base_positive = ["호재", "수주", "계약", "공급", "실적", "흑자", "턴어라운드", "신제품", "기술", "특허", "승인", "상승"]
+    base_negative = ["적자", "손실", "경고", "조사", "거래정지", "상장폐지", "소송", "리콜", "하락", "유상증자", "전환사채"]
+    extra_pos = [k.strip() for k in os.getenv("NEWS_POSITIVE_KEYWORDS", "").split(",") if k.strip()]
+    extra_neg = [k.strip() for k in os.getenv("NEWS_NEGATIVE_KEYWORDS", "").split(",") if k.strip()]
+    positive = list(dict.fromkeys(base_positive + extra_pos))
+    negative = list(dict.fromkeys(base_negative + extra_neg))
     out: List[Dict[str, str]] = []
     for item in items:
         tag = "중립"
@@ -456,7 +460,7 @@ _sidebar_nav()
 
 st.title("🧾 종목 심층 분석 (v9.0)")
 st.caption(APP_FULL_VERSION)
-hide_sidebar = st.toggle("메뉴 숨기기", value=False)
+hide_sidebar = st.toggle("메뉴 숨기기", value=True)
 _apply_styles(hide_sidebar)
 
 dashboard_only = os.getenv("DASHBOARD_ONLY", "").lower() == "true"
@@ -470,7 +474,7 @@ if missing_kiwoom:
 col1, col2 = st.columns([2, 1])
 with col1:
     try:
-        from src.services.account_service import get_holdings_watchlist
+        from src.services.account_service import get_holdings_watchlist, add_manual_watch
         holdings = [
             row for row in get_holdings_watchlist()
             if row.get("status") in ("holding", "sold", "manual")
@@ -492,6 +496,17 @@ with col1:
             code = ""
     else:
         code = st.text_input("종목코드", value="", placeholder="예: 090710")
+
+    if not read_only:
+        with st.expander("관심종목 수동 추가", expanded=False):
+            manual_code = st.text_input("종목코드 입력", value="", placeholder="예: 005930", key="manual_code")
+            manual_name = st.text_input("종목명(선택)", value="", key="manual_name")
+            if st.button("관심종목 추가"):
+                if manual_code and manual_code.isdigit():
+                    add_manual_watch(manual_code.zfill(6), manual_name.strip())
+                    st.success("추가 완료. 새로고침 후 목록에서 확인하세요.")
+                else:
+                    st.error("종목코드를 숫자 6자리로 입력해주세요.")
 
 with col2:
     full = st.checkbox("상세 모드 (최근 거래원 5건)", value=False)
@@ -687,7 +702,7 @@ if report_path and report_path.exists():
                     )
                     fig.update_layout(height=600, xaxis_rangeslider_visible=False, showlegend=False)
 
-                    # Volume Profile lines
+                    vp = None
                     try:
                         from src.domain.volume_profile import calc_volume_profile
                         vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
@@ -707,10 +722,9 @@ if report_path and report_path.exists():
                         if resistance:
                             fig.add_hline(y=resistance, line_color="#e74c3c", line_dash="dot", annotation_text="저항", annotation_position="top left")
 
-                        # Highlight top volume bands on chart
                         if vp.bands:
                             top_bands = sorted(vp.bands, key=lambda b: b.pct, reverse=True)[:3]
-                            colors = ["rgba(255, 193, 7, 0.18)", "rgba(33, 150, 243, 0.12)", "rgba(76, 175, 80, 0.10)"]
+                            colors = ["rgba(255, 193, 7, 0.22)", "rgba(33, 150, 243, 0.14)", "rgba(76, 175, 80, 0.12)"]
                             for idx, band in enumerate(top_bands):
                                 fig.add_hrect(
                                     y0=band.price_low,
@@ -721,20 +735,19 @@ if report_path and report_path.exists():
                                     annotation_position="top left",
                                 )
                     except Exception:
-                        pass
+                        vp = None
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    col_chart, col_vp = st.columns([3, 1])
+                    with col_chart:
+                        st.plotly_chart(fig, use_container_width=True)
 
-                    # Volume Profile distribution
-                    try:
-                        from src.domain.volume_profile import calc_volume_profile
-                        vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
-                        bands = vp.bands
-                        if bands:
+                    with col_vp:
+                        st.markdown("#### 매물대(옆 보기)")
+                        if vp and vp.bands:
                             vp_df = pd.DataFrame({
-                                "band": [f"{b.price_low:,.0f}-{b.price_high:,.0f}" for b in bands],
-                                "pct": [b.pct for b in bands],
-                                "is_current": [b.is_current for b in bands],
+                                "band": [f"{b.price_low:,.0f}-{b.price_high:,.0f}" for b in vp.bands],
+                                "pct": [b.pct for b in vp.bands],
+                                "is_current": [b.is_current for b in vp.bands],
                             })
                             vp_df = vp_df.sort_values("pct")
                             colors = ["#ff6b6b" if c else "#6c8ef5" for c in vp_df["is_current"]]
@@ -747,17 +760,18 @@ if report_path and report_path.exists():
                                 )]
                             )
                             vp_fig.update_layout(
-                                title="매물대 분포(Volume Profile)",
+                                title="매물대 분포",
                                 xaxis_title="비중(%)",
                                 yaxis_title="가격대",
                                 height=500,
+                                margin=dict(l=20, r=10, t=40, b=20),
                             )
                             st.plotly_chart(vp_fig, use_container_width=True)
                             top_text = ", ".join(vp_df.tail(3)["band"].tolist())
                             if top_text:
-                                st.caption(f"상위 매물대 구간: {top_text}")
-                    except Exception:
-                        st.caption("매물대 차트 계산 실패")
+                                st.caption(f"상위 매물대: {top_text}")
+                        else:
+                            st.caption("매물대 계산 불가")
 
                 # Broker flow heatmap
                 broker_df = _fetch_broker_series(code)
