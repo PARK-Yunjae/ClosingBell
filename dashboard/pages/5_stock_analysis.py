@@ -748,7 +748,18 @@ with tab2:
             st.markdown("### 🕯️ 가격 차트 (최근 200일)")
 
             if go is not None and make_subplots is not None and pd is not None:
-                view = df.tail(200)
+                view = df.tail(200).copy()
+
+                # 거래정지/비정상 봉 감지: 당일 변동폭이 전일종가의 30% 이상
+                if len(view) > 1:
+                    prev_close = view["close"].shift(1)
+                    spread = (view["high"] - view["low"]).abs()
+                    abnormal = (spread / prev_close.clip(lower=1)) > 0.30
+                    # 비정상 봉은 종가 기준 가로선("_")으로 표시
+                    view.loc[abnormal, "open"] = view.loc[abnormal, "close"]
+                    view.loc[abnormal, "high"] = view.loc[abnormal, "close"]
+                    view.loc[abnormal, "low"] = view.loc[abnormal, "close"]
+
                 fig = make_subplots(
                     rows=2, cols=1,
                     shared_xaxes=True,
