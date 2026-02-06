@@ -76,6 +76,12 @@ class BrokerAdjustment:
     distribution_score: int = 0   # 분포 이상
     foreign_score: int = 0        # 외국계 집중
 
+    # raw 데이터 (v9.1: 대시보드 시각화용)
+    buyers_raw: List[dict] = field(default_factory=list)
+    sellers_raw: List[dict] = field(default_factory=list)
+    frgn_buy: int = 0
+    frgn_sell: int = 0
+
 
 # ── 핵심: 거래원 분석 엔진 ──
 
@@ -107,6 +113,10 @@ class BrokerAnalyzer:
             return None
         
         adj = BrokerAdjustment(stock_code=stk_cd)
+        adj.buyers_raw = buyers
+        adj.sellers_raw = sellers
+        adj.frgn_buy = broker_data.get("frgn_buy", 0)
+        adj.frgn_sell = broker_data.get("frgn_sell", 0)
         
         # 1. 비주류 브로커 출현 (0~30점)
         s1, items1 = cls._check_unusual(buyers, total_buy)

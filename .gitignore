@@ -12,3 +12,4 @@ logs/
 .vscode/
 # Allow screener.db for Streamlit Cloud
 !data/screener.db
+kiwoom_token.json

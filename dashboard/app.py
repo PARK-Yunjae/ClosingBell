@@ -60,13 +60,8 @@ st.set_page_config(
 
 # ==================== 사이드바 네비게이션 ====================
 with st.sidebar:
-    st.markdown(f"## {SIDEBAR_TITLE}")
-    st.page_link("app.py", label="홈")
-    st.page_link("pages/1_top5_tracker.py", label="감시종목 TOP5")
-    st.page_link("pages/2_nomad_study.py", label="유목민 공부법")
-    st.page_link("pages/3_stock_search.py", label="종목 검색")
-    st.page_link("pages/4_broker_flow.py", label="거래원 수급")
-    st.page_link("pages/5_stock_analysis.py", label="종목 심층 분석")
+    from dashboard.components.sidebar import render_sidebar_nav
+    render_sidebar_nav()
     st.markdown("---")
 
 # ==================== Repository 싱글톤 ====================

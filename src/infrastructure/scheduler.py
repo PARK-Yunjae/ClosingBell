@@ -349,19 +349,37 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("top5_ai_service 모듈 없음 - TOP5 AI 분석 스킵")
 
-        # 16:50 보유종목 동기화 + 변경분 분석 리포트
+        # 16:48 AI 분석 - 거래원 수급 (Gemini)
+        try:
+            from src.services.broker_ai_service import run_broker_ai_analysis
+            self.add_job(
+                job_id='broker_ai_analysis',
+                func=run_broker_ai_analysis,
+                hour=16,
+                minute=48,
+            )
+        except ImportError:
+            logger.warning("broker_ai_service 모듈 없음 - 거래원 AI 분석 스킵")
+
+        # 16:50 보유종목 동기화 + 전체 보유종목 분석 리포트
         try:
             from src.services.account_service import sync_holdings_watchlist
             from src.services.holdings_analysis_service import generate_holdings_reports
 
             def _holdings_sync_and_analyze():
+                # 1단계: 계좌 동기화
                 result = sync_holdings_watchlist()
-                changed = result.get("changed_codes", [])
-                if changed:
-                    generate_holdings_reports(codes=changed, full=True, include_sold=True)
-                    logger.info(f"[holdings] 분석 리포트 생성: {len(changed)}개")
-                else:
-                    logger.info("[holdings] 변경 없음")
+                logger.info(f"[holdings] 동기화 완료: {result}")
+
+                # 2단계: 전체 보유종목 리포트 생성 (매일)
+                report_result = generate_holdings_reports(
+                    codes=None, full=True, include_sold=True,
+                )
+                logger.info(
+                    f"[holdings] 리포트 생성: "
+                    f"{report_result.analyzed}개 성공, "
+                    f"{report_result.failed}개 실패"
+                )
 
             self.add_job(
                 job_id='holdings_sync',
@@ -412,10 +430,19 @@ class ScreenerScheduler:
             except Exception as e:
                 logger.warning(f"pipeline 스케줄 설정 실패: {e}")
         
-        # 17:00 Git 자동 커밋
+        # 17:00 보유종목 최종 동기화 + Git 자동 커밋
+        def _sync_then_commit():
+            try:
+                from src.services.account_service import sync_holdings_watchlist
+                sync_holdings_watchlist()
+                logger.info("[git] 커밋 전 보유종목 동기화 완료")
+            except Exception as e:
+                logger.warning(f"[git] 커밋 전 동기화 실패 (무시): {e}")
+            run_git_commit()
+
         self.add_job(
             job_id='git_commit',
-            func=run_git_commit,
+            func=_sync_then_commit,
             hour=17,
             minute=0,
         )

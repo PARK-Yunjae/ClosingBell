@@ -2446,6 +2446,17 @@ class BrokerSignalRepository:
     def __init__(self):
         from src.infrastructure.database import get_database
         self.db = get_database()
+        self._ensure_ai_column()
+
+    def _ensure_ai_column(self):
+        """v9.1: ai_summary 컬럼 추가"""
+        try:
+            cols = self.db.fetch_all("PRAGMA table_info(broker_signals)")
+            if not any(c['name'] == 'ai_summary' for c in cols):
+                self.db.execute("ALTER TABLE broker_signals ADD COLUMN ai_summary TEXT")
+                logger.info("broker_signals: ai_summary 컬럼 추가")
+        except Exception:
+            pass
     
     def save_signal(
         self,
@@ -2517,6 +2528,34 @@ class BrokerSignalRepository:
             WHERE screen_date >= date('now', ? || ' days')
             ORDER BY screen_date DESC, anomaly_score DESC
         """, (f"-{days}",))
+
+    def save_ai_summary(self, screen_date: str, ai_summary: str) -> bool:
+        """날짜별 거래원 AI 분석 결과 저장 (첫 번째 종목 레코드에 저장)"""
+        try:
+            self.db.execute("""
+                UPDATE broker_signals SET ai_summary = ?
+                WHERE screen_date = ? AND id = (
+                    SELECT id FROM broker_signals
+                    WHERE screen_date = ?
+                    ORDER BY anomaly_score DESC LIMIT 1
+                )
+            """, (ai_summary, screen_date, screen_date))
+            return True
+        except Exception as e:
+            logger.error(f"broker AI summary 저장 실패: {e}")
+            return False
+
+    def get_ai_summary_by_date(self, screen_date: str) -> str:
+        """날짜별 거래원 AI 분석 결과 조회"""
+        try:
+            row = self.db.fetch_one("""
+                SELECT ai_summary FROM broker_signals
+                WHERE screen_date = ? AND ai_summary IS NOT NULL AND ai_summary != ''
+                LIMIT 1
+            """, (screen_date,))
+            return row['ai_summary'] if row else ""
+        except Exception:
+            return ""
 
 
 def get_broker_signal_repository() -> BrokerSignalRepository:

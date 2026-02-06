@@ -43,7 +43,6 @@ from src.domain.volume_profile import (
     calc_volume_profile_from_kiwoom,
     VP_SCORE_NEUTRAL,
 )
-from src.config.settings import settings
 from src.adapters.kiwoom_rest_client import get_kiwoom_client, KiwoomRestClient
 from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
 from src.infrastructure.repository import (
@@ -196,8 +195,8 @@ class ScreenerService:
                             score.score_detail.broker_score = bs
                             score.score_detail.raw_broker_anomaly = adj.anomaly_score
                         else:
-                            # 이상 미감지 → 0점 (정상)
-                            score.score_detail.broker_score = 0.0
+                            # 거래원 조회 불가/이상 미감지 → 중립
+                            score.score_detail.broker_score = BROKER_SCORE_NEUTRAL
                             score.score_detail.raw_broker_anomaly = 0
                         # score_total 재계산
                         score.score_total = score.score_detail.total
@@ -216,19 +215,35 @@ class ScreenerService:
                             import json as _json
                             broker_repo = get_broker_signal_repository()
                             for code, adj in broker_adjustments.items():
+                                # 종목명 조회
+                                _adj_name = code
+                                try:
+                                    from src.config.app_config import MAPPING_FILE
+                                    if MAPPING_FILE and MAPPING_FILE.exists():
+                                        import csv
+                                        with open(MAPPING_FILE, "r", encoding="utf-8") as _mf:
+                                            for _mr in csv.DictReader(_mf):
+                                                if str(_mr.get("code", "")).zfill(6) == code:
+                                                    _adj_name = _mr.get("name", code)
+                                                    break
+                                except Exception:
+                                    pass
+
                                 broker_repo.save_signal(
                                     screen_date=screen_date,
                                     stock_code=code,
-                                    stock_name=getattr(adj, 'stock_code', code),
+                                    stock_name=_adj_name,
                                     anomaly_score=adj.anomaly_score,
                                     broker_score=calc_broker_score(adj.anomaly_score),
                                     tag=adj.tag,
-                                    buyers_json="",  # TODO: raw data 전달 시 저장
-                                    sellers_json="",
+                                    buyers_json=_json.dumps(adj.buyers_raw, ensure_ascii=False) if adj.buyers_raw else "",
+                                    sellers_json=_json.dumps(adj.sellers_raw, ensure_ascii=False) if adj.sellers_raw else "",
                                     unusual_score=adj.unusual_score,
                                     asymmetry_score=adj.asymmetry_score,
                                     distribution_score=adj.distribution_score,
                                     foreign_score=adj.foreign_score,
+                                    frgn_buy=adj.frgn_buy,
+                                    frgn_sell=adj.frgn_sell,
                                 )
                             logger.info(f"broker_signals DB 저장: {len(broker_adjustments)}건")
                         except Exception as db_err:
@@ -279,11 +294,11 @@ class ScreenerService:
                                         trde_qty_tp=str(vp_cfg.trde_qty_tp),
                                         tr_id=str(vp_cfg.api_id),
                                     )
-                                    # ???????????????? ?????Kiwoom VP ??????
+                                    # 빈 응답 감지: 키움 VP 데이터가 비어있으면 로컬 폴백
                                     if isinstance(data, dict) and not any(
                                         isinstance(v, list) and v for v in data.values()
                                     ):
-                                        logger.warning("[?????] ??? VP ?????????????????? - ????????")
+                                        logger.warning("[매물대] 빈 VP 응답 - 로컬 폴백 전환")
                                         kiwoom_available = False
                                         data = {}
                                     vp_data_cache = data
@@ -304,6 +319,7 @@ class ScreenerService:
                         if vp_result is not None and vp_result.tag == "데이터부족":
                             vp_result = None
 
+                        # 키움 실패 시 로컬 CSV 폴백 (1회만)
                         if vp_result is None and use_local:
                             vp_result = calc_volume_profile_from_csv(
                                 stock_code=code,
@@ -314,25 +330,11 @@ class ScreenerService:
                             )
                             vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
 
+                        # 모든 폴백 실패 시 기본값 (크래시 방지)
                         if vp_result is None:
-                            vp_result = calc_volume_profile_from_csv(
-                                stock_code=code,
-                                current_price=current_price,
-                                ohlcv_dir=OHLCV_FULL_DIR,
-                                n_days=vp_cfg.cycle,
-                                n_bands=vp_cfg.bands,
-                            )
-                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
-
-                        if vp_result is None:
-                            vp_result = calc_volume_profile_from_csv(
-                                stock_code=code,
-                                current_price=current_price,
-                                ohlcv_dir=OHLCV_FULL_DIR,
-                                n_days=vp_cfg.cycle,
-                                n_bands=vp_cfg.bands,
-                            )
-                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                            from src.domain.volume_profile import VolumeProfileResult
+                            vp_result = VolumeProfileResult()
+                            vp_meta = ""
 
                         score.score_detail.raw_vp_score = vp_result.score
                         score.score_detail.raw_vp_above_pct = vp_result.above_pct
@@ -440,7 +442,7 @@ class ScreenerService:
             if send_alert:
                 try:
                     self.discord_notifier.send_error_alert(e, "스크리닝 에러")
-                except:
+                except Exception:
                     pass
             
             return self._empty_result(screen_date, screen_time, start_time,
@@ -1133,7 +1135,7 @@ if __name__ == "__main__":
     
     try:
         init_database()
-    except:
+    except Exception:
         pass
     
     mode = sys.argv[1] if len(sys.argv) > 1 else "test"
