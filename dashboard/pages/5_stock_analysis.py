@@ -807,7 +807,14 @@ with tab2:
                 vp_error = ""
                 try:
                     from src.domain.volume_profile import calc_volume_profile
-                    vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
+                    # FDR 데이터 호환: NaN/0값 제거
+                    vp_df = df.copy()
+                    for _vc in ["open", "high", "low", "close", "volume"]:
+                        if _vc in vp_df.columns:
+                            vp_df[_vc] = pd.to_numeric(vp_df[_vc], errors="coerce")
+                    vp_df = vp_df.dropna(subset=["high", "low", "close", "volume"])
+                    vp_df = vp_df[vp_df["low"] > 0]
+                    vp = calc_volume_profile(vp_df, current_price=float(last["close"]), n_days=60, n_bands=10)
                     if vp and vp.poc_price:
                         fig.add_hline(y=vp.poc_price, line_color="#ff6b6b", line_dash="dot",
                                       annotation_text=f"최다 거래가 {vp.poc_price:,.0f}", row=1, col=1)
@@ -877,8 +884,10 @@ with tab2:
                 else:
                     if vp_error:
                         st.caption(f"매물대 계산 실패: {vp_error}")
+                    elif vp and hasattr(vp, 'tag') and vp.tag:
+                        st.caption(f"매물대: {vp.tag} (데이터 소스: {source})")
                     else:
-                        st.caption("매물대 데이터가 없어요. (OHLCV 데이터 부족)")
+                        st.caption("매물대 데이터가 없어요.")
 
             else:
                 # plotly 없을 때 폴백
