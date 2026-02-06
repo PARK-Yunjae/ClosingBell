@@ -15,6 +15,7 @@
 import logging
 import traceback
 import time
+import re
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
@@ -94,6 +95,29 @@ class TracebackFormatter(logging.Formatter):
             formatted += "=" * 60
         
         return formatted
+
+class RedactingFilter(logging.Filter):
+    """???? ??? ??"""
+    _patterns = [
+        re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE),
+        re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)([^\s]+)"),
+        re.compile(r"(?i)(secret\s*[:=]\s*)([^\s]+)"),
+        re.compile(r"(https?://[^\s]+)"),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = str(record.getMessage())
+            redacted = msg
+            for pattern in self._patterns:
+                redacted = pattern.sub(r"\1<REDACTED>", redacted)
+            if redacted != msg:
+                record.msg = redacted
+                record.args = ()
+        except Exception:
+            pass
+        return True
+
 
 
 def setup_logging(
