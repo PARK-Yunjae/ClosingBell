@@ -53,6 +53,7 @@ from src.cli.commands import (
     run_top5_ai_all_cli,
     run_holdings_sync_cli,
     run_auto_fill,
+    run_pipeline,
 )
 
 from src.services.screener_service import run_screening, ScreenerService
@@ -593,6 +594,7 @@ def main():
     parser.add_argument('--backfill-top5', type=int, metavar='DAYS', help='TOP5만 백필')
     parser.add_argument('--backfill-nomad', type=int, metavar='DAYS', help='유목민만 백필')
     parser.add_argument('--auto-fill', action='store_true', help='누락 데이터 자동 수집')
+    parser.add_argument('--run-pipeline', type=int, metavar='DAYS', help='백필→감시종목 AI→기업정보→뉴스→유목민 AI 순차 실행')
     parser.add_argument('--run-top5-update', action='store_true', help='TOP5 일일 추적 업데이트')
     parser.add_argument('--run-nomad', action='store_true', help='유목민 공부 실행')
     parser.add_argument('--force', action='store_true', help='기존 데이터 삭제 후 재수집 (--run-nomad와 함께 사용)')
@@ -659,6 +661,10 @@ def main():
     
     if args.auto_fill:
         run_auto_fill()
+        return
+
+    if args.run_pipeline:
+        run_pipeline(args.run_pipeline)
         return
     
     if args.run_top5_update:

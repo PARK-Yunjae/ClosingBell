@@ -277,3 +277,41 @@ def run_holdings_sync_cli():
         print(f"   매도 표기: {result.get('sold_marked', 0)}개")
     except Exception as e:
         print(f"\n❌ 보유종목 동기화 오류: {e}")
+
+
+def run_pipeline(days: int = 20) -> None:
+    """백필→감시종목 AI→기업정보→뉴스→유목민 AI 순차 실행."""
+    logger = logging.getLogger(__name__)
+    if days <= 0:
+        logger.warning("pipeline days must be positive")
+        return
+
+    print("\n🚦 파이프라인 시작")
+    print("   1) 백필")
+    print("   2) 감시종목 AI")
+    print("   3) 기업정보")
+    print("   4) 뉴스")
+    print("   5) 유목민 AI")
+
+    steps = []
+
+    def _run_step(name, func):
+        try:
+            print(f"\n▶ {name} 시작...")
+            func()
+            steps.append((name, "성공"))
+        except Exception as e:
+            steps.append((name, f"실패: {e}"))
+            logger.error(f"pipeline {name} 실패: {e}")
+
+    _run_step(f"백필 {days}일", lambda: run_backfill(days, top5=True, nomad=True))
+    _run_step("감시종목 AI (전체)", run_top5_ai_all_cli)
+    _run_step("기업정보 수집", run_company_info_cli)
+    _run_step("뉴스 수집", run_news_collection_cli)
+    _run_step("유목민 AI (전체)", run_ai_analysis_all_cli)
+
+    print("\n" + "=" * 60)
+    print("파이프라인 요약")
+    print("=" * 60)
+    for name, status in steps:
+        print(f"  - {name}: {status}")
