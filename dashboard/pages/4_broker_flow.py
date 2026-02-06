@@ -2,6 +2,7 @@
 🏢 거래원 수급 추적 대시보드 v9.0
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import json
@@ -9,6 +10,11 @@ import logging
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Streamlit Cloud ?? ?? ?? ??
+if os.getenv("STREAMLIT_SERVER_HEADLESS", "").lower() == "true":
+    os.environ.setdefault("DASHBOARD_ONLY", "true")
+
 
 # ============================================================
 # 설정
@@ -82,11 +88,12 @@ if not signals:
     st.info(f"{screen_date_str}의 거래원 데이터가 없습니다.")
 else:
     for signal in signals:
-        anomaly = signal.get('anomaly_score', 0)
-        broker_score = signal.get('broker_score', 0)
-        tag = signal.get('tag', '정상')
-        stock_name = signal.get('stock_name', '')
-        stock_code = signal.get('stock_code', '')
+        row = dict(signal) if not isinstance(signal, dict) else signal
+        anomaly = row.get('anomaly_score', 0)
+        broker_score = row.get('broker_score', 0)
+        tag = row.get('tag', '정상')
+        stock_name = row.get('stock_name', '')
+        stock_code = row.get('stock_code', '')
         
         # 태그 색상
         if anomaly >= 70:
@@ -106,7 +113,7 @@ else:
             col_buy, col_sell = st.columns(2)
             
             # 매수 Top5
-            buyers_json = signal.get('buyers_json', '[]')
+            buyers_json = row.get('buyers_json', '[]')
             try:
                 buyers = json.loads(buyers_json) if buyers_json else []
             except (json.JSONDecodeError, TypeError):
@@ -123,7 +130,7 @@ else:
                     st.text("  데이터 없음")
             
             # 매도 Top5
-            sellers_json = signal.get('sellers_json', '[]')
+            sellers_json = row.get('sellers_json', '[]')
             try:
                 sellers = json.loads(sellers_json) if sellers_json else []
             except (json.JSONDecodeError, TypeError):
@@ -142,10 +149,10 @@ else:
             # 세부 점수
             st.markdown("**세부 점수**")
             sub_cols = st.columns(4)
-            sub_cols[0].metric("비주류", signal.get('unusual_score', 0))
-            sub_cols[1].metric("비대칭", signal.get('asymmetry_score', 0))
-            sub_cols[2].metric("분포이상", signal.get('distribution_score', 0))
-            sub_cols[3].metric("외국계", signal.get('foreign_score', 0))
+            sub_cols[0].metric("비주류", row.get('unusual_score', 0))
+            sub_cols[1].metric("비대칭", row.get('asymmetry_score', 0))
+            sub_cols[2].metric("분포이상", row.get('distribution_score', 0))
+            sub_cols[3].metric("외국계", row.get('foreign_score', 0))
 
 # ============================================================
 # 2. 이상 신호 히트맵 (최근 20일)

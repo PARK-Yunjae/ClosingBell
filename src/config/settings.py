@@ -30,7 +30,7 @@ class KiwoomSettings:
     
     def __post_init__(self):
         # Streamlit Cloud 등 대시보드 전용 모드에서는 API 키 불필요
-        if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
+        if os.getenv("DASHBOARD_ONLY", "").lower() == "true" or os.getenv("STREAMLIT_SERVER_HEADLESS", "").lower() == "true":
             return
         if not self.app_key or not self.secret_key:
             raise ValueError("KIWOOM_APPKEY와 KIWOOM_SECRETKEY는 필수입니다.")
@@ -49,7 +49,7 @@ class DiscordSettings:
     
     def __post_init__(self):
         # DASHBOARD_ONLY 모드에서는 Discord 검증 스킵
-        if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
+        if os.getenv("DASHBOARD_ONLY", "").lower() == "true" or os.getenv("STREAMLIT_SERVER_HEADLESS", "").lower() == "true":
             self.enabled = False
             return
         # 활성화 상태에서만 webhook 필수 검증
@@ -172,7 +172,7 @@ def load_settings() -> Settings:
     
     # Discord 설정 (DASHBOARD_ONLY면 자동 비활성화)
     discord_enabled = os.getenv("DISCORD_ENABLED", "true").lower() == "true"
-    if os.getenv("DASHBOARD_ONLY", "").lower() == "true":
+    if os.getenv("DASHBOARD_ONLY", "").lower() == "true" or os.getenv("STREAMLIT_SERVER_HEADLESS", "").lower() == "true":
         discord_enabled = False
     
     discord_layout = os.getenv("DISCORD_LAYOUT", "detailed").strip('"').lower()

@@ -3,6 +3,7 @@
 """
 
 import os
+import textwrap
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -51,19 +52,19 @@ def _sidebar_nav():
 
 def _apply_styles(hide_sidebar: bool = False) -> None:
     base = """
-    <style>
-    .cb-card { padding:12px;border:1px solid #e8e8e8;border-radius:12px;margin:6px 0;background:#fafafa; }
-    .cb-title { font-size:18px;font-weight:700;margin:8px 0; }
-    </style>
-    """
+<style>
+.cb-card { padding:12px;border:1px solid #e8e8e8;border-radius:12px;margin:6px 0;background:#fafafa; }
+.cb-title { font-size:18px;font-weight:700;margin:8px 0; }
+</style>
+"""
     if hide_sidebar:
         base += """
-        <style>
-        [data-testid="stSidebar"] { display: none !important; }
-        [data-testid="stSidebarNav"] { display: none !important; }
-        </style>
-        """
-    st.markdown(base, unsafe_allow_html=True)
+<style>
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="stSidebarNav"] { display: none !important; }
+</style>
+"""
+    st.markdown(textwrap.dedent(base).strip(), unsafe_allow_html=True)
 
 
 def _fix_text(text: str) -> str:
@@ -96,6 +97,21 @@ SECTION_TITLE_MAP = {
     "Easy Summary": "쉬운 요약",
     "AI Summary": "AI 요약",
     "Summary": "최종 요약",
+}
+
+SECTION_KEY_MAP = {
+    "보유/관찰 현황": "Holdings Snapshot",
+    "가격/거래 요약": "OHLCV Summary",
+    "매물대 요약": "Volume Profile",
+    "기술 지표": "Technical Analysis",
+    "거래원 수급": "Broker Flow",
+    "뉴스/공시": "News & Disclosures",
+    "기업정보(DART)": "DART Company Profile",
+    "진입/이탈 계획": "Entry/Exit Plan",
+    "쉬운 요약": "Easy Summary",
+    "AI 요약": "AI Summary",
+    "최종 요약": "Summary",
+    "목차": "TOC",
 }
 
 
@@ -133,7 +149,8 @@ def _load_report_sections(report_path: Path) -> Dict[str, List[str]]:
     sections[current] = []
     for line in lines:
         if line.startswith("## "):
-            current = line.replace("## ", "").strip()
+            title = line.replace("## ", "").strip()
+            current = SECTION_KEY_MAP.get(title, title)
             sections[current] = []
             continue
         sections[current].append(line)
@@ -224,13 +241,13 @@ def _parse_news_disclosures(lines: List[str]) -> Tuple[List[str], List[str]]:
     mode = None
     for line in lines:
         text = _fix_text(line.strip())
-        if text.startswith("- News") or text.startswith("News:"):
+        if text.startswith("- News") or text.startswith("News:") or text.startswith("- 뉴스") or text.startswith("뉴스:"):
             mode = "news"
             continue
-        if text.startswith("- Disclosures") or text.startswith("Disclosures:"):
+        if text.startswith("- Disclosures") or text.startswith("Disclosures:") or text.startswith("- 공시") or text.startswith("공시:"):
             mode = "disclosures"
             continue
-        if text.startswith("- Note:"):
+        if text.startswith("- Note:") or text.startswith("- 메모:"):
             continue
         if text.startswith("- ") or text.startswith("• ") or text.startswith("  - "):
             item = text.lstrip("- ").lstrip("• ").strip()
@@ -262,13 +279,13 @@ def _parse_holdings(lines: List[str]) -> Dict[str, str]:
     result: Dict[str, str] = {}
     for line in lines:
         text = _fix_text(line.strip())
-        if text.startswith("- Status:"):
+        if text.startswith("- Status:") or text.startswith("- 상태:"):
             result["status"] = text.split(":", 1)[-1].strip()
-        elif text.startswith("- Qty:"):
+        elif text.startswith("- Qty:") or text.startswith("- 수량:"):
             result["qty"] = text.split(":", 1)[-1].strip()
-        elif text.startswith("- First Seen:"):
+        elif text.startswith("- First Seen:") or text.startswith("- 첫관찰:"):
             result["first_seen"] = text.split(":", 1)[-1].strip()
-        elif text.startswith("- Last Seen:"):
+        elif text.startswith("- Last Seen:") or text.startswith("- 최근관찰:"):
             result["last_seen"] = text.split(":", 1)[-1].strip()
     return result
 
@@ -460,7 +477,7 @@ _sidebar_nav()
 
 st.title("🧾 종목 심층 분석 (v9.0)")
 st.caption(APP_FULL_VERSION)
-hide_sidebar = st.toggle("메뉴 숨기기", value=True)
+hide_sidebar = st.toggle("메뉴 숨기기", value=False)
 _apply_styles(hide_sidebar)
 
 dashboard_only = os.getenv("DASHBOARD_ONLY", "").lower() == "true"
@@ -565,8 +582,8 @@ if report_path and report_path.exists():
                 last_price = float(df_hold.sort_values("date").iloc[-1]["close"])
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("보유수량", f"{qty:,}")
-            c2.metric("평균단가", f"{avg_price:,.0f}" if avg_price else "-")
-            c3.metric("현재가(종가)", f"{last_price:,.0f}" if last_price else "-")
+            c2.metric("평균단가", f"{avg_price:,.1f}" if avg_price else "-")
+            c3.metric("현재가(종가)", f"{last_price:,.1f}" if last_price else "-")
             if qty and avg_price and last_price:
                 profit = (last_price - avg_price) * qty
                 rate = (last_price / avg_price - 1) * 100
@@ -667,7 +684,7 @@ if report_path and report_path.exists():
                     change_pct = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100.0
 
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("종가", f"{int(last['close']):,}", f"{change_pct:+.2f}%")
+                c1.metric("종가", f"{int(last['close']):,}", f"{change_pct:+.1f}%")
                 c2.metric("고가", f"{int(last['high']):,}")
                 c3.metric("저가", f"{int(last['low']):,}")
                 c4.metric("거래량", f"{int(last['volume']):,}")
