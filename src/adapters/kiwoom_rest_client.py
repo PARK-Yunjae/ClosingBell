@@ -185,7 +185,8 @@ class KiwoomRestClient:
         'daily_chart': '/api/dostk/chart',     # ka10081 일봉차트
         'rank_info': '/api/dostk/rkinfo',      # ka10030/ka10032 거래량/거래대금 상위
         'volume_profile': '/api/dostk/stkinfo',  # ka10025 매물대집중요청 (문서 기준)
-    }
+        'account_balance': '/api/dostk/acnt',  # kt00018 ????????
+}
     
     # Rate Limit: 초당 10회 (안전하게 0.12초 간격)
     API_CALL_INTERVAL = 0.12
@@ -511,6 +512,32 @@ class KiwoomRestClient:
         return data
     
     # ========================================
+    # ???????? ?? (kt00018)
+    # ========================================
+    def get_account_balance(
+        self,
+        qry_tp: str = "1",
+        dmst_stex_tp: str = "KRX",
+        tr_id: str = "kt00018",
+    ) -> Dict[str, Any]:
+        """
+        ???????? ?? (kt00018)
+        - qry_tp: 1(??) / 2(??)
+        - dmst_stex_tp: KRX / NXT
+        """
+        body = {
+            "qry_tp": qry_tp,
+            "dmst_stex_tp": dmst_stex_tp,
+        }
+        return self._request(
+            "POST",
+            self.ENDPOINTS['account_balance'],
+            tr_id,
+            body,
+        )
+
+    # ========================================
+
     # 거래대금 상위 조회 (ka10032) - v7.0 연속조회 지원
     # ========================================
     def get_trading_value_rank(

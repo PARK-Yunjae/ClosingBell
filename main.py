@@ -588,6 +588,7 @@ def main():
     parser.add_argument('--run-ai-analysis-all', action='store_true', help='유목민 AI 분석 - 전체 미분석 (백필 포함)')
     parser.add_argument('--run-top5-ai', action='store_true', help='감시종목 TOP5 AI 분석 (Gemini) - 오늘만')
     parser.add_argument('--run-top5-ai-all', action='store_true', help='감시종목 TOP5 AI 분석 - 전체 미분석 (백필용)')
+    parser.add_argument('--sync-holdings', action='store_true', help='?? ???? ???')
     parser.add_argument('--debug-universe', type=str, metavar='DATE', help='유니버스 비교 (TV200 vs 백필) - 예: --debug-universe 2026-01-23')
     parser.add_argument('--version', action='version', version=APP_FULL_VERSION)
     
@@ -687,6 +688,9 @@ def main():
     
     if args.run_top5_ai_all:
         run_top5_ai_all_cli()
+    if args.sync_holdings:
+        run_holdings_sync_cli()
+
         return
     
     # v6.3.3: 유니버스 비교 디버그
@@ -974,6 +978,19 @@ def run_top5_ai_all_cli():
         logger.error(f"TOP5 AI 전체 분석 실패: {e}")
         import traceback
         traceback.print_exc()
+
+def run_holdings_sync_cli():
+    """?? ????? ?? ?? ???? ???."""
+    try:
+        from src.services.account_service import sync_holdings_watchlist
+        result = sync_holdings_watchlist()
+        print("\n? ?? ???? ??? ??")
+        print(f"   ???: {result.get('holding_count', 0)}?")
+        print(f"   ?? ??: {result.get('sold_marked', 0)}?")
+    except Exception as e:
+        print(f"\n? ???? ??? ??: {e}")
+
+
 
 
 if __name__ == "__main__":

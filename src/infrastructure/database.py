@@ -346,6 +346,27 @@ MIGRATIONS = {
     "v1.2_add_screen_rank_to_next_day": """
         ALTER TABLE next_day_results ADD COLUMN screen_rank INTEGER DEFAULT 0;
     """,
+
+    # v7.1: 보유종목 누적 관찰 테이블
+    "v7.1_add_holdings_watch": """
+        CREATE TABLE IF NOT EXISTS holdings_watch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT,
+            status TEXT DEFAULT 'holding',
+            first_seen TEXT,
+            last_seen TEXT,
+            last_qty INTEGER DEFAULT 0,
+            last_price REAL DEFAULT 0,
+            source TEXT DEFAULT 'kiwoom',
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(stock_code)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_holdings_watch_status ON holdings_watch(status);
+    """,
 }
 
 # ========================================================================
