@@ -279,6 +279,18 @@ def run_holdings_sync_cli():
         print(f"\n❌ 보유종목 동기화 오류: {e}")
 
 
+def run_holdings_analysis_cli(full: bool = True) -> None:
+    """보유종목 심층 분석 리포트 생성."""
+    try:
+        from src.services.holdings_analysis_service import generate_holdings_reports
+        result = generate_holdings_reports(full=full)
+        print("\n✅ 보유종목 분석 완료")
+        print(f"   분석: {result.analyzed}개")
+        print(f"   실패: {result.failed}개")
+    except Exception as e:
+        print(f"\n❌ 보유종목 분석 오류: {e}")
+
+
 def run_pipeline(days: int = 20) -> None:
     """백필→감시종목 AI→기업정보→뉴스→유목민 AI 순차 실행."""
     logger = logging.getLogger(__name__)

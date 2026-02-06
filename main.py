@@ -54,6 +54,7 @@ from src.cli.commands import (
     run_holdings_sync_cli,
     run_auto_fill,
     run_pipeline,
+    run_holdings_analysis_cli,
 )
 
 from src.services.screener_service import run_screening, ScreenerService
@@ -604,7 +605,8 @@ def main():
     parser.add_argument('--run-ai-analysis-all', action='store_true', help='유목민 AI 분석 - 전체 미분석 (백필 포함)')
     parser.add_argument('--run-top5-ai', action='store_true', help='감시종목 TOP5 AI 분석 (Gemini) - 오늘만')
     parser.add_argument('--run-top5-ai-all', action='store_true', help='감시종목 TOP5 AI 분석 - 전체 미분석 (백필용)')
-    parser.add_argument('--sync-holdings', action='store_true', help='?? ???? ???')
+    parser.add_argument('--sync-holdings', action='store_true', help='보유종목 동기화')
+    parser.add_argument('--analyze-holdings', action='store_true', help='보유종목 심층 분석 리포트 생성')
     parser.add_argument('--debug-universe', type=str, metavar='DATE', help='유니버스 비교 (TV200 vs 백필) - 예: --debug-universe 2026-01-23')
     parser.add_argument('--version', action='version', version=APP_FULL_VERSION)
     
@@ -697,9 +699,12 @@ def main():
     
     if args.run_top5_ai_all:
         run_top5_ai_all_cli()
+        return
     if args.sync_holdings:
         run_holdings_sync_cli()
-
+        return
+    if args.analyze_holdings:
+        run_holdings_analysis_cli(full=args.full)
         return
     
     # v6.3.3: 유니버스 비교 디버그

@@ -1,5 +1,5 @@
 ﻿from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from src.adapters.kiwoom_rest_client import get_kiwoom_client
 from src.infrastructure.database import get_database
@@ -91,7 +91,7 @@ def add_manual_watch(stock_code: str, stock_name: str = "") -> None:
     )
 
 
-def sync_holdings_watchlist() -> Dict[str, int]:
+def sync_holdings_watchlist() -> Dict[str, object]:
     """현재 보유종목을 누적 관찰 테이블에 반영."""
     db = get_database()
     now = datetime.now().isoformat(timespec="seconds")
@@ -99,15 +99,21 @@ def sync_holdings_watchlist() -> Dict[str, int]:
     result = fetch_account_holdings()
     holdings = result["holdings"]
     current_codes = {h["code"] for h in holdings}
+    changed_codes: Set[str] = set()
 
     # upsert holding items
     for item in holdings:
         code = item["code"]
         row = db.fetch_one(
-            "SELECT stock_code, first_seen FROM holdings_watch WHERE stock_code = ?",
+            "SELECT stock_code, first_seen, status, last_qty, last_price FROM holdings_watch WHERE stock_code = ?",
             (code,),
         )
         if row:
+            prev_status = row.get("status", "")
+            prev_qty = int(row.get("last_qty") or 0)
+            prev_price = float(row.get("last_price") or 0.0)
+            if prev_status != "holding" or prev_qty != item.get("qty", 0) or prev_price != item.get("price", 0.0):
+                changed_codes.add(code)
             db.execute(
                 "UPDATE holdings_watch SET stock_name = ?, status = 'holding', last_seen = ?, "
                 "last_qty = ?, last_price = ?, updated_at = ? WHERE stock_code = ?",
@@ -121,6 +127,7 @@ def sync_holdings_watchlist() -> Dict[str, int]:
                 ),
             )
         else:
+            changed_codes.add(code)
             db.execute(
                 "INSERT INTO holdings_watch (stock_code, stock_name, status, first_seen, last_seen, "
                 "last_qty, last_price, source, updated_at) VALUES (?, ?, 'holding', ?, ?, ?, ?, 'kiwoom', ?)",
@@ -147,8 +154,10 @@ def sync_holdings_watchlist() -> Dict[str, int]:
                 (now, now, code),
             )
             sold_count += 1
+            changed_codes.add(code)
 
     return {
         "holding_count": len(holdings),
         "sold_marked": sold_count,
+        "changed_codes": sorted(changed_codes),
     }

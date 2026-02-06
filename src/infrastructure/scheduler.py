@@ -349,12 +349,23 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("top5_ai_service 모듈 없음 - TOP5 AI 분석 스킵")
 
-        # 16:50 보유종목 동기화 (키움 계좌 기준)
+        # 16:50 보유종목 동기화 + 변경분 분석 리포트
         try:
             from src.services.account_service import sync_holdings_watchlist
+            from src.services.holdings_analysis_service import generate_holdings_reports
+
+            def _holdings_sync_and_analyze():
+                result = sync_holdings_watchlist()
+                changed = result.get("changed_codes", [])
+                if changed:
+                    generate_holdings_reports(codes=changed, full=True, include_sold=True)
+                    logger.info(f"[holdings] 분석 리포트 생성: {len(changed)}개")
+                else:
+                    logger.info("[holdings] 변경 없음")
+
             self.add_job(
                 job_id='holdings_sync',
-                func=sync_holdings_watchlist,
+                func=_holdings_sync_and_analyze,
                 hour=16,
                 minute=50,
             )
