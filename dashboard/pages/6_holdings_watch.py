@@ -70,7 +70,7 @@ try:
         }
         df = df.rename(columns={k: v for k, v in col_rename.items() if k in df.columns})
 
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         # 요약 카드
         total_eval = sum(float(h.get("eval_pl", 0) or 0) for h in holdings)
@@ -104,7 +104,7 @@ if watch_rows:
     drop_cols = ["id", "notes", "created_at", "updated_at"]
     wdf = wdf.drop(columns=[c for c in drop_cols if c in wdf.columns], errors="ignore")
 
-    st.dataframe(wdf, use_container_width=True, hide_index=True)
+    st.dataframe(wdf, width="stretch", hide_index=True)
 else:
     st.info("누적 관찰 목록이 비어 있습니다. 스케줄러 실행 후 자동 반영됩니다.")
 

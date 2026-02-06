@@ -259,15 +259,15 @@ else:
                 with c1:
                     gauge = _anomaly_gauge(anomaly, "이상치 점수")
                     if gauge:
-                        st.plotly_chart(gauge, use_container_width=True, key=f"gauge_{stock_code}")
+                        st.plotly_chart(gauge, width="stretch", key=f"gauge_{stock_code}")
                 with c2:
                     radar = _radar_chart(unusual, asymmetry, distribution, foreign)
                     if radar:
-                        st.plotly_chart(radar, use_container_width=True, key=f"radar_{stock_code}")
+                        st.plotly_chart(radar, width="stretch", key=f"radar_{stock_code}")
                 with c3:
                     bs_chart = _buyers_sellers_chart(buyers, sellers)
                     if bs_chart:
-                        st.plotly_chart(bs_chart, use_container_width=True, key=f"bs_{stock_code}")
+                        st.plotly_chart(bs_chart, width="stretch", key=f"bs_{stock_code}")
                     elif not buyers and not sellers:
                         st.info("매수/매도 데이터 없음")
             else:
@@ -354,10 +354,10 @@ if heatmap_data:
         if not pivot.empty:
             hm_fig = _heatmap_plotly(pivot)
             if hm_fig:
-                st.plotly_chart(hm_fig, use_container_width=True)
+                st.plotly_chart(hm_fig, width="stretch")
             else:
                 styled = pivot.style.background_gradient(cmap='YlOrRd', vmin=0, vmax=100).format("{:.0f}")
-                st.dataframe(styled, use_container_width=True)
+                st.dataframe(styled, width="stretch")
         else:
             st.info("히트맵 데이터가 충분하지 않습니다.")
     else:
@@ -405,7 +405,7 @@ if heatmap_data:
                 height=350, margin=dict(l=10, r=10, t=10, b=10),
                 xaxis_title="순매수량", yaxis_title="",
             )
-            st.plotly_chart(fig_frgn, use_container_width=True)
+            st.plotly_chart(fig_frgn, width="stretch")
         elif not df_latest.empty:
             chart_data = df_latest.set_index('stock_name')['frgn_net'].head(10)
             st.bar_chart(chart_data)

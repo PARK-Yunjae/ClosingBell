@@ -415,7 +415,7 @@ with col2:
 
 # 리포트 생성 버튼
 if not read_only:
-    run = st.button("🔍 분석 리포트 생성", type="primary", use_container_width=True)
+    run = st.button("🔍 분석 리포트 생성", type="primary", width="stretch")
     if run:
         if not code or not code.isdigit():
             st.error("종목코드를 숫자 6자리로 입력해주세요.")
@@ -626,7 +626,7 @@ with tab1:
                         ],
                     )
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     _info_card(
                         "CCI란?",
                         "CCI는 '지금 주가가 평균에서 얼마나 벗어났는지' 보여주는 도구예요.<br>"
@@ -650,7 +650,7 @@ with tab1:
                         ],
                     )
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     _info_card(
                         "RSI란?",
                         "RSI는 '최근 14일 동안 오른 날이 많았나 내린 날이 많았나'를 보여줘요.<br>"
@@ -750,11 +750,11 @@ with tab2:
             if go is not None and make_subplots is not None and pd is not None:
                 view = df.tail(200)
                 fig = make_subplots(
-                    rows=3, cols=1,
+                    rows=2, cols=1,
                     shared_xaxes=True,
-                    row_heights=[0.55, 0.25, 0.20],
-                    vertical_spacing=0.03,
-                    subplot_titles=("주가 (캔들차트)", "거래량", ""),
+                    row_heights=[0.7, 0.3],
+                    vertical_spacing=0.06,
+                    subplot_titles=("주가 (캔들차트)", "거래량"),
                 )
 
                 # 캔들스틱
@@ -804,6 +804,7 @@ with tab2:
 
                 # VP 지지/저항선
                 vp = None
+                vp_error = ""
                 try:
                     from src.domain.volume_profile import calc_volume_profile
                     vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
@@ -821,38 +822,29 @@ with tab2:
                         if resistance:
                             fig.add_hline(y=resistance, line_color="#e74c3c", line_dash="dot",
                                           annotation_text=f"저항 {resistance:,.0f}", row=1, col=1)
-                except Exception:
-                    pass
+                except Exception as _vp_err:
+                    vp_error = str(_vp_err)
 
                 fig.update_layout(
-                    height=700,
+                    height=650,
                     xaxis_rangeslider_visible=False,
                     showlegend=True,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    margin=dict(l=10, r=10, t=30, b=10),
+                    margin=dict(l=10, r=10, t=30, b=30),
                 )
-
-                # Y축 범위: 이상치 봉 제외 (1~99 백분위)
-                try:
-                    highs = view["high"].dropna()
-                    lows = view["low"].dropna()
-                    if len(highs) > 10:
-                        p1_low = lows.quantile(0.01)
-                        p99_high = highs.quantile(0.99)
-                        margin_y = (p99_high - p1_low) * 0.05
-                        fig.update_yaxes(
-                            range=[max(0, p1_low - margin_y), p99_high + margin_y],
-                            row=1, col=1,
-                        )
-                except Exception:
-                    pass
 
                 # 주말/공휴일 빈 공간 제거
                 fig.update_xaxes(
                     type="date",
                     rangebreaks=[dict(bounds=["sat", "mon"])],
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                # 거래량 하단에 날짜 레이블 표시
+                fig.update_xaxes(
+                    showticklabels=True,
+                    dtick="M1", tickformat="%y/%m",
+                    row=2, col=1,
+                )
+                st.plotly_chart(fig, width="stretch")
 
                 # ── 매물대 분포 차트 ──
                 st.markdown("### 🧱 매물대 분포 (많이 거래된 가격대)")
@@ -880,10 +872,13 @@ with tab2:
                         yaxis_title="가격대 (원)",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(vp_fig, use_container_width=True)
+                    st.plotly_chart(vp_fig, width="stretch")
                     st.caption("🔴 빨간 막대 = 현재가가 이 가격대 안에 있음 / 🔵 파란 막대 = 다른 가격대")
                 else:
-                    st.caption("매물대 데이터가 없어요.")
+                    if vp_error:
+                        st.caption(f"매물대 계산 실패: {vp_error}")
+                    else:
+                        st.caption("매물대 데이터가 없어요. (OHLCV 데이터 부족)")
 
             else:
                 # plotly 없을 때 폴백
@@ -956,7 +951,7 @@ with tab2:
                     showlegend=False,
                     margin=dict(l=10, r=10, t=30, b=10),
                 )
-                st.plotly_chart(cci_rsi_fig, use_container_width=True)
+                st.plotly_chart(cci_rsi_fig, width="stretch")
 
             # ── 거래원 추이 차트 ──
             broker_df = _fetch_broker_series(code)
@@ -984,7 +979,7 @@ with tab2:
                         yaxis_title="이상 점수",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(bk_fig, use_container_width=True)
+                    st.plotly_chart(bk_fig, width="stretch")
                 else:
                     chart_df = chart_df.set_index("screen_date")
                     st.line_chart(chart_df)
@@ -1022,7 +1017,7 @@ with tab2:
                         yaxis_title="20일 평균 대비 배율",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(vol_fig, use_container_width=True)
+                    st.plotly_chart(vol_fig, width="stretch")
                     st.caption("🔴 빨강 = 평균의 2배 이상 / 🟠 주황 = 1.5배 이상 / 🔵 파랑 = 정상")
 
 
