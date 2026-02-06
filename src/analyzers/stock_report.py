@@ -209,7 +209,7 @@ def _build_easy_summary(
 ) -> List[str]:
     lines: List[str] = []
     if change_pct is not None:
-        lines.append(f"- 오늘 흐름: {_summarize_change(change_pct)} ({change_pct:+.2f}%)")
+        lines.append(f"- 오늘 흐름: {_summarize_change(change_pct)} ({change_pct:+.1f}%)")
     else:
         lines.append("- 오늘 흐름: 데이터 부족")
 
@@ -247,31 +247,44 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     df, data_path = _load_ohlcv_df(code)
 
     lines: List[str] = []
-    lines.append("# ClosingBell v9.0 Analysis Report")
+    lines.append("# ClosingBell v9.0 종목 분석 리포트")
     lines.append("")
-    lines.append(f"- Code: {code}")
-    lines.append(f"- Generated: {now.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"- OHLCV Source: {_format_ohlcv_source(data_path)}")
+    lines.append(f"- 종목코드: {code}")
+    lines.append(f"- 생성시각: {now.strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"- 가격데이터: {_format_ohlcv_source(data_path)}")
+    lines.append("")
+    lines.append("## 목차")
+    lines.append("- 보유/관찰 현황")
+    lines.append("- 가격/거래 요약")
+    lines.append("- 매물대 요약")
+    lines.append("- 기술 지표")
+    lines.append("- 거래원 수급")
+    lines.append("- 뉴스/공시")
+    lines.append("- 쉬운 요약")
+    lines.append("- 기업정보(DART)")
+    lines.append("- AI 요약")
+    lines.append("- 진입/이탈 계획")
+    lines.append("- 최종 요약")
     lines.append("")
 
     # Holdings Snapshot (if available)
     holding = _get_holding_row(code)
     if holding:
-        lines.append("## Holdings Snapshot")
-        lines.append(f"- Status: {holding.get('status', '-')}")
+        lines.append("## 보유/관찰 현황")
+        lines.append(f"- 상태: {holding.get('status', '-')}")
         qty = holding.get("last_qty", 0) or 0
         price = holding.get("last_price", 0.0) or 0.0
-        lines.append(f"- Qty: {int(qty):,} | Avg Price: {float(price):,.2f}")
-        lines.append(f"- First Seen: {holding.get('first_seen', '-')}")
-        lines.append(f"- Last Seen: {holding.get('last_seen', '-')}")
+        lines.append(f"- 수량: {int(qty):,} | 평균단가: {float(price):,.1f}")
+        lines.append(f"- 첫관찰: {holding.get('first_seen', '-')}")
+        lines.append(f"- 최근관찰: {holding.get('last_seen', '-')}")
         lines.append("")
 
     # OHLCV Summary
-    lines.append("## OHLCV Summary")
+    lines.append("## 가격/거래 요약")
     last_close: Optional[float] = None
     change_pct: Optional[float] = None
     if df is None:
-        lines.append("- OHLCV data not found.")
+        lines.append("- 가격 데이터가 없습니다.")
     else:
         df = df.sort_values("date").reset_index(drop=True)
         last = df.iloc[-1]
@@ -284,79 +297,79 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
         period_start = df["date"].iloc[0].date()
         period_end = last["date"].date()
         tv = _calc_trading_value(last)
-        lines.append(f"- Period: {period_start} to {period_end} ({len(df)} days)")
+        lines.append(f"- 기간: {period_start} ~ {period_end} ({len(df)}일)")
         lines.append(
-            f"- Latest ({period_end}): "
-            f"O {int(last['open']):,} / H {int(last['high']):,} / "
-            f"L {int(last['low']):,} / C {int(last['close']):,}"
+            f"- 최근 ({period_end}): "
+            f"시 {int(last['open']):,} / 고 {int(last['high']):,} / "
+            f"저 {int(last['low']):,} / 종 {int(last['close']):,}"
         )
-        lines.append(f"- Change vs prev close: {change_pct:+.2f}%")
-        lines.append(f"- Volume: {int(last['volume']):,} | Trading value (100M KRW): {tv:.2f}")
+        lines.append(f"- 전일대비: {change_pct:+.1f}%")
+        lines.append(f"- 거래량: {int(last['volume']):,} | 거래대금(억원): {tv:.1f}")
 
         tail = df.tail(20) if len(df) >= 20 else df
         high_20 = float(tail["high"].max())
         low_20 = float(tail["low"].min())
-        lines.append(f"- 20d High/Low: {high_20:,.0f} / {low_20:,.0f}")
+        lines.append(f"- 20일 고가/저가: {high_20:,.0f} / {low_20:,.0f}")
 
     # Volume Profile
     lines.append("")
-    lines.append("## Volume Profile")
-    vp_tag = "N/A"
+    lines.append("## 매물대 요약")
+    vp_tag = "없음"
     vp_summary = None
     if df is None or last_close is None:
-        lines.append("- VP: N/A (no OHLCV data).")
+        lines.append("- 매물대: 데이터 없음")
     else:
         vp_summary = analyze_volume_profile(df, current_price=last_close, n_days=60)
         vp_tag = vp_summary.tag
-        lines.append(f"- Score: {vp_summary.score:.1f}/13 | Tag: {vp_summary.tag}")
+        lines.append(f"- 점수: {vp_summary.score:.1f}/13 | 태그: {vp_summary.tag}")
         lines.append(
-            f"- Above/Below: {vp_summary.above_pct:.1f}% / {vp_summary.below_pct:.1f}% | "
-            f"POC: {vp_summary.poc_price:,.0f} ({vp_summary.poc_pct:.1f}%)"
+            f"- 위/아래: {vp_summary.above_pct:.1f}% / {vp_summary.below_pct:.1f}% | "
+            f"중심가격(POC): {vp_summary.poc_price:,.0f} ({vp_summary.poc_pct:.1f}%)"
         )
         if vp_summary.support or vp_summary.resistance:
             support_str = f"{vp_summary.support:,.0f}" if vp_summary.support else "-"
             resist_str = f"{vp_summary.resistance:,.0f}" if vp_summary.resistance else "-"
-            lines.append(f"- Support/Resistance: {support_str} / {resist_str}")
+            lines.append(f"- 지지/저항: {support_str} / {resist_str}")
         if vp_summary.reason:
-            lines.append(f"- Note: {vp_summary.reason}")
+            lines.append(f"- 메모: {vp_summary.reason}")
 
     # Technical Analysis
     lines.append("")
-    lines.append("## Technical Analysis")
+    lines.append("## 기술 지표")
     tech = analyze_technical(df) if df is not None else analyze_technical(None)
     if tech.note:
-        lines.append(f"- Technicals: {tech.note}")
+        lines.append(f"- 참고: {tech.note}")
     else:
-        lines.append(f"- CCI(14): {tech.cci:.1f}" if tech.cci is not None else "- CCI(14): N/A")
-        lines.append(f"- RSI(14): {tech.rsi:.1f}" if tech.rsi is not None else "- RSI(14): N/A")
+        lines.append(f"- CCI(14): {tech.cci:.1f}" if tech.cci is not None else "- CCI(14): 없음")
+        lines.append(f"- RSI(14): {tech.rsi:.1f}" if tech.rsi is not None else "- RSI(14): 없음")
         lines.append(
-            f"- MACD: {tech.macd:.4f} | Signal: {tech.macd_signal:.4f} | Hist: {tech.macd_hist:.4f}"
+            f"- MACD: {tech.macd:.1f} | Signal: {tech.macd_signal:.1f} | Hist: {tech.macd_hist:.1f}"
             if tech.macd is not None and tech.macd_signal is not None and tech.macd_hist is not None
-            else "- MACD: N/A"
+            else "- MACD: 없음"
         )
         lines.append(
-            f"- MA: 5={tech.ma5:.2f}, 20={tech.ma20:.2f}, 60={tech.ma60:.2f}, 120={tech.ma120:.2f}"
+            f"- 이동평균: 5={tech.ma5:.1f}, 20={tech.ma20:.1f}, 60={tech.ma60:.1f}, 120={tech.ma120:.1f}"
             if tech.ma20 is not None
-            else "- MA: N/A"
+            else "- 이동평균: 없음"
         )
         lines.append(
-            f"- Bollinger(20): mid {tech.bb_mid:.2f}, upper {tech.bb_upper:.2f}, lower {tech.bb_lower:.2f}"
+            f"- 볼린저(20): 중 {tech.bb_mid:.1f}, 상 {tech.bb_upper:.1f}, 하 {tech.bb_lower:.1f}"
             if tech.bb_mid is not None
-            else "- Bollinger: N/A"
+            else "- 볼린저: 없음"
         )
 
     # Broker Flow
     lines.append("")
-    lines.append("## Broker Flow")
+    lines.append("## 거래원 수급")
     broker = analyze_broker_flow(code, limit=5 if full else 1)
     if broker.status != "ok":
-        lines.append(f"- Broker: {broker.note or 'N/A'}")
+        lines.append(f"- 참고: {broker.note or '없음'}")
     else:
-        lines.append(f"- Tag: {broker.tag} | Max anomaly: {broker.max_anomaly} | Avg: {broker.avg_anomaly:.1f}")
+        lines.append(f"- 태그: {broker.tag} | 최대 이상치: {broker.max_anomaly:.1f} | 평균: {broker.avg_anomaly:.1f}")
         if broker.note:
-            lines.append(f"- Note: {broker.note}")
+            lines.append(f"- 메모: {broker.note}")
         if full and broker.recent_rows:
-            lines.append("| Date | Anomaly | Score | Tag |")
+            lines.append("| 날짜 | 이상치 | 점수 | 태그 |")
             lines.append("| --- | --- | --- | --- |")
             for row in broker.recent_rows:
                 lines.append(
@@ -366,37 +379,37 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
 
     # News & Disclosures
     lines.append("")
-    lines.append("## News & Disclosures")
+    lines.append("## 뉴스/공시")
     news_summary = analyze_news_timeline(code, stock_name=code)
     if news_summary.note:
-        lines.append(f"- Note: {news_summary.note}")
+        lines.append(f"- 메모: {news_summary.note}")
     if news_summary.news:
-        lines.append("- News:")
+        lines.append("- 뉴스:")
         for item in news_summary.news[:5]:
             title = item.get("title", "")
             pub = item.get("pub_date", "")
             source = item.get("source", "")
             lines.append(f"  - {pub} {source} {title}".strip())
     else:
-        lines.append("- News: N/A")
+        lines.append("- 뉴스: 없음")
     if news_summary.disclosures:
-        lines.append("- Disclosures:")
+        lines.append("- 공시:")
         for item in news_summary.disclosures[:5]:
             date_str = item.get("rcept_dt", "")
             title = item.get("report_nm", "")
             lines.append(f"  - {date_str} {title}".strip())
     else:
-        lines.append("- Disclosures: N/A")
+        lines.append("- 공시: 없음")
 
     # Easy Summary
     lines.append("")
-    lines.append("## Easy Summary")
+    lines.append("## 쉬운 요약")
     easy_lines = _build_easy_summary(change_pct, last_close, vp_summary, tech, broker, news_summary)
     lines.extend(easy_lines if easy_lines else ["- 요약 데이터 부족"])
 
     # DART Company Profile (Full)
     lines.append("")
-    lines.append("## DART Company Profile")
+    lines.append("## 기업정보(DART)")
     try:
         dart = get_dart_service()
         profile_text = dart.format_full_profile_for_ai(code, stock_name=code)
@@ -404,24 +417,24 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
             for line in profile_text.splitlines():
                 lines.append(line)
         else:
-            lines.append("- DART: N/A")
+            lines.append("- DART: 없음")
     except Exception:
-        lines.append("- DART: N/A")
+        lines.append("- DART: 없음")
 
     # AI Summary
     lines.append("")
-    lines.append("## AI Summary")
+    lines.append("## AI 요약")
     ai_summary = _generate_ai_summary("\n".join(lines))
     if ai_summary:
         for line in ai_summary.splitlines():
             if line.strip():
                 lines.append(line.rstrip())
     else:
-        lines.append("- AI 요약: N/A (API 키 필요)")
+        lines.append("- AI 요약: 없음 (API 키 필요)")
 
     # Entry/Exit Plan
     lines.append("")
-    lines.append("## Entry/Exit Plan")
+    lines.append("## 진입/이탈 계획")
     if vp_summary is None:
         vp_summary = VolumeProfileSummary(
             score=0.0,
@@ -440,16 +453,16 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
         else calculate_entry_exit(None, 0.0, vp_summary, tech)
     )
     if plan.entry is None:
-        lines.append(f"- Plan: {plan.note or 'N/A'}")
+        lines.append(f"- 계획: {plan.note or '없음'}")
     else:
-        lines.append(f"- Entry: {plan.entry:,.0f} | Target1: {plan.target1:,.0f} | Target2: {plan.target2:,.0f}")
-        lines.append(f"- Stop-loss: {plan.stop_loss:,.0f} | Holding: {plan.holding_days}")
+        lines.append(f"- 진입: {plan.entry:,.0f} | 1차목표: {plan.target1:,.0f} | 2차목표: {plan.target2:,.0f}")
+        lines.append(f"- 손절: {plan.stop_loss:,.0f} | 보유기간: {plan.holding_days}")
         if plan.note:
-            lines.append(f"- Note: {plan.note}")
+            lines.append(f"- 메모: {plan.note}")
 
     # Composite Summary
     lines.append("")
-    lines.append("## Summary")
+    lines.append("## 최종 요약")
     cb_score = None
     if df is not None:
         try:
@@ -470,14 +483,14 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
         except Exception:
             cb_score = None
     if cb_score is not None:
-        lines.append(f"- ClosingBell Score: {cb_score:.1f} / 100")
+        lines.append(f"- ClosingBell 점수: {cb_score:.1f} / 100")
     else:
-        lines.append("- ClosingBell Score: N/A")
-    lines.append(f"- VP Tag: {vp_tag}")
+        lines.append("- ClosingBell 점수: 없음")
+    lines.append(f"- 매물대 태그: {vp_tag}")
     if ai_summary:
-        lines.append("- AI 요약: 보고서의 AI Summary 참고")
+        lines.append("- AI 요약: 보고서의 AI 요약 참고")
     else:
-        lines.append("- AI 요약: N/A (AI 설정 필요)")
+        lines.append("- AI 요약: 없음 (AI 설정 필요)")
 
     summary_parts = []
     if tech.cci is not None:
