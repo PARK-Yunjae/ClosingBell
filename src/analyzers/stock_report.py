@@ -1,13 +1,14 @@
 """
-종목 심층 분석 리포트 생성기 (v9.0)
+종목 심층 분석 리포트 생성 (v9.0)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import os
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -48,8 +49,8 @@ def _resolve_ohlcv_path(code: str) -> Optional[Path]:
         pass
 
     for base in bases:
-        candidates.append(base / f"{code}.csv")
-        candidates.append(base / f"A{code}.csv")
+        candidates.append(Path(base) / f"{code}.csv")
+        candidates.append(Path(base) / f"A{code}.csv")
 
     for path in candidates:
         if path.exists():
@@ -63,29 +64,22 @@ def _load_ohlcv_df(code: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
         df = load_single_ohlcv(path)
         if df is not None and not df.empty:
             return df, str(path)
-    # FDR fallback (온라인/로컬 공통)
+
+    # FDR fallback (온라인)
     try:
         import FinanceDataReader as fdr
         end = datetime.now().date()
-        start = end - pd.Timedelta(days=365)
-        df = fdr.DataReader(code, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        start = end - pd.Timedelta(days=365 * 2)
+        df = fdr.DataReader(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         if df is not None and not df.empty:
             df = df.reset_index()
             df.columns = [c.lower() for c in df.columns]
-            rename_map = {
-                "date": "date",
-                "open": "open",
-                "high": "high",
-                "low": "low",
-                "close": "close",
-                "volume": "volume",
-            }
-            df = df.rename(columns=rename_map)
             if "date" not in df.columns and "index" in df.columns:
                 df = df.rename(columns={"index": "date"})
             return df, "FDR"
     except Exception:
         pass
+
     return None, None
 
 
@@ -106,6 +100,41 @@ def _to_daily_prices(df: pd.DataFrame) -> List[DailyPrice]:
     return prices
 
 
+def _generate_ai_summary(text: str) -> Optional[str]:
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"""
+당신은 투자 리서치 요약가입니다.
+아래 리포트를 일반인이 이해하기 쉬운 한국어로 요약하세요.
+- 전문 용어는 괄호로 짧게 설명
+- 과장/확정 표현 금지
+- 길이는 12줄 이내
+
+형식:
+1) 한 줄 요약
+2) 좋은 점 3개 (불릿)
+3) 위험 3개 (불릿)
+4) 관찰 포인트 3개 (불릿)
+5) 한계 1개 (데이터/기간/모형)
+
+리포트:
+{text[:6000]}
+"""
+        resp = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=prompt,
+            config={"max_output_tokens": 512, "temperature": 0.2},
+        )
+        return getattr(resp, "text", None)
+    except Exception:
+        return None
+
+
 def _calc_trading_value(last_row: pd.Series) -> float:
     tv = float(last_row.get("trading_value", 0.0))
     if tv > 0:
@@ -124,6 +153,92 @@ def _get_holding_row(code: str) -> Optional[dict]:
     return None
 
 
+def _format_ohlcv_source(data_path: Optional[str]) -> str:
+    if not data_path:
+        return "not found"
+    if data_path.upper() == "FDR":
+        return "FDR"
+    try:
+        p = Path(data_path)
+        return f"local ({p.name})"
+    except Exception:
+        return str(data_path)
+
+
+def _interpret_cci(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    if value >= 100:
+        return "과열 경향"
+    if value <= -100:
+        return "과매도 경향"
+    return "중립 구간"
+
+
+def _interpret_rsi(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    if value >= 70:
+        return "과열 경향"
+    if value <= 30:
+        return "과매도 경향"
+    return "중립 구간"
+
+
+def _summarize_change(change_pct: Optional[float]) -> str:
+    if change_pct is None:
+        return "변동 정보 없음"
+    if change_pct >= 5:
+        return "강한 상승"
+    if change_pct >= 1:
+        return "상승"
+    if change_pct <= -5:
+        return "강한 하락"
+    if change_pct <= -1:
+        return "하락"
+    return "보합"
+
+
+def _build_easy_summary(
+    change_pct: Optional[float],
+    last_close: Optional[float],
+    vp_summary: Optional[VolumeProfileSummary],
+    tech,
+    broker,
+    news_summary,
+) -> List[str]:
+    lines: List[str] = []
+    if change_pct is not None:
+        lines.append(f"- 오늘 흐름: {_summarize_change(change_pct)} ({change_pct:+.2f}%)")
+    else:
+        lines.append("- 오늘 흐름: 데이터 부족")
+
+    if last_close is not None:
+        lines.append(f"- 종가: {int(last_close):,}원")
+
+    if vp_summary is not None:
+        lines.append(
+            f"- 매물대: {vp_summary.tag} (위 {vp_summary.above_pct:.1f}%, 아래 {vp_summary.below_pct:.1f}%)"
+        )
+
+    if tech and tech.cci is not None:
+        lines.append(f"- CCI(14): {tech.cci:.0f} → {_interpret_cci(tech.cci)}")
+    if tech and tech.rsi is not None:
+        lines.append(f"- RSI(14): {tech.rsi:.0f} → {_interpret_rsi(tech.rsi)}")
+
+    if broker and broker.status == "ok":
+        lines.append(f"- 거래원 흐름: {broker.tag} (평균 이상점수 {broker.avg_anomaly:.1f})")
+    else:
+        lines.append("- 거래원 흐름: 데이터 부족")
+
+    if news_summary:
+        lines.append(
+            f"- 최근 뉴스 {len(news_summary.news)}건, 공시 {len(news_summary.disclosures)}건"
+        )
+
+    return lines
+
+
 def generate_stock_report(stock_code: str, full: bool = False) -> StockReportResult:
     code = str(stock_code).zfill(6)
     today = date.today()
@@ -136,7 +251,7 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     lines.append("")
     lines.append(f"- Code: {code}")
     lines.append(f"- Generated: {now.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"- OHLCV Source: {data_path if data_path else 'not found'}")
+    lines.append(f"- OHLCV Source: {_format_ohlcv_source(data_path)}")
     lines.append("")
 
     # Holdings Snapshot (if available)
@@ -153,7 +268,8 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
 
     # OHLCV Summary
     lines.append("## OHLCV Summary")
-    last_close = None
+    last_close: Optional[float] = None
+    change_pct: Optional[float] = None
     if df is None:
         lines.append("- OHLCV data not found.")
     else:
@@ -192,9 +308,7 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     else:
         vp_summary = analyze_volume_profile(df, current_price=last_close, n_days=60)
         vp_tag = vp_summary.tag
-        lines.append(
-            f"- Score: {vp_summary.score:.1f}/13 | Tag: {vp_summary.tag}"
-        )
+        lines.append(f"- Score: {vp_summary.score:.1f}/13 | Tag: {vp_summary.tag}")
         lines.append(
             f"- Above/Below: {vp_summary.above_pct:.1f}% / {vp_summary.below_pct:.1f}% | "
             f"POC: {vp_summary.poc_price:,.0f} ({vp_summary.poc_pct:.1f}%)"
@@ -274,6 +388,12 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     else:
         lines.append("- Disclosures: N/A")
 
+    # Easy Summary
+    lines.append("")
+    lines.append("## Easy Summary")
+    easy_lines = _build_easy_summary(change_pct, last_close, vp_summary, tech, broker, news_summary)
+    lines.extend(easy_lines if easy_lines else ["- 요약 데이터 부족"])
+
     # DART Company Profile (Full)
     lines.append("")
     lines.append("## DART Company Profile")
@@ -287,6 +407,17 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
             lines.append("- DART: N/A")
     except Exception:
         lines.append("- DART: N/A")
+
+    # AI Summary
+    lines.append("")
+    lines.append("## AI Summary")
+    ai_summary = _generate_ai_summary("\n".join(lines))
+    if ai_summary:
+        for line in ai_summary.splitlines():
+            if line.strip():
+                lines.append(line.rstrip())
+    else:
+        lines.append("- AI 요약: N/A (API 키 필요)")
 
     # Entry/Exit Plan
     lines.append("")
@@ -343,7 +474,10 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     else:
         lines.append("- ClosingBell Score: N/A")
     lines.append(f"- VP Tag: {vp_tag}")
-    lines.append("- AI 의견: N/A (AI 설정 필요)")
+    if ai_summary:
+        lines.append("- AI 요약: 보고서의 AI Summary 참고")
+    else:
+        lines.append("- AI 요약: N/A (AI 설정 필요)")
 
     summary_parts = []
     if tech.cci is not None:
