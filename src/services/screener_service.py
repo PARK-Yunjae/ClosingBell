@@ -276,6 +276,7 @@ class ScreenerService:
                                         prps_cnctr_rt=str(vp_cfg.concentration_rate),
                                         mrkt_tp=str(vp_cfg.market),
                                         stex_tp=str(vp_cfg.stex_tp),
+                                        trde_qty_tp=str(vp_cfg.trde_qty_tp),
                                         tr_id=str(vp_cfg.api_id),
                                     )
                                     # ???????????????? ?????Kiwoom VP ??????

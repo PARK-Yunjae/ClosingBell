@@ -483,6 +483,7 @@ class KiwoomRestClient:
         stex_tp: str = "3",
         tr_id: str = "ka10025",
         mrkt_tp: str = "000",
+        trde_qty_tp: str = "",
     ) -> Dict[str, Any]:
         """
         ??? ?? ?? (ka10025)
@@ -501,6 +502,8 @@ class KiwoomRestClient:
             "cycle_tp": cycle_tp,
             "stex_tp": stex_tp,
         }
+        if str(trde_qty_tp).strip():
+            body["trde_qty_tp"] = str(trde_qty_tp)
 
         data = self._request(
             "POST",
