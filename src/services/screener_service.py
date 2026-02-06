@@ -324,6 +324,16 @@ class ScreenerService:
                             )
                             vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
 
+                        if vp_result is None:
+                            vp_result = calc_volume_profile_from_csv(
+                                stock_code=code,
+                                current_price=current_price,
+                                ohlcv_dir=OHLCV_FULL_DIR,
+                                n_days=vp_cfg.cycle,
+                                n_bands=vp_cfg.bands,
+                            )
+                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+
                         score.score_detail.raw_vp_score = vp_result.score
                         score.score_detail.raw_vp_above_pct = vp_result.above_pct
                         score.score_detail.raw_vp_below_pct = vp_result.below_pct
