@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from src.infrastructure.logger import logger
+import logging
+logger = logging.getLogger(__name__)
 from src.services.analysis_report import generate_analysis_report
 from src.services.account_service import get_holdings_watchlist
 
