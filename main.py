@@ -39,7 +39,7 @@ from src.config.app_config import APP_FULL_VERSION
 from src.infrastructure.database import init_database
 from src.infrastructure.scheduler import create_scheduler, is_market_open
 from src.infrastructure.logging_config import init_logging
-from src.config.validator import validate_settings, ConfigValidationError, print_settings_summary
+from src.config.validator import validate_settings, ConfigValidationError, print_settings_summary, run_cli_validation
 
 from src.services.screener_service import run_screening, ScreenerService
 from src.domain.score_calculator import (
@@ -614,27 +614,16 @@ def main():
     # 로깅 설정
     init_logging()
     logger = logging.getLogger(__name__)
-    
-    # 설정 검증
+    # ??? ????
     try:
-        if args.run_test or args.validate:
-            result = validate_settings(raise_on_error=False)
-            if args.validate:
-                print_settings_summary()
-                if result.valid:
-                    print("\n설정 검증 완료")
-                else:
-                    print("\n설정 검증 실패")
-                    sys.exit(1)
-                return
-        else:
-            validate_settings(raise_on_error=True)
+        should_continue = run_cli_validation(args.validate, args.run_test)
+        if not should_continue:
+            return
     except ConfigValidationError as e:
         print(str(e))
         sys.exit(1)
-    
-    # DB 초기화
-    logger.info("DB 초기화...")
+
+    # DB ?????
     init_database()
     
     if args.init_db:
