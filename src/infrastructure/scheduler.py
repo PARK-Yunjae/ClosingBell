@@ -415,6 +415,19 @@ class ScreenerScheduler:
             except Exception:
                 result[job_id] = None
         return result
+        # 16:50 ?? ???? ??? (?? ?? ????)
+        try:
+            from src.services.account_service import sync_holdings_watchlist
+            self.add_job(
+                job_id='holdings_sync',
+                func=sync_holdings_watchlist,
+                hour=16,
+                minute=50,
+            )
+        except ImportError:
+            logger.warning("account_service ?? ?? - ???? ??? ??")
+
+
 
 
 def create_scheduler(blocking: bool = True) -> ScreenerScheduler:
