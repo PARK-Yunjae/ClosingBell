@@ -33,6 +33,7 @@ v8.0 스케줄 (14→11개):
 import logging
 import time
 import traceback
+import os
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
 
@@ -347,6 +348,58 @@ class ScreenerScheduler:
             )
         except ImportError:
             logger.warning("top5_ai_service 모듈 없음 - TOP5 AI 분석 스킵")
+
+        # 16:50 보유종목 동기화 (키움 계좌 기준)
+        try:
+            from src.services.account_service import sync_holdings_watchlist
+            self.add_job(
+                job_id='holdings_sync',
+                func=sync_holdings_watchlist,
+                hour=16,
+                minute=50,
+            )
+        except ImportError:
+            logger.warning("account_service 모듈 없음 - 보유종목 동기화 스킵")
+
+        # Optional: Healthcheck 스케줄 (환경변수 지정 시)
+        health_time = os.getenv("SCHEDULE_HEALTHCHECK_TIME", "").strip()
+        if health_time:
+            try:
+                hour, minute = map(int, health_time.split(":"))
+                from src.services.healthcheck_service import run_healthcheck
+
+                def _healthcheck_job():
+                    results, ok = run_healthcheck()
+                    status = "OK" if ok else "WARN/FAIL"
+                    logger.info(f"[Healthcheck] {status} ({len(results)} items)")
+
+                self.add_job(
+                    job_id='healthcheck',
+                    func=_healthcheck_job,
+                    hour=hour,
+                    minute=minute,
+                    check_market_day=False,
+                )
+            except Exception as e:
+                logger.warning(f"healthcheck 스케줄 설정 실패: {e}")
+
+        # Optional: 파이프라인 스케줄 (환경변수 지정 시)
+        pipeline_time = os.getenv("SCHEDULE_PIPELINE_TIME", "").strip()
+        if pipeline_time:
+            try:
+                hour, minute = map(int, pipeline_time.split(":"))
+                days = int(os.getenv("SCHEDULE_PIPELINE_DAYS", "20"))
+                from src.cli.commands import run_pipeline
+
+                self.add_job(
+                    job_id='pipeline_run',
+                    func=lambda: run_pipeline(days),
+                    hour=hour,
+                    minute=minute,
+                    check_market_day=False,
+                )
+            except Exception as e:
+                logger.warning(f"pipeline 스케줄 설정 실패: {e}")
         
         # 17:00 Git 자동 커밋
         self.add_job(
@@ -415,21 +468,6 @@ class ScreenerScheduler:
             except Exception:
                 result[job_id] = None
         return result
-        # 16:50 ?? ???? ??? (?? ?? ????)
-        try:
-            from src.services.account_service import sync_holdings_watchlist
-            self.add_job(
-                job_id='holdings_sync',
-                func=sync_holdings_watchlist,
-                hour=16,
-                minute=50,
-            )
-        except ImportError:
-            logger.warning("account_service ?? ?? - ???? ??? ??")
-
-
-
-
 def create_scheduler(blocking: bool = True) -> ScreenerScheduler:
     """스케줄러 생성 및 기본 설정"""
     scheduler = ScreenerScheduler(blocking=blocking)
