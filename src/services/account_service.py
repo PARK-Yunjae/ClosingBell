@@ -109,9 +109,9 @@ def sync_holdings_watchlist() -> Dict[str, object]:
             (code,),
         )
         if row:
-            prev_status = row.get("status", "")
-            prev_qty = int(row.get("last_qty") or 0)
-            prev_price = float(row.get("last_price") or 0.0)
+            prev_status = row["status"] if "status" in row.keys() else ""
+            prev_qty = int(row["last_qty"] if "last_qty" in row.keys() and row["last_qty"] is not None else 0)
+            prev_price = float(row["last_price"] if "last_price" in row.keys() and row["last_price"] is not None else 0.0)
             if prev_status != "holding" or prev_qty != item.get("qty", 0) or prev_price != item.get("price", 0.0):
                 changed_codes.add(code)
             db.execute(
