@@ -3,21 +3,31 @@
 """
 
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
+
+try:
+    import pandas as pd
+except Exception:
+    pd = None
 
 try:
     from src.config.app_config import (
         APP_FULL_VERSION,
         FOOTER_DASHBOARD,
         SIDEBAR_TITLE,
+        OHLCV_DIR,
+        OHLCV_FULL_DIR,
     )
 except ImportError:
     APP_FULL_VERSION = "ClosingBell v9.0"
     FOOTER_DASHBOARD = APP_FULL_VERSION
     SIDEBAR_TITLE = "ClosingBell"
+    OHLCV_DIR = None
+    OHLCV_FULL_DIR = None
 
 
 def _sidebar_nav():
@@ -60,6 +70,65 @@ def _load_report_sections(report_path: Path) -> Dict[str, List[str]]:
             continue
         sections[current].append(line)
     return sections
+
+
+def _resolve_ohlcv_path(code: str) -> Optional[Path]:
+    candidates: List[Path] = []
+    bases: List[Path] = []
+
+    for base in [OHLCV_FULL_DIR, OHLCV_DIR]:
+        if base and base not in bases:
+            bases.append(base)
+
+    try:
+        from src.config.backfill_config import get_backfill_config
+        cfg = get_backfill_config()
+        base = cfg.get_active_ohlcv_dir()
+        if base and base not in bases:
+            bases.append(base)
+    except Exception:
+        pass
+
+    for base in bases:
+        candidates.append(Path(base) / f"{code}.csv")
+        candidates.append(Path(base) / f"A{code}.csv")
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _load_ohlcv_df(code: str) -> Tuple[Optional["pd.DataFrame"], str]:
+    if pd is None:
+        return None, "pandas not available"
+
+    path = _resolve_ohlcv_path(code)
+    if path:
+        try:
+            from src.services.backfill.data_loader import load_single_ohlcv
+            df = load_single_ohlcv(path)
+            if df is not None and not df.empty:
+                return df, str(path)
+        except Exception:
+            pass
+
+    # Online fallback (FDR)
+    try:
+        import FinanceDataReader as fdr
+        end = datetime.now().date()
+        start = end - timedelta(days=365 * 2)
+        df = fdr.DataReader(code, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
+        if df is not None and not df.empty:
+            df = df.reset_index()
+            df.columns = [c.lower() for c in df.columns]
+            if "date" not in df.columns and "index" in df.columns:
+                df = df.rename(columns={"index": "date"})
+            return df, "FDR"
+    except Exception:
+        pass
+
+    return None, "not found"
 
 
 st.set_page_config(
@@ -118,7 +187,6 @@ if run and not dashboard_only:
         st.error("종목코드를 숫자 6자리로 입력해주세요.")
     else:
         from src.services.analysis_report import generate_analysis_report
-
         result = generate_analysis_report(code, full=full)
         st.success(f"리포트 생성 완료: {result.report_path}")
         st.caption(f"요약: {result.summary}")
@@ -135,14 +203,40 @@ if report_path and report_path.exists():
     st.subheader(f"리포트: {report_path.name}")
     sections = _load_report_sections(report_path)
 
-    # Key sections on top
-    for key in ["Holdings Snapshot", "OHLCV Summary", "Volume Profile", "Broker Flow", "DART Company Profile"]:
-        if key in sections:
-            st.markdown(f"### {key}")
-            st.markdown("\n".join(sections[key]).strip() or "-")
+    tabs = st.tabs(["요약", "차트", "리포트"])
 
-    # Full report
-    with st.expander("전체 리포트 보기", expanded=False):
+    with tabs[0]:
+        for key in ["Holdings Snapshot", "OHLCV Summary", "Volume Profile", "Broker Flow", "DART Company Profile"]:
+            if key in sections:
+                st.markdown(f"### {key}")
+                st.markdown("\n".join(sections[key]).strip() or "-")
+
+    with tabs[1]:
+        if code and code.isdigit():
+            df, source = _load_ohlcv_df(code)
+            if df is None or df.empty:
+                st.warning(f"차트 데이터를 불러오지 못했습니다. ({source})")
+            else:
+                df = df.sort_values("date").reset_index(drop=True)
+                last = df.iloc[-1]
+                prev = df.iloc[-2] if len(df) > 1 else None
+                change_pct = 0.0
+                if prev is not None and float(prev["close"]) > 0:
+                    change_pct = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100.0
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("종가", f"{int(last['close']):,}", f"{change_pct:+.2f}%")
+                c2.metric("고가", f"{int(last['high']):,}")
+                c3.metric("저가", f"{int(last['low']):,}")
+                c4.metric("거래량", f"{int(last['volume']):,}")
+
+                view = df.tail(200).set_index("date")
+                st.markdown("#### 종가 추이")
+                st.line_chart(view["close"])
+                st.markdown("#### 거래량")
+                st.bar_chart(view["volume"])
+
+    with tabs[2]:
         st.markdown(report_path.read_text(encoding="utf-8"))
 else:
     st.warning("리포트가 없습니다. 스케줄러 실행 후 확인하세요.")
