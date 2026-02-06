@@ -16,6 +16,8 @@ from src.config.backfill_config import get_backfill_config
 from src.domain.models import DailyPrice, StockData
 from src.domain.score_calculator import ScoreCalculatorV5
 from src.services.backfill.data_loader import load_single_ohlcv
+from src.services.account_service import get_holdings_watchlist
+from src.services.dart_service import get_dart_service
 from src.analyzers.volume_profile import analyze_volume_profile, VolumeProfileSummary
 from src.analyzers.technical_analyzer import analyze_technical
 from src.analyzers.broker_tracker import analyze_broker_flow
@@ -111,6 +113,17 @@ def _calc_trading_value(last_row: pd.Series) -> float:
     return (float(last_row["close"]) * float(last_row["volume"])) / 100_000_000
 
 
+def _get_holding_row(code: str) -> Optional[dict]:
+    try:
+        rows = get_holdings_watchlist()
+        for row in rows:
+            if row.get("stock_code") == code:
+                return row
+    except Exception:
+        return None
+    return None
+
+
 def generate_stock_report(stock_code: str, full: bool = False) -> StockReportResult:
     code = str(stock_code).zfill(6)
     today = date.today()
@@ -125,6 +138,18 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     lines.append(f"- Generated: {now.strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"- OHLCV Source: {data_path if data_path else 'not found'}")
     lines.append("")
+
+    # Holdings Snapshot (if available)
+    holding = _get_holding_row(code)
+    if holding:
+        lines.append("## Holdings Snapshot")
+        lines.append(f"- Status: {holding.get('status', '-')}")
+        qty = holding.get("last_qty", 0) or 0
+        price = holding.get("last_price", 0.0) or 0.0
+        lines.append(f"- Qty: {int(qty):,} | Avg Price: {float(price):,.2f}")
+        lines.append(f"- First Seen: {holding.get('first_seen', '-')}")
+        lines.append(f"- Last Seen: {holding.get('last_seen', '-')}")
+        lines.append("")
 
     # OHLCV Summary
     lines.append("## OHLCV Summary")
@@ -248,6 +273,20 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
             lines.append(f"  - {date_str} {title}".strip())
     else:
         lines.append("- Disclosures: N/A")
+
+    # DART Company Profile (Full)
+    lines.append("")
+    lines.append("## DART Company Profile")
+    try:
+        dart = get_dart_service()
+        profile_text = dart.format_full_profile_for_ai(code, stock_name=code)
+        if profile_text:
+            for line in profile_text.splitlines():
+                lines.append(line)
+        else:
+            lines.append("- DART: N/A")
+    except Exception:
+        lines.append("- DART: N/A")
 
     # Entry/Exit Plan
     lines.append("")
