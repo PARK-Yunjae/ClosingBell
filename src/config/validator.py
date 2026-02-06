@@ -119,7 +119,7 @@ def validate_discord_settings(result: ValidationResult):
         )
     elif not re.match(r'^https://discord\.com/api/webhooks/\d+/.+$', webhook_url):
         result.add_warning(
-            f"DISCORD_WEBHOOK_URL 형식이 올바르지 않습니다: {webhook_url[:50]}..."
+            "DISCORD_WEBHOOK_URL 형식이 올바르지 않습니다: <REDACTED>"
         )
 
     if layout not in {"compact", "detailed"}:
@@ -283,28 +283,6 @@ def validate_settings(raise_on_error: bool = True) -> ValidationResult:
 def print_settings_summary():
     """현재 설정 요약 출력"""
     print("\n" + "=" * 60)
-
-
-def run_cli_validation(validate_only: bool, run_test: bool) -> bool:
-    """CLI 실행 시 설정 검증 공통 처리.
-
-    Returns:
-        True: 계속 진행
-        False: 검증 출력 후 종료
-    """
-    if validate_only or run_test:
-        result = validate_settings(raise_on_error=False)
-        if validate_only:
-            print_settings_summary()
-            if result.valid:
-                print("\n설정 검증 완료")
-                return False
-            print("\n설정 검증 실패")
-            raise ConfigValidationError(result)
-        return True
-
-    validate_settings(raise_on_error=True)
-    return True
     print("현재 설정 요약")
     print("=" * 60)
     
@@ -332,6 +310,28 @@ def run_cli_validation(validate_only: bool, run_test: bool) -> bool:
     print(f"  로그 레벨: {settings.log_level}")
     
     print("\n" + "=" * 60)
+
+
+def run_cli_validation(validate_only: bool, run_test: bool) -> bool:
+    """CLI 실행 시 설정 검증 공통 처리.
+
+    Returns:
+        True: 계속 진행
+        False: 검증 출력 후 종료
+    """
+    if validate_only or run_test:
+        result = validate_settings(raise_on_error=False)
+        if validate_only:
+            print_settings_summary()
+            if result.valid:
+                print("\n설정 검증 완료")
+                return False
+            print("\n설정 검증 실패")
+            raise ConfigValidationError(result)
+        return True
+
+    validate_settings(raise_on_error=True)
+    return True
 
 
 if __name__ == "__main__":

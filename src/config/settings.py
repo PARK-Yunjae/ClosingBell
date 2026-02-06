@@ -270,9 +270,9 @@ settings = load_settings()
 
 if __name__ == "__main__":
     # 설정 확인용
-    print(f"Kiwoom App Key: {settings.kiwoom.app_key[:10] if settings.kiwoom.app_key else 'N/A'}...")
+    print(f"Kiwoom App Key: {'설정됨' if settings.kiwoom.app_key else '미설정'}")
     print(f"Kiwoom Base URL: {settings.kiwoom.base_url}")
-    print(f"Discord Webhook: {settings.discord.webhook_url[:50] if settings.discord.webhook_url else 'N/A'}...")
+    print(f"Discord Webhook: {'설정됨' if settings.discord.webhook_url else '미설정'}")
     print(f"DB Path: {settings.database.path}")
     print(f"Min Trading Value: {settings.screening.min_trading_value}억원")
     print(f"API Call Interval: {settings.screening.api_call_interval}초")
