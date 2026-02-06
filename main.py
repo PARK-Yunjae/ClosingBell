@@ -704,7 +704,7 @@ def main():
         run_holdings_sync_cli()
         return
     if args.analyze_holdings:
-        run_holdings_analysis_cli(full=args.full)
+        run_holdings_analysis_cli(full=True)
         return
     
     # v6.3.3: 유니버스 비교 디버그
