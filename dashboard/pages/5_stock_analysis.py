@@ -258,6 +258,21 @@ def _parse_technical(lines: List[str]) -> Dict[str, str]:
     return result
 
 
+def _parse_holdings(lines: List[str]) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for line in lines:
+        text = _fix_text(line.strip())
+        if text.startswith("- Status:"):
+            result["status"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- Qty:"):
+            result["qty"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- First Seen:"):
+            result["first_seen"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- Last Seen:"):
+            result["last_seen"] = text.split(":", 1)[-1].strip()
+    return result
+
+
 def _interpret_cci(value: Optional[float]) -> str:
     if value is None:
         return "-"
@@ -276,6 +291,25 @@ def _interpret_rsi(value: Optional[float]) -> str:
     if value <= 30:
         return "과매도 경향"
     return "중립 구간"
+
+
+def _classify_news(items: List[str]) -> List[Dict[str, str]]:
+    positive = ["호재", "수주", "계약", "공급", "실적", "흑자", "턴어라운드", "신제품", "기술", "특허", "승인", "상승"]
+    negative = ["적자", "손실", "경고", "조사", "거래정지", "상장폐지", "소송", "리콜", "하락", "유상증자", "전환사채"]
+    out: List[Dict[str, str]] = []
+    for item in items:
+        tag = "중립"
+        color = "#e0e0e0"
+        for key in positive:
+            if key in item:
+                tag, color = "긍정", "#81c784"
+                break
+        for key in negative:
+            if key in item:
+                tag, color = "주의", "#ffb74d"
+                break
+        out.append({"text": item, "tag": tag, "color": color})
+    return out
 
 
 def _highlight_disclosures(disclosures: List[str]) -> List[Dict[str, str]]:
@@ -444,6 +478,7 @@ with col1:
     except Exception:
         holdings = []
 
+    holdings_map = {h.get("stock_code"): h for h in holdings if h.get("stock_code")}
     holding_codes = [
         f"{h.get('stock_code')} {h.get('stock_name','')}".strip() for h in holdings
     ]
@@ -503,6 +538,26 @@ if report_path and report_path.exists():
             st.markdown(f"### {_section_title('Easy Summary')}")
             st.markdown(_lines_to_markdown(sections["Easy Summary"]))
             st.caption("쉬운 요약은 숫자 지표를 일상 언어로 풀어쓴 내용입니다.")
+
+        if code and code in holdings_map:
+            h = holdings_map[code]
+            st.markdown("### 보유 정보")
+            qty = int(h.get("last_qty") or 0)
+            avg_price = float(h.get("last_price") or 0.0)
+            df_hold, _ = _load_ohlcv_df(code)
+            last_price = None
+            if df_hold is not None and not df_hold.empty:
+                last_price = float(df_hold.sort_values("date").iloc[-1]["close"])
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("보유수량", f"{qty:,}")
+            c2.metric("평균단가", f"{avg_price:,.0f}" if avg_price else "-")
+            c3.metric("현재가(종가)", f"{last_price:,.0f}" if last_price else "-")
+            if qty and avg_price and last_price:
+                profit = (last_price - avg_price) * qty
+                rate = (last_price / avg_price - 1) * 100
+                c4.metric("평가손익", f"{profit:,.0f}", f"{rate:+.1f}%")
+            else:
+                c4.metric("평가손익", "-")
 
         for key in ["Holdings Snapshot", "OHLCV Summary", "Volume Profile", "Broker Flow"]:
             if key in sections:
@@ -568,6 +623,8 @@ if report_path and report_path.exists():
             st.markdown(f"### {_section_title('News & Disclosures')}")
             news, disclosures = _parse_news_disclosures(sections["News & Disclosures"])
             _render_cards(news[:12], "뉴스")
+            news_badges = _classify_news(news[:12])
+            _render_badge_cards(news_badges[:12], "뉴스 분류")
             badges = _highlight_disclosures(disclosures)
             _render_badge_cards(badges[:12], "공시 하이라이트")
             _render_cards(disclosures[:12], "공시 전체")
@@ -649,6 +706,20 @@ if report_path and report_path.exists():
                             fig.add_hline(y=support, line_color="#2ecc71", line_dash="dot", annotation_text="지지", annotation_position="top left")
                         if resistance:
                             fig.add_hline(y=resistance, line_color="#e74c3c", line_dash="dot", annotation_text="저항", annotation_position="top left")
+
+                        # Highlight top volume bands on chart
+                        if vp.bands:
+                            top_bands = sorted(vp.bands, key=lambda b: b.pct, reverse=True)[:3]
+                            colors = ["rgba(255, 193, 7, 0.18)", "rgba(33, 150, 243, 0.12)", "rgba(76, 175, 80, 0.10)"]
+                            for idx, band in enumerate(top_bands):
+                                fig.add_hrect(
+                                    y0=band.price_low,
+                                    y1=band.price_high,
+                                    fillcolor=colors[idx % len(colors)],
+                                    line_width=0,
+                                    annotation_text=f"매물대 {band.pct:.1f}%",
+                                    annotation_position="top left",
+                                )
                     except Exception:
                         pass
 
@@ -682,6 +753,9 @@ if report_path and report_path.exists():
                                 height=500,
                             )
                             st.plotly_chart(vp_fig, use_container_width=True)
+                            top_text = ", ".join(vp_df.tail(3)["band"].tolist())
+                            if top_text:
+                                st.caption(f"상위 매물대 구간: {top_text}")
                     except Exception:
                         st.caption("매물대 차트 계산 실패")
 
