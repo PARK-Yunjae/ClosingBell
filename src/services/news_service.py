@@ -483,9 +483,9 @@ def collect_news_for_candidates(
         logger.warning("⚠️ Gemini API 키 없음 - 요약 없이 진행")
         print("⚠️ Gemini API 키 없음 - 요약 없이 진행됩니다")
     else:
-        print(f"✅ Gemini API: {GEMINI_API_KEY[:12]}...")
+        print("✅ Gemini API: 설정됨")
     
-    print(f"✅ 네이버 API: {NAVER_CLIENT_ID[:8]}...")
+    print("✅ 네이버 API: 설정됨")
     
     candidates_repo = get_nomad_candidates_repository()
     
