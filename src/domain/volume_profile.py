@@ -243,19 +243,27 @@ def calc_volume_profile_from_csv(
     n_bands: int = 10,
 ) -> VolumeProfileResult:
     """
-    CSV 파일에서 직접 Volume Profile 계산.
+    CSV ?????? ??? Volume Profile ???.
     
     Args:
-        stock_code: 종목코드 (e.g., "090710")
-        current_price: 현재가
-        ohlcv_dir: OHLCV CSV 디렉토리 경로
-        n_days: 분석 기간
-        n_bands: 밴드 수
+        stock_code: ?????? (e.g., "090710")
+        current_price: ?????
+        ohlcv_dir: OHLCV CSV ?????? ???
+        n_days: ??? ???
+        n_bands: ??? ??
     """
     csv_path = ohlcv_dir / f"{stock_code}.csv"
-    
+
     if not csv_path.exists():
-        logger.debug(f"VP: {stock_code} CSV 없음")
+        logger.debug(f"VP: {stock_code} CSV ???")
+        return _empty_result(current_price, n_days)
+
+    try:
+        df = pd.read_csv(csv_path, parse_dates=["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+        return calc_volume_profile(df, current_price, n_days, n_bands)
+    except Exception as e:
+        logger.warning(f"VP: {stock_code} CSV ??? ???: {e}")
         return _empty_result(current_price, n_days)
 
 
