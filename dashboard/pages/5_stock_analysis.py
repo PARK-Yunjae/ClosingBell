@@ -3,6 +3,7 @@
 """
 
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -178,6 +179,51 @@ def _parse_news_disclosures(lines: List[str]) -> Tuple[List[str], List[str]]:
     return news, disclosures
 
 
+def _parse_technical(lines: List[str]) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for line in lines:
+        text = line.strip()
+        if text.startswith("- CCI("):
+            result["CCI"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- RSI("):
+            result["RSI"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- MACD"):
+            result["MACD"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- MA:"):
+            result["MA"] = text.split(":", 1)[-1].strip()
+        elif text.startswith("- Bollinger"):
+            result["BOLL"] = text.split(":", 1)[-1].strip()
+    return result
+
+
+def _highlight_disclosures(disclosures: List[str]) -> List[str]:
+    keywords = [
+        "대량보유", "임원", "주요주주", "최대주주",
+        "자기주식", "유상증자", "전환사채", "CB", "BW", "신주인수권",
+    ]
+    highlights = []
+    for item in disclosures:
+        if any(k in item for k in keywords):
+            highlights.append(item)
+    return highlights
+
+
+def _render_cards(items: List[str], title: str):
+    if not items:
+        st.caption(f"{title}: 없음")
+        return
+    st.markdown(f"**{title}**")
+    for item in items:
+        st.markdown(
+            f"""
+            <div style="padding:10px;border:1px solid #e8e8e8;border-radius:10px;margin:6px 0;background:#fafafa;">
+              {item}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 st.set_page_config(
     page_title="종목 심층 분석",
     page_icon="🧾",
@@ -265,19 +311,25 @@ if report_path and report_path.exists():
                 st.markdown(f"### {key}")
                 st.markdown(_lines_to_markdown(sections[key]))
 
+        if "Technical Analysis" in sections:
+            tech = _parse_technical(sections["Technical Analysis"])
+            if tech:
+                st.markdown("### 기술 지표 요약")
+                cols = st.columns(3)
+                cols[0].metric("CCI(14)", tech.get("CCI", "-"))
+                cols[1].metric("RSI(14)", tech.get("RSI", "-"))
+                cols[2].metric("MACD", tech.get("MACD", "-"))
+                st.caption(f"MA: {tech.get('MA', '-')}")
+                st.caption(f"Bollinger: {tech.get('BOLL', '-')}")
+
         if "News & Disclosures" in sections:
             st.markdown("### 뉴스 & 공시")
             news, disclosures = _parse_news_disclosures(sections["News & Disclosures"])
-            if news:
-                st.markdown("**뉴스**")
-                st.markdown(_lines_to_markdown([f"- {n}" for n in news]))
-            else:
-                st.caption("뉴스 없음")
-            if disclosures:
-                st.markdown("**공시**")
-                st.markdown(_lines_to_markdown([f"- {d}" for d in disclosures]))
-            else:
-                st.caption("공시 없음")
+            _render_cards(news[:8], "뉴스")
+            highlights = _highlight_disclosures(disclosures)
+            if highlights:
+                _render_cards(highlights[:8], "공시 하이라이트")
+            _render_cards(disclosures[:8], "공시 전체")
 
         if "DART Company Profile" in sections:
             with st.expander("기업정보 / 재무 / 최대주주 / 감사의견", expanded=False):
@@ -301,6 +353,8 @@ if report_path and report_path.exists():
                 c2.metric("고가", f"{int(last['high']):,}")
                 c3.metric("저가", f"{int(last['low']):,}")
                 c4.metric("거래량", f"{int(last['volume']):,}")
+
+                st.caption(f"차트 데이터 소스: {source}")
 
                 if go is None or make_subplots is None or pd is None:
                     view = df.tail(200).set_index("date")
@@ -329,9 +383,33 @@ if report_path and report_path.exists():
                         col=1,
                     )
                     fig.update_layout(height=600, xaxis_rangeslider_visible=False, showlegend=False)
+
+                    # Volume Profile lines
+                    try:
+                        from src.domain.volume_profile import calc_volume_profile
+                        vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
+                        if vp.poc_price:
+                            fig.add_hline(y=vp.poc_price, line_color="#ff6b6b", line_dash="dot", annotation_text="POC", annotation_position="top left")
+                        # support/resistance
+                        support = None
+                        resistance = None
+                        if vp.bands:
+                            below = [b for b in vp.bands if b.price_high <= float(last["close"])]
+                            above = [b for b in vp.bands if b.price_low >= float(last["close"])]
+                            if below:
+                                support = max(below, key=lambda b: b.pct).price_high
+                            if above:
+                                resistance = max(above, key=lambda b: b.pct).price_low
+                        if support:
+                            fig.add_hline(y=support, line_color="#2ecc71", line_dash="dot", annotation_text="지지", annotation_position="top left")
+                        if resistance:
+                            fig.add_hline(y=resistance, line_color="#e74c3c", line_dash="dot", annotation_text="저항", annotation_position="top left")
+                    except Exception:
+                        pass
+
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Volume Profile
+                    # Volume Profile distribution
                     try:
                         from src.domain.volume_profile import calc_volume_profile
                         vp = calc_volume_profile(df, current_price=float(last["close"]), n_days=60, n_bands=10)
