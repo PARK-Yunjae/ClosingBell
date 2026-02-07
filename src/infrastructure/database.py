@@ -670,6 +670,9 @@ class Database:
         # v6.0 마이그레이션 실행
         self.run_migration_v6()
         
+        # v9.1 마이그레이션 (눌림목 스캐너)
+        self.run_migration_v91_pullback()
+        
         logger.info("데이터베이스 초기화 완료")
     
     def run_migrations(self):
@@ -857,6 +860,82 @@ class Database:
             
         except Exception as e:
             logger.error(f"v8.0 마이그레이션 실패: {e}")
+            return False
+    
+    def run_migration_v91_pullback(self):
+        """v9.1 마이그레이션: 눌림목 스캐너 테이블"""
+        try:
+            tables = self.fetch_all(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+                ('volume_spikes',)
+            )
+            if len(tables) > 0:
+                logger.debug("v9.1 pullback 마이그레이션 스킵 (이미 적용됨)")
+                return True
+
+            logger.info("v9.1 마이그레이션 시작 (눌림목 스캐너)...")
+
+            self.execute_script("""
+                CREATE TABLE IF NOT EXISTS volume_spikes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT NOT NULL,
+                    stock_name TEXT NOT NULL,
+                    spike_date DATE NOT NULL,
+                    spike_volume INTEGER NOT NULL,
+                    volume_ma20 INTEGER DEFAULT 0,
+                    spike_ratio REAL DEFAULT 0,
+                    open_price REAL DEFAULT 0,
+                    high_price REAL DEFAULT 0,
+                    low_price REAL DEFAULT 0,
+                    close_price REAL DEFAULT 0,
+                    change_pct REAL DEFAULT 0,
+                    sector TEXT DEFAULT '',
+                    theme TEXT DEFAULT '',
+                    is_leading_sector INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'watching',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(spike_date, stock_code)
+                );
+                CREATE INDEX IF NOT EXISTS idx_spikes_date ON volume_spikes(spike_date);
+                CREATE INDEX IF NOT EXISTS idx_spikes_code ON volume_spikes(stock_code);
+                CREATE INDEX IF NOT EXISTS idx_spikes_status ON volume_spikes(status);
+
+                CREATE TABLE IF NOT EXISTS pullback_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT NOT NULL,
+                    stock_name TEXT NOT NULL,
+                    spike_date DATE NOT NULL,
+                    signal_date DATE NOT NULL,
+                    days_after INTEGER DEFAULT 0,
+                    close_price REAL DEFAULT 0,
+                    open_price REAL DEFAULT 0,
+                    spike_high REAL DEFAULT 0,
+                    drop_from_high_pct REAL DEFAULT 0,
+                    today_volume INTEGER DEFAULT 0,
+                    spike_volume INTEGER DEFAULT 0,
+                    vol_decrease_pct REAL DEFAULT 0,
+                    ma5 REAL DEFAULT 0,
+                    ma20 REAL DEFAULT 0,
+                    ma_support TEXT DEFAULT '',
+                    ma_distance_pct REAL DEFAULT 0,
+                    is_negative_candle INTEGER DEFAULT 0,
+                    sector TEXT DEFAULT '',
+                    is_leading_sector INTEGER DEFAULT 0,
+                    has_recent_news INTEGER DEFAULT 0,
+                    signal_strength TEXT DEFAULT '',
+                    reason TEXT DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(signal_date, stock_code)
+                );
+                CREATE INDEX IF NOT EXISTS idx_pullback_signal_date ON pullback_signals(signal_date);
+                CREATE INDEX IF NOT EXISTS idx_pullback_spike_date ON pullback_signals(spike_date);
+            """)
+
+            logger.info("v9.1 마이그레이션 완료 (눌림목 스캐너)")
+            return True
+
+        except Exception as e:
+            logger.error(f"v9.1 pullback 마이그레이션 실패: {e}")
             return False
     
     def update_next_day_is_top3(self):

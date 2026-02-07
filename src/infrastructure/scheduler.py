@@ -361,6 +361,32 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("broker_ai_service 모듈 없음 - 거래원 AI 분석 스킵")
 
+        # 16:05 눌림목 스캐너 - 거래량 폭발 감지
+        # ※ OHLCV(16:00) 이후 실행
+        try:
+            from src.services.pullback_scanner import run_volume_spike_scan
+            self.add_job(
+                job_id='volume_spike_scan',
+                func=run_volume_spike_scan,
+                hour=16,
+                minute=5,
+            )
+        except ImportError:
+            logger.warning("pullback_scanner 모듈 없음 - 거래량 폭발 스킵")
+
+        # 14:55 눌림목 시그널 + 디스코드 알림 (실시간 API)
+        # ※ 장마감 5분전, 감시풀 종목 키움 API 실시간 조회 → 종가 베팅 판단
+        try:
+            from src.services.pullback_scanner import run_pullback_scan
+            self.add_job(
+                job_id='pullback_scan',
+                func=run_pullback_scan,
+                hour=14,
+                minute=55,
+            )
+        except ImportError:
+            logger.warning("pullback_scanner 모듈 없음 - 눌림목 스캔 스킵")
+
         # 16:50 보유종목 동기화 + 전체 보유종목 분석 리포트
         try:
             from src.services.account_service import sync_holdings_watchlist

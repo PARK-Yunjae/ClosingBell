@@ -11,6 +11,7 @@ NAV_ITEMS = [
     ("pages/4_broker_flow.py", "💰 거래원 수급"),
     ("pages/5_stock_analysis.py", "🧾 종목 심층 분석"),
     ("pages/6_holdings_watch.py", "📌 보유종목 관찰"),
+    ("pages/7_pullback.py", "📉 눌림목 스캐너"),
 ]
 
 # Streamlit 기본 네비게이션 강제 숨김 CSS

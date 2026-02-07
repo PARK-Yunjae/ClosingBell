@@ -2562,6 +2562,147 @@ def get_broker_signal_repository() -> BrokerSignalRepository:
     return BrokerSignalRepository()
 
 
+# ============================================================
+# 눌림목 스캐너 Repository (v9.1)
+# ============================================================
+
+class PullbackRepository:
+    """눌림목 스캐너 데이터 저장/조회"""
+
+    def __init__(self):
+        from src.infrastructure.database import get_database
+        self.db = get_database()
+
+    # ── 거래량 폭발 ──
+
+    def save_spike(self, spike) -> bool:
+        """거래량 폭발 저장 (UPSERT)"""
+        try:
+            from dataclasses import asdict
+            d = asdict(spike) if hasattr(spike, '__dataclass_fields__') else spike
+            self.db.execute("""
+                INSERT INTO volume_spikes
+                    (stock_code, stock_name, spike_date, spike_volume, volume_ma20,
+                     spike_ratio, open_price, high_price, low_price, close_price,
+                     change_pct, sector, theme, is_leading_sector)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(spike_date, stock_code) DO UPDATE SET
+                    stock_name=excluded.stock_name,
+                    spike_volume=excluded.spike_volume,
+                    volume_ma20=excluded.volume_ma20,
+                    spike_ratio=excluded.spike_ratio,
+                    open_price=excluded.open_price,
+                    high_price=excluded.high_price,
+                    low_price=excluded.low_price,
+                    close_price=excluded.close_price,
+                    change_pct=excluded.change_pct
+            """, (
+                d['stock_code'], d['stock_name'], d['spike_date'],
+                d['spike_volume'], d['volume_ma20'], d['spike_ratio'],
+                d['open_price'], d['high_price'], d['low_price'], d['close_price'],
+                d['change_pct'], d.get('sector', ''), d.get('theme', ''),
+                int(d.get('is_leading_sector', False)),
+            ))
+            return True
+        except Exception as e:
+            logger.error(f"volume_spikes 저장 실패: {e}")
+            return False
+
+    def get_active_spikes(self, target_date, watch_days: int = 3) -> list:
+        """감시 중인 폭발 종목 조회 (최근 N일 이내)"""
+        from datetime import timedelta
+        cutoff = (target_date - timedelta(days=watch_days + 2)).strftime("%Y-%m-%d")
+        target_str = target_date.strftime("%Y-%m-%d")
+        return self.db.fetch_all("""
+            SELECT * FROM volume_spikes
+            WHERE spike_date >= ? AND spike_date < ?
+              AND status = 'watching'
+            ORDER BY spike_ratio DESC
+        """, (cutoff, target_str))
+
+    def get_spikes_by_date(self, spike_date: str) -> list:
+        """특정 날짜의 거래량 폭발 조회"""
+        return self.db.fetch_all(
+            "SELECT * FROM volume_spikes WHERE spike_date = ? ORDER BY spike_ratio DESC",
+            (spike_date,)
+        )
+
+    def get_recent_spikes(self, days: int = 7) -> list:
+        """최근 N일간 거래량 폭발 조회"""
+        return self.db.fetch_all("""
+            SELECT * FROM volume_spikes
+            WHERE spike_date >= date('now', ? || ' days')
+            ORDER BY spike_date DESC, spike_ratio DESC
+        """, (f"-{days}",))
+
+    # ── 눌림목 시그널 ──
+
+    def save_signal(self, signal) -> bool:
+        """눌림목 시그널 저장 (UPSERT)"""
+        try:
+            from dataclasses import asdict
+            d = asdict(signal) if hasattr(signal, '__dataclass_fields__') else signal
+            self.db.execute("""
+                INSERT INTO pullback_signals
+                    (stock_code, stock_name, spike_date, signal_date, days_after,
+                     close_price, open_price, spike_high, drop_from_high_pct,
+                     today_volume, spike_volume, vol_decrease_pct,
+                     ma5, ma20, ma_support, ma_distance_pct,
+                     is_negative_candle, sector, is_leading_sector, has_recent_news,
+                     signal_strength, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(signal_date, stock_code) DO UPDATE SET
+                    days_after=excluded.days_after,
+                    close_price=excluded.close_price,
+                    vol_decrease_pct=excluded.vol_decrease_pct,
+                    ma_support=excluded.ma_support,
+                    signal_strength=excluded.signal_strength,
+                    reason=excluded.reason
+            """, (
+                d['stock_code'], d['stock_name'], d['spike_date'], d['signal_date'],
+                d['days_after'], d['close_price'], d['open_price'], d['spike_high'],
+                d['drop_from_high_pct'], d['today_volume'], d['spike_volume'],
+                d['vol_decrease_pct'], d['ma5'], d['ma20'], d['ma_support'],
+                d['ma_distance_pct'], int(d['is_negative_candle']),
+                d.get('sector', ''), int(d.get('is_leading_sector', False)),
+                int(d.get('has_recent_news', False)),
+                d['signal_strength'], d['reason'],
+            ))
+            return True
+        except Exception as e:
+            logger.error(f"pullback_signals 저장 실패: {e}")
+            return False
+
+    def get_signals_by_date(self, signal_date: str) -> list:
+        """특정 날짜의 눌림목 시그널 조회"""
+        return self.db.fetch_all(
+            "SELECT * FROM pullback_signals WHERE signal_date = ? ORDER BY signal_strength, vol_decrease_pct",
+            (signal_date,)
+        )
+
+    def get_recent_signals(self, days: int = 7) -> list:
+        """최근 N일간 눌림목 시그널 조회"""
+        return self.db.fetch_all("""
+            SELECT * FROM pullback_signals
+            WHERE signal_date >= date('now', ? || ' days')
+            ORDER BY signal_date DESC, signal_strength, vol_decrease_pct
+        """, (f"-{days}",))
+
+    def get_signals_with_spikes(self, days: int = 7) -> list:
+        """시그널 + 폭발 데이터 JOIN 조회"""
+        return self.db.fetch_all("""
+            SELECT p.*, v.spike_ratio, v.volume_ma20, v.change_pct as spike_change_pct
+            FROM pullback_signals p
+            LEFT JOIN volume_spikes v ON p.stock_code = v.stock_code AND p.spike_date = v.spike_date
+            WHERE p.signal_date >= date('now', ? || ' days')
+            ORDER BY p.signal_date DESC, p.signal_strength, p.vol_decrease_pct
+        """, (f"-{days}",))
+
+
+def get_pullback_repository() -> PullbackRepository:
+    return PullbackRepository()
+
+
 if __name__ == "__main__":
     # 테스트
     from src.infrastructure.database import init_database
