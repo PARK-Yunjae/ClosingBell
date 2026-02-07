@@ -220,9 +220,46 @@ def _draw_mini_chart(code: str, spike_date: str = "", signal_date: str = ""):
 @st.cache_resource
 def _get_repo():
     try:
+        from src.infrastructure.database import get_database
+        db = get_database()
+        # 테이블 없으면 자동 생성
+        try:
+            db.run_migration_v91_pullback()
+        except AttributeError:
+            # database.py에 메서드 없으면 직접 생성
+            db.execute("""CREATE TABLE IF NOT EXISTS volume_spikes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL, stock_name TEXT NOT NULL,
+                spike_date DATE NOT NULL, spike_volume INTEGER NOT NULL,
+                volume_ma20 INTEGER DEFAULT 0, spike_ratio REAL DEFAULT 0,
+                open_price REAL DEFAULT 0, high_price REAL DEFAULT 0,
+                low_price REAL DEFAULT 0, close_price REAL DEFAULT 0,
+                change_pct REAL DEFAULT 0, sector TEXT DEFAULT '',
+                theme TEXT DEFAULT '', is_leading_sector INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'watching',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(spike_date, stock_code))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS pullback_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT NOT NULL, stock_name TEXT NOT NULL,
+                spike_date DATE NOT NULL, signal_date DATE NOT NULL,
+                days_after INTEGER DEFAULT 0, close_price REAL DEFAULT 0,
+                open_price REAL DEFAULT 0, spike_high REAL DEFAULT 0,
+                drop_from_high_pct REAL DEFAULT 0, today_volume INTEGER DEFAULT 0,
+                spike_volume INTEGER DEFAULT 0, vol_decrease_pct REAL DEFAULT 0,
+                ma5 REAL DEFAULT 0, ma20 REAL DEFAULT 0,
+                ma_support TEXT DEFAULT '', ma_distance_pct REAL DEFAULT 0,
+                is_negative_candle INTEGER DEFAULT 0, sector TEXT DEFAULT '',
+                is_leading_sector INTEGER DEFAULT 0, has_recent_news INTEGER DEFAULT 0,
+                signal_strength TEXT DEFAULT '', reason TEXT DEFAULT '',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_date, stock_code))""")
+        except Exception:
+            pass
         from src.infrastructure.repository import get_pullback_repository
         return get_pullback_repository()
-    except Exception:
+    except Exception as e:
+        st.error(f"Repository 로드 실패: {e}")
         return None
 
 
