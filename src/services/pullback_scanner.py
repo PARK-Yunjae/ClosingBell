@@ -183,7 +183,7 @@ def _load_ohlcv_live(code: str, days: int = 30) -> Optional[pd.DataFrame]:
 
 
 def _load_stock_names() -> Dict[str, str]:
-    """종목 매핑 로드"""
+    """종목 매핑 로드 (stock_mapping.csv → FDR 폴백)"""
     names = {}
     try:
         from src.config.app_config import MAPPING_FILE
@@ -193,6 +193,22 @@ def _load_stock_names() -> Dict[str, str]:
                     names[str(row.get("code", "")).zfill(6)] = row.get("name", "")
     except Exception:
         pass
+
+    # FDR 폴백 (로컬 매핑이 부족할 때)
+    if len(names) < 100:
+        try:
+            import FinanceDataReader as fdr
+            for market in ["KOSPI", "KOSDAQ"]:
+                listing = fdr.StockListing(market)
+                if listing is not None and not listing.empty:
+                    for _, row in listing.iterrows():
+                        code = str(row.get("Code", "")).strip().zfill(6)
+                        name = str(row.get("Name", "")).strip()
+                        if code and name and code not in names:
+                            names[code] = name
+        except Exception:
+            pass
+
     return names
 
 
