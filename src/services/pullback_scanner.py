@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from dataclasses import dataclass, field, asdict
+from src.config.settings import settings
 from typing import List, Dict, Optional, Tuple
 
 import numpy as np
@@ -91,6 +92,7 @@ class PullbackSignal:
     # 종합
     signal_strength: str = ""  # "강", "중", "약"
     reason: str = ""
+    ai_comment: str = ""       # AI 분석 코멘트
 
 
 # ============================================================
@@ -650,6 +652,10 @@ def scan_pullback_signals(target_date: Optional[date] = None) -> List[PullbackSi
 
     logger.info(f"[pullback] 눌림목 시그널: {len(signals)}개")
 
+    # AI 분석
+    if signals:
+        _ai_analyze_signals(signals)
+
     # DB 저장
     _save_signals(signals)
 
@@ -672,6 +678,103 @@ def _save_signals(signals: List[PullbackSignal]):
         logger.info(f"[pullback] {len(signals)}개 시그널 저장 완료")
     except Exception as e:
         logger.error(f"[pullback] 시그널 저장 실패: {e}")
+
+
+# ============================================================
+# AI 분석 (Gemini)
+# ============================================================
+
+def _ai_analyze_signals(signals: List[PullbackSignal]):
+    """눌림목 시그널 전체에 대해 Gemini AI 분석 (배치)"""
+    try:
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            logger.info("[pullback-ai] API 키 없음 → 스킵")
+            return
+
+        from google import genai
+        client = genai.Client(api_key=api_key)
+    except ImportError:
+        logger.info("[pullback-ai] google-genai 미설치 → 스킵")
+        return
+    except Exception as e:
+        logger.warning(f"[pullback-ai] 초기화 실패: {e}")
+        return
+
+    for sig in signals:
+        try:
+            # 뉴스 헤드라인 (reason에서 추출)
+            news_hint = ""
+            if "📰" in sig.reason:
+                parts = sig.reason.split("📰")
+                if len(parts) > 1:
+                    news_hint = parts[-1].strip()
+
+            # 기업 프로필
+            company_info = _get_company_summary(sig.stock_code) or ""
+
+            prompt = f"""당신은 한국 주식 단타 트레이더 어시스턴트입니다.
+아래 눌림목(거감음봉) 시그널 종목을 분석하고, 매매 판단 코멘트를 작성하세요.
+
+## 종목 정보
+- 종목: {sig.stock_name} ({sig.stock_code})
+- 섹터: {sig.sector or '미분류'}
+- 주도섹터 여부: {'예' if sig.is_leading_sector else '아니오'}
+- 기업: {company_info or '정보없음'}
+
+## 차트 패턴
+- 거래량 폭발일: {sig.spike_date} (거래량 {sig.spike_volume:,}주)
+- 시그널일: {sig.signal_date} (D+{sig.days_after})
+- 종가: {sig.close_price:,.0f}원
+- 고점 대비 낙폭: -{sig.drop_from_high_pct:.1f}%
+- 거래량 감소율: {sig.vol_decrease_pct*100:.0f}% (폭발일 대비)
+- MA 지지: {sig.ma_support} (거리 {sig.ma_distance_pct:.1f}%)
+- 음봉 여부: {'예' if sig.is_negative_candle else '아니오'}
+- 시그널 강도: {sig.signal_strength}
+
+## 재료/뉴스
+- 최근 뉴스: {'있음' if sig.has_recent_news else '없음'}
+- 뉴스 힌트: {news_hint or '없음'}
+
+## 분석 요청
+유목민 거래량 단타법 기준으로:
+1. 이 종목의 눌림목 진입 매력도 (높음/보통/낮음)
+2. 핵심 이유 (1문장)
+3. 리스크 요인 (1문장)
+4. 추천 행동 (매수 대기 / 관망 / 패스)
+
+반드시 아래 형식으로만 응답하세요 (다른 텍스트 없이):
+매력도: (높음/보통/낮음)
+판단: (1-2문장 핵심 이유)
+리스크: (1문장)
+행동: (매수 대기 / 관망 / 패스)"""
+
+            response = client.models.generate_content(
+                model=settings.ai.model,
+                contents=prompt,
+                config={
+                    'max_output_tokens': settings.ai.max_output_tokens,
+                    'temperature': 0.2,
+                },
+            )
+
+            if response and response.text:
+                sig.ai_comment = response.text.strip()
+                logger.info(f"[pullback-ai] {sig.stock_name}: AI 분석 완료")
+            else:
+                sig.ai_comment = ""
+
+        except Exception as e:
+            logger.warning(f"[pullback-ai] {sig.stock_name} 분석 실패: {e}")
+            sig.ai_comment = ""
+
+        # API 레이트 리밋
+        import time
+        time.sleep(1)
 
 
 # ============================================================
@@ -716,8 +819,22 @@ def _notify_discord(signals: List[PullbackSignal]):
             if sig.sector:
                 sector_icon = "🔥" if sig.is_leading_sector else "📂"
                 info_parts.append(f"{sector_icon}{sig.sector}")
+
+            # 뉴스 헤드라인 (reason에서 추출)
             if sig.has_recent_news:
-                info_parts.append("📰재료살아있음")
+                headline = ""
+                if "📰" in sig.reason:
+                    parts = sig.reason.split("📰")
+                    raw = parts[-1].strip()
+                    # " | " 이후 잘라내기
+                    headline = raw.split(" | ")[0].strip() if raw else ""
+                if headline and headline != "재료없음":
+                    # 40자 제한
+                    if len(headline) > 40:
+                        headline = headline[:37] + "..."
+                    info_parts.append(f"📰{headline}")
+                else:
+                    info_parts.append("📰재료살아있음")
             else:
                 info_parts.append("📰재료없음")
 
@@ -728,6 +845,15 @@ def _notify_discord(signals: List[PullbackSignal]):
 
             if info_parts:
                 value_lines.append(" | ".join(info_parts))
+
+            # AI 분석 코멘트
+            if sig.ai_comment:
+                # 첫 3줄만 (매력도/판단/행동)
+                ai_lines = [l.strip() for l in sig.ai_comment.split('\n') if l.strip()]
+                ai_short = " | ".join(ai_lines[:3])
+                if len(ai_short) > 200:
+                    ai_short = ai_short[:197] + "..."
+                value_lines.append(f"🤖 {ai_short}")
 
             embed["fields"].append({
                 "name": f"{strength_emoji} {sig.stock_name} ({sig.stock_code})",

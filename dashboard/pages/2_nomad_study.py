@@ -4,7 +4,7 @@
 
 상한가/거래량천만 종목 분석
 - 네이버 금융 + DART 기업정보
-- Gemini 2.5 Flash AI 분석
+- Gemini AI 분석
 - 숫자 표현: 소수점 1자리
 """
 
@@ -29,9 +29,9 @@ try:
         MSG_COMPANY_INFO_AUTO,
     )
 except ImportError:
-    APP_VERSION = "v9.0"
+    APP_VERSION = "v9.1"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
-    AI_ENGINE = "Gemini 2.5 Flash"
+    AI_ENGINE = "Gemini AI"
     SIDEBAR_TITLE = "🔔 ClosingBell"
     FOOTER_NOMAD = f"{APP_FULL_VERSION} | 유목민 공부법"
     MSG_COMPANY_INFO_AUTO = "기업정보는 매일 자동 수집됩니다."
@@ -243,8 +243,9 @@ ROE: {candidate.get('roe', '-')}%
 """
         
         # 새 API 호출
+        from src.config.settings import settings as _settings
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=_settings.ai.model,
             contents=prompt
         )
         result_text = response.text

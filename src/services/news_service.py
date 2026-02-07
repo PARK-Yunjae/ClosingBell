@@ -28,6 +28,8 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 from html import unescape
 
+from src.config.settings import settings
+
 from src.services.http_utils import urlopen_with_retry, redact_url, mask_text
 
 from dotenv import load_dotenv
@@ -53,8 +55,6 @@ API_DELAY = 0.5          # API 호출 간격 (초)
 # Gemini 요약 ON/OFF (비용 절감용)
 # False로 설정하면 Gemini API 호출 없이 뉴스 제목+스니펫만 저장
 ENABLE_GEMINI_SUMMARY = False  # ⚠️ True면 하루 10만원+ 비용 발생 가능
-
-GEMINI_MODEL = "gemini-2.0-flash"  # 2.5-flash보다 저렴 (무료 티어 있음)
 
 # VI 관련 제외 키워드 (최근 이슈 제외)
 EXCLUDE_KEYWORDS = [
@@ -281,7 +281,7 @@ def summarize_with_gemini(stock_name: str, study_date: str, news_list: List[Dict
             try:
                 # max_output_tokens 설정으로 JSON 잘림 방지
                 response = client.models.generate_content(
-                    model=GEMINI_MODEL,
+                    model=settings.ai.model,
                     contents=prompt,
                     config={
                         'max_output_tokens': 4096,  # 뉴스 요약용 (여유있게)

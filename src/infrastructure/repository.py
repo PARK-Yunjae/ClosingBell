@@ -2649,15 +2649,16 @@ class PullbackRepository:
                      today_volume, spike_volume, vol_decrease_pct,
                      ma5, ma20, ma_support, ma_distance_pct,
                      is_negative_candle, sector, is_leading_sector, has_recent_news,
-                     signal_strength, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     signal_strength, reason, ai_comment)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(signal_date, stock_code) DO UPDATE SET
                     days_after=excluded.days_after,
                     close_price=excluded.close_price,
                     vol_decrease_pct=excluded.vol_decrease_pct,
                     ma_support=excluded.ma_support,
                     signal_strength=excluded.signal_strength,
-                    reason=excluded.reason
+                    reason=excluded.reason,
+                    ai_comment=excluded.ai_comment
             """, (
                 d['stock_code'], d['stock_name'], d['spike_date'], d['signal_date'],
                 d['days_after'], d['close_price'], d['open_price'], d['spike_high'],
@@ -2666,7 +2667,7 @@ class PullbackRepository:
                 d['ma_distance_pct'], int(d['is_negative_candle']),
                 d.get('sector', ''), int(d.get('is_leading_sector', False)),
                 int(d.get('has_recent_news', False)),
-                d['signal_strength'], d['reason'],
+                d['signal_strength'], d['reason'], d.get('ai_comment', ''),
             ))
             return True
         except Exception as e:

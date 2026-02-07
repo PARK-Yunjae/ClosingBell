@@ -142,7 +142,8 @@ class AIPipeline:
         load_dotenv()
         
         if model is None:
-            model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+            from src.config.settings import settings as _settings
+            model = os.getenv('GEMINI_MODEL', _settings.ai.model)
         
         self.model = model
         self._client = None 

@@ -869,11 +869,8 @@ class Database:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
                 ('volume_spikes',)
             )
-            if len(tables) > 0:
-                logger.debug("v9.1 pullback 마이그레이션 스킵 (이미 적용됨)")
-                return True
-
-            logger.info("v9.1 마이그레이션 시작 (눌림목 스캐너)...")
+            if len(tables) == 0:
+                logger.info("v9.1 마이그레이션 시작 (눌림목 스캐너)...")
 
             self.execute_script("""
                 CREATE TABLE IF NOT EXISTS volume_spikes (
@@ -937,6 +934,14 @@ class Database:
         except Exception as e:
             logger.error(f"v9.1 pullback 마이그레이션 실패: {e}")
             return False
+
+        finally:
+            # ai_comment 컬럼 추가 (기존 테이블 호환)
+            try:
+                self.execute("ALTER TABLE pullback_signals ADD COLUMN ai_comment TEXT DEFAULT ''")
+                logger.info("pullback_signals.ai_comment 컬럼 추가")
+            except Exception:
+                pass  # 이미 존재
     
     def update_next_day_is_top3(self):
         """기존 next_day_results 데이터의 is_top3 값 업데이트"""

@@ -327,11 +327,34 @@ else:
             info_cols = st.columns(3)
             sector_icon = "🔥 주도섹터" if is_leading else "📂 섹터"
             info_cols[0].caption(f"{sector_icon}: {sector or '-'}")
-            info_cols[1].caption(f"📰 재료: {'✅ 살아있음' if has_news else '❌ 없음'}")
+
+            # 뉴스 헤드라인 추출
+            news_label = "❌ 없음"
+            if has_news and reason and "📰" in reason:
+                headline = reason.split("📰")[-1].strip().split(" | ")[0].strip()
+                if headline and headline != "재료없음":
+                    if len(headline) > 30:
+                        headline = headline[:27] + "..."
+                    news_label = f"✅ {headline}"
+                else:
+                    news_label = "✅ 살아있음"
+            elif has_news:
+                news_label = "✅ 살아있음"
+            info_cols[1].caption(f"📰 재료: {news_label}")
             info_cols[2].caption(f"📅 폭발일: {spike_date}")
 
             if reason:
                 st.caption(f"💡 {reason}")
+
+            # AI 분석
+            ai_comment = row.get("ai_comment", "")
+            if ai_comment:
+                with st.container():
+                    st.markdown(f"🤖 **AI 분석**")
+                    for line in ai_comment.split('\n'):
+                        line = line.strip()
+                        if line:
+                            st.caption(line)
 
             # 미니 차트
             _draw_mini_chart(code, spike_date=spike_date, signal_date=date_str)

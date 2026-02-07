@@ -1,12 +1,10 @@
 """
-ClosingBell 대시보드
-====================
+ClosingBell ?�?�보??====================
 
-📊 감시종목 TOP5 20일 추적 + 유목민 공부법
-
-실행 방법:
+?�� 감시종목 TOP5 20??추적 + ?�목�?공�?�?
+?�행 방법:
 - cd dashboard && streamlit run app.py
-- 또는 run_dashboard.bat 실행
+- ?�는 run_dashboard.bat ?�행
 """
 
 import streamlit as st
@@ -16,7 +14,7 @@ from pathlib import Path
 from datetime import date, timedelta
 import pandas as pd
 
-# 전역상수 import
+# ?�역?�수 import
 try:
     from src.config.app_config import (
         APP_VERSION, APP_NAME, APP_FULL_VERSION, AI_ENGINE,
@@ -24,50 +22,49 @@ try:
     )
 except ImportError:
     # fallback
-    APP_VERSION = "v9.0"
+    APP_VERSION = "v9.1"
     APP_NAME = "ClosingBell"
     APP_FULL_VERSION = f"{APP_NAME} {APP_VERSION}"
     AI_ENGINE = "Gemini 2.5 Flash"
     FOOTER_DASHBOARD = APP_FULL_VERSION
-    SIDEBAR_TITLE = f"🔔 {APP_NAME}"
+    SIDEBAR_TITLE = f"?�� {APP_NAME}"
 
-# plotly import (Streamlit Cloud 호환)
+# plotly import (Streamlit Cloud ?�환)
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
-    st.error("⚠️ plotly 패키지를 찾을 수 없습니다. requirements.txt를 확인하세요.")
+    st.error("?�️ plotly ?�키지�?찾을 ???�습?�다. requirements.txt�??�인?�세??")
 
-# Streamlit Cloud 모드 (API 키 불필요)
+# Streamlit Cloud 모드 (API ??불필??
 os.environ["DASHBOARD_ONLY"] = "true"
 
-# 프로젝트 루트 추가 (dashboard 폴더에서 실행해도 동작)
+# ?�로?�트 루트 추�? (dashboard ?�더?�서 ?�행?�도 ?�작)
 current_dir = Path(__file__).parent
 project_root = current_dir.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# NOTE: os.chdir() 호출 제거 - Streamlit multipage가 pages/ 폴더를 찾지 못하는 원인
-# settings.py의 BASE_DIR이 이미 절대 경로를 사용하므로 불필요
-
+# NOTE: os.chdir() ?�출 ?�거 - Streamlit multipage가 pages/ ?�더�?찾�? 못하???�인
+# settings.py??BASE_DIR???��? ?��? 경로�??�용?��?�?불필??
 st.set_page_config(
     page_title=APP_FULL_VERSION,
-    page_icon="🔔",
+    page_icon="?��",
     layout="wide",
 )
 
-# ==================== 사이드바 네비게이션 ====================
+# ==================== ?�이?�바 ?�비게이??====================
 with st.sidebar:
     from dashboard.components.sidebar import render_sidebar_nav
     render_sidebar_nav()
     st.markdown("---")
 
-# ==================== Repository 싱글톤 ====================
+# ==================== Repository ?��???====================
 @st.cache_resource
 def get_cached_repositories():
-    """Repository 인스턴스 캐시 (1회 생성)"""
+    """Repository ?�스?�스 캐시 (1???�성)"""
     try:
         from src.infrastructure.repository import (
             get_repository,
@@ -80,19 +77,19 @@ def get_cached_repositories():
             'nomad': get_nomad_candidates_repository(),
         }
     except Exception as e:
-        st.error(f"Repository 초기화 실패: {e}")
+        st.error(f"Repository 초기???�패: {e}")
         return None
 
-# ==================== 헤더 ====================
-st.title(f"🔔 {APP_FULL_VERSION}")
-st.markdown("**감시종목 TOP5 추적 + 유목민 공부법** | _차트가 모든 것을 반영한다_ 📈")
+# ==================== ?�더 ====================
+st.title(f"?�� {APP_FULL_VERSION}")
+st.markdown("**감시종목 TOP5 추적 + ?�목�?공�?�?* | _차트가 모든 것을 반영?�다_ ?��")
 st.markdown("---")
 
 
-# ==================== 데이터 로드 ====================
+# ==================== ?�이??로드 ====================
 @st.cache_data(ttl=300)
 def load_all_results(days=60):
-    """익일 결과 데이터 로드"""
+    """?�일 결과 ?�이??로드"""
     try:
         repos = get_cached_repositories()
         if not repos:
@@ -104,13 +101,13 @@ def load_all_results(days=60):
         results = repos['main'].get_next_day_results(start_date=start_date, end_date=end_date)
         return results
     except Exception as e:
-        st.error(f"데이터 로드 실패: {e}")
+        st.error(f"?�이??로드 ?�패: {e}")
         return []
 
 
 @st.cache_data(ttl=300)
 def load_top5_summary():
-    """TOP5 20일 추적 요약"""
+    """TOP5 20??추적 ?�약"""
     try:
         repos = get_cached_repositories()
         if not repos:
@@ -124,7 +121,7 @@ def load_top5_summary():
 
 @st.cache_data(ttl=300)
 def load_nomad_summary():
-    """유목민 공부법 요약"""
+    """?�목�?공�?�??�약"""
     try:
         repos = get_cached_repositories()
         if not repos:
@@ -138,7 +135,7 @@ def load_nomad_summary():
 
 @st.cache_data(ttl=300)
 def load_nomad_occurrence_ranking(days=30, top_n=15):
-    """유목민 등장 횟수 랭킹 (최근 N일)"""
+    """?�목�??�장 ?�수 ??�� (최근 N??"""
     try:
         import sqlite3
         from pathlib import Path
@@ -173,7 +170,7 @@ def load_nomad_occurrence_ranking(days=30, top_n=15):
 
 @st.cache_data(ttl=600)
 def calc_nomad_win_rates():
-    """유목민 등장 횟수 그룹별 승률 실시간 계산"""
+    """?�목�??�장 ?�수 그룹�??�률 ?�시�?계산"""
     try:
         import sqlite3
         from pathlib import Path
@@ -186,7 +183,7 @@ def calc_nomad_win_rates():
         
         conn = sqlite3.connect(db_path)
         
-        # 유목민 데이터 로드
+        # ?�목�??�이??로드
         df_nomad = pd.read_sql_query("""
             SELECT stock_code, study_date
             FROM nomad_candidates
@@ -197,11 +194,11 @@ def calc_nomad_win_rates():
         if df_nomad.empty:
             return None
         
-        # 종목별 총 등장 횟수
+        # 종목�?�??�장 ?�수
         occurrence_count = df_nomad.groupby('stock_code').size().reset_index(name='total_count')
         df_nomad = df_nomad.merge(occurrence_count, on='stock_code')
         
-        # D+5 수익률 계산 (샘플링 - 최대 300건)
+        # D+5 ?�익�?계산 (?�플�?- 최�? 300�?
         sample = df_nomad.sample(n=min(300, len(df_nomad)), random_state=42)
         
         results = []
@@ -235,9 +232,9 @@ def calc_nomad_win_rates():
         
         df_results = pd.DataFrame(results)
         
-        # 그룹별 승률 계산
+        # 그룹�??�률 계산
         bins = [0, 3, 7, 12, 100]
-        labels = ['1~3회', '4~7회', '8~12회', '13회+']
+        labels = ['1~3??, '4~7??, '8~12??, '13??']
         df_results['group'] = pd.cut(df_results['total_count'], bins=bins, labels=labels)
         
         win_rates = {}
@@ -254,9 +251,9 @@ def calc_nomad_win_rates():
         return None
 
 
-# ==================== 통계 함수 ====================
+# ==================== ?�계 ?�수 ====================
 def calc_stats(results):
-    """승률 통계 계산"""
+    """?�률 ?�계 계산"""
     if not results:
         return {'total': 0, 'wins': 0, 'win_rate': 0, 'avg_gap': 0, 'avg_high': 0}
     
@@ -275,7 +272,7 @@ def calc_stats(results):
 
 
 def create_cumulative_chart(results, title):
-    """누적 수익률 차트"""
+    """?�적 ?�익�?차트"""
     if not results or not PLOTLY_AVAILABLE:
         return None
     
@@ -302,7 +299,7 @@ def create_cumulative_chart(results, title):
             x=daily['screen_date'],
             y=daily['cumulative_pct'],
             mode='lines+markers',
-            name='누적 수익률',
+            name='?�적 ?�익�?,
             line=dict(color='#2196F3', width=2),
             marker=dict(size=5),
             fill='tozeroy',
@@ -315,7 +312,7 @@ def create_cumulative_chart(results, title):
         go.Bar(
             x=daily['screen_date'],
             y=daily['gap_rate'],
-            name='일별 갭수익률',
+            name='?�별 �?��?�률',
             marker_color=colors,
         ),
         row=2, col=1
@@ -329,16 +326,16 @@ def create_cumulative_chart(results, title):
         height=400,
         margin=dict(l=10, r=10, t=40, b=10),
         showlegend=False,
-        xaxis2_title="날짜",
-        yaxis_title="누적 수익률 (%)",
-        yaxis2_title="일별 (%)",
+        xaxis2_title="?�짜",
+        yaxis_title="?�적 ?�익�?(%)",
+        yaxis2_title="?�별 (%)",
     )
     
     return fig
 
 
 def create_gauge(value, title):
-    """승률 게이지"""
+    """?�률 게이지"""
     if not PLOTLY_AVAILABLE:
         return None
     
@@ -364,115 +361,112 @@ def create_gauge(value, title):
     return fig
 
 
-# ==================== 기능 요약 카드 ====================
-st.subheader("📌 주요 기능")
+# ==================== 기능 ?�약 카드 ====================
+st.subheader("?�� 주요 기능")
 
 col1, col2 = st.columns(2)
 
 with col1:
     top5_summary = load_top5_summary()
-    st.markdown("### 📈 감시종목 TOP5")
+    st.markdown("### ?�� 감시종목 TOP5")
     if top5_summary['dates_count'] > 0:
-        st.success(f"✅ {top5_summary['dates_count']}일 데이터 | 최신: {top5_summary['latest_date']}")
+        st.success(f"??{top5_summary['dates_count']}???�이??| 최신: {top5_summary['latest_date']}")
     else:
-        st.warning("⚠️ 데이터 없음")
-    st.caption("D+1 ~ D+20 수익률 추적, CCI 하드필터(250+)")
+        st.warning("?�️ ?�이???�음")
+    st.caption("D+1 ~ D+20 ?�익�?추적, CCI ?�드?�터(250+)")
 
 with col2:
     nomad_summary = load_nomad_summary()
-    st.markdown("### 📚 유목민 공부법")
+    st.markdown("### ?�� ?�목�?공�?�?)
     if nomad_summary['dates_count'] > 0:
-        st.success(f"✅ {nomad_summary['dates_count']}일 데이터 | 최신: {nomad_summary['latest_date']}")
+        st.success(f"??{nomad_summary['dates_count']}???�이??| 최신: {nomad_summary['latest_date']}")
     else:
-        st.warning("⚠️ 데이터 없음")
-    st.caption("상한가/거래량천만 종목, 네이버 기업정보, AI 분석")
+        st.warning("?�️ ?�이???�음")
+    st.caption("?�한가/거래?�천�?종목, ?�이�?기업?�보, AI 분석")
 
-st.info("👈 **사이드바에서 페이지를 선택하세요**")
+st.info("?�� **?�이?�바?�서 ?�이지�??�택?�세??*")
 st.markdown("---")
 
 
-# ==================== 메인 컨텐츠 (D+1 성과) ====================
-st.subheader("📊 D+1 성과 요약 (최근 60일)")
+# ==================== 메인 컨텐�?(D+1 ?�과) ====================
+st.subheader("?�� D+1 ?�과 ?�약 (최근 60??")
 
 results = load_all_results(60)
 
 if results:
     stats = calc_stats(results)
     
-    # 상단: 요약 카드
+    # ?�단: ?�약 카드
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("📈 총 거래", f"{stats['total']}건")
-    col2.metric("✅ 승리", f"{stats['wins']}건")
-    col3.metric("📊 승률", f"{stats['win_rate']:.1f}%", 
+    col1.metric("?�� �?거래", f"{stats['total']}�?)
+    col2.metric("???�리", f"{stats['wins']}�?)
+    col3.metric("?�� ?�률", f"{stats['win_rate']:.1f}%", 
                 delta="Good" if stats['win_rate'] >= 60 else None)
-    col4.metric("💰 평균 갭", f"{stats['avg_gap']:+.1f}%")
-    col5.metric("📈 평균 고가", f"{stats['avg_high']:+.1f}%")
+    col4.metric("?�� ?�균 �?, f"{stats['avg_gap']:+.1f}%")
+    col5.metric("?�� ?�균 고�?", f"{stats['avg_high']:+.1f}%")
     
     st.markdown("---")
     
-    # 중단: 승률 게이지 + 누적 수익률
-    col1, col2 = st.columns([1, 2])
+    # 중단: ?�률 게이지 + ?�적 ?�익�?    col1, col2 = st.columns([1, 2])
     
     with col1:
-        gauge_fig = create_gauge(stats['win_rate'], "전체 승률")
+        gauge_fig = create_gauge(stats['win_rate'], "?�체 ?�률")
         if gauge_fig:
             st.plotly_chart(gauge_fig, width="stretch")
         else:
-            st.metric("전체 승률", f"{stats['win_rate']:.1f}%")
+            st.metric("?�체 ?�률", f"{stats['win_rate']:.1f}%")
         
-        st.markdown("##### 📋 상세 통계")
-        st.write(f"• 승리: {stats['wins']}건 / {stats['total']}건")
-        st.write(f"• 평균 갭수익률: {stats['avg_gap']:+.1f}%")
-        st.write(f"• 평균 고가수익률: {stats['avg_high']:+.1f}%")
+        st.markdown("##### ?�� ?�세 ?�계")
+        st.write(f"???�리: {stats['wins']}�?/ {stats['total']}�?)
+        st.write(f"???�균 �?��?�률: {stats['avg_gap']:+.1f}%")
+        st.write(f"???�균 고�??�익�? {stats['avg_high']:+.1f}%")
     
     with col2:
-        fig = create_cumulative_chart(results, "📈 누적 수익률 & 일별 갭수익률")
+        fig = create_cumulative_chart(results, "?�� ?�적 ?�익�?& ?�별 �?��?�률")
         if fig:
             st.plotly_chart(fig, width="stretch")
         else:
-            st.info("📊 차트를 표시하려면 plotly가 필요합니다.")
+            st.info("?�� 차트�??�시?�려�?plotly가 ?�요?�니??")
     
     st.markdown("---")
     
-    # 하단: 최근 결과 테이블
-    st.subheader(f"📋 최근 결과 ({min(stats['total'], 10)}건)")
+    # ?�단: 최근 결과 ?�이�?    st.subheader(f"?�� 최근 결과 ({min(stats['total'], 10)}�?")
     
     df = pd.DataFrame(results)
     df['screen_date'] = pd.to_datetime(df['screen_date'])
     df = df.sort_values('screen_date', ascending=False)
     
     display_df = df[['screen_date', 'stock_code', 'stock_name', 'gap_rate', 'high_change_rate']].head(10)
-    display_df.columns = ['날짜', '종목코드', '종목명', '갭수익률(%)', '고가수익률(%)']
-    display_df['날짜'] = display_df['날짜'].dt.strftime('%m/%d')
-    display_df['갭수익률(%)'] = display_df['갭수익률(%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
-    display_df['고가수익률(%)'] = display_df['고가수익률(%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
+    display_df.columns = ['?�짜', '종목코드', '종목�?, '�?��?�률(%)', '고�??�익�?%)']
+    display_df['?�짜'] = display_df['?�짜'].dt.strftime('%m/%d')
+    display_df['�?��?�률(%)'] = display_df['�?��?�률(%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
+    display_df['고�??�익�?%)'] = display_df['고�??�익�?%)'].apply(lambda x: f"{x:+.1f}" if pd.notna(x) else "-")
     
     st.dataframe(display_df, width="stretch", hide_index=True)
 
 else:
-    st.info("📭 D+1 성과 데이터가 없습니다. 백필 후 데이터가 쌓이면 표시됩니다.")
+    st.info("?�� D+1 ?�과 ?�이?��? ?�습?�다. 백필 ???�이?��? ?�이�??�시?�니??")
 
-# ==================== 유목민 등장 횟수 랭킹 ====================
+# ==================== ?�목�??�장 ?�수 ??�� ====================
 st.markdown("---")
-st.subheader("🔥 유목민 등장 횟수 TOP 15 (최근 30일)")
-st.caption("많이 등장할수록 모멘텀 강력! 승률은 D+5 기준 실시간 계산")
+st.subheader("?�� ?�목�??�장 ?�수 TOP 15 (최근 30??")
+st.caption("많이 ?�장?�수�?모멘?� 강력! ?�률?� D+5 기�? ?�시�?계산")
 
 ranking_df = load_nomad_occurrence_ranking(days=30, top_n=15)
 
 if not ranking_df.empty and PLOTLY_AVAILABLE:
-    # 역순 정렬 (아래에서 위로 증가)
+    # ??�� ?�렬 (?�래?�서 ?�로 증�?)
     ranking_df = ranking_df.sort_values('count', ascending=True)
     
-    # 색상 지정 (등장 횟수에 따라)
+    # ?�상 지??(?�장 ?�수???�라)
     colors = []
     for cnt in ranking_df['count']:
         if cnt >= 13:
-            colors.append('#FF5722')  # 모멘텀 강력
+            colors.append('#FF5722')  # 모멘?� 강력
         elif cnt >= 8:
             colors.append('#FF9800')  # 주목
         elif cnt >= 4:
-            colors.append('#4CAF50')  # 상승세
-        else:
+            colors.append('#4CAF50')  # ?�승??        else:
             colors.append('#9E9E9E')  # 초기
     
     fig = go.Figure(go.Bar(
@@ -480,83 +474,82 @@ if not ranking_df.empty and PLOTLY_AVAILABLE:
         y=ranking_df['stock_name'],
         orientation='h',
         marker_color=colors,
-        text=ranking_df['count'].astype(str) + '회',
+        text=ranking_df['count'].astype(str) + '??,
         textposition='outside',
     ))
     
     fig.update_layout(
         height=450,
         margin=dict(l=10, r=50, t=10, b=10),
-        xaxis_title="등장 횟수",
+        xaxis_title="?�장 ?�수",
         yaxis_title="",
         showlegend=False,
     )
     
     st.plotly_chart(fig, width='stretch')
     
-    # 실시간 승률 계산
+    # ?�시�??�률 계산
     win_rates = calc_nomad_win_rates()
     
     if win_rates:
         col1, col2, col3, col4 = st.columns(4)
         
-        wr_13 = win_rates.get('13회+', {})
-        wr_8 = win_rates.get('8~12회', {})
-        wr_4 = win_rates.get('4~7회', {})
-        wr_1 = win_rates.get('1~3회', {})
+        wr_13 = win_rates.get('13??', {})
+        wr_8 = win_rates.get('8~12??, {})
+        wr_4 = win_rates.get('4~7??, {})
+        wr_1 = win_rates.get('1~3??, {})
         
-        col1.markdown(f"🔴 **13회+**: 모멘텀 강력 (승률 {wr_13.get('win_rate', 0):.0f}%, n={wr_13.get('n', 0)})")
-        col2.markdown(f"🟠 **8~12회**: 주목 (승률 {wr_8.get('win_rate', 0):.0f}%, n={wr_8.get('n', 0)})")
-        col3.markdown(f"🟢 **4~7회**: 상승세 (승률 {wr_4.get('win_rate', 0):.0f}%, n={wr_4.get('n', 0)})")
-        col4.markdown(f"⚪ **1~3회**: 초기 (승률 {wr_1.get('win_rate', 0):.0f}%, n={wr_1.get('n', 0)})")
+        col1.markdown(f"?�� **13??**: 모멘?� 강력 (?�률 {wr_13.get('win_rate', 0):.0f}%, n={wr_13.get('n', 0)})")
+        col2.markdown(f"?�� **8~12??*: 주목 (?�률 {wr_8.get('win_rate', 0):.0f}%, n={wr_8.get('n', 0)})")
+        col3.markdown(f"?�� **4~7??*: ?�승??(?�률 {wr_4.get('win_rate', 0):.0f}%, n={wr_4.get('n', 0)})")
+        col4.markdown(f"??**1~3??*: 초기 (?�률 {wr_1.get('win_rate', 0):.0f}%, n={wr_1.get('n', 0)})")
     else:
         col1, col2, col3, col4 = st.columns(4)
-        col1.markdown("🔴 **13회+**: 모멘텀 강력")
-        col2.markdown("🟠 **8~12회**: 주목")
-        col3.markdown("🟢 **4~7회**: 상승세")
-        col4.markdown("⚪ **1~3회**: 초기")
+        col1.markdown("?�� **13??**: 모멘?� 강력")
+        col2.markdown("?�� **8~12??*: 주목")
+        col3.markdown("?�� **4~7??*: ?�승??)
+        col4.markdown("??**1~3??*: 초기")
     
 elif not ranking_df.empty:
-    # plotly 없을 때 테이블로 표시
+    # plotly ?�을 ???�이블로 ?�시
     st.dataframe(ranking_df, width='stretch', hide_index=True)
 else:
-    st.info("📭 유목민 데이터가 없습니다. 백필 후 표시됩니다.")
+    st.info("?�� ?�목�??�이?��? ?�습?�다. 백필 ???�시?�니??")
 
 
-# ==================== 사이드바 ====================
+# ==================== ?�이?�바 ====================
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### {SIDEBAR_TITLE} {APP_VERSION}")
 
-# v6.5: 종목 검색 (검색 페이지로 이동)
+# v6.5: 종목 검??(검???�이지�??�동)
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔎 빠른 검색")
+st.sidebar.markdown("### ?�� 빠른 검??)
 search_query = st.sidebar.text_input(
-    "종목코드/종목명",
-    placeholder="예: 005930 또는 삼성",
-    help="엔터 시 검색 페이지로 이동",
-    label_visibility="collapsed",  # 영어 라벨 숨김
+    "종목코드/종목�?,
+    placeholder="?? 005930 ?�는 ?�성",
+    help="?�터 ??검???�이지�??�동",
+    label_visibility="collapsed",  # ?�어 ?�벨 ?��?
 )
 
 if search_query and len(search_query) >= 2:
-    # 검색 페이지로 이동 (query parameter 전달)
+    # 검???�이지�??�동 (query parameter ?�달)
     st.switch_page("pages/3_stock_search.py")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"""
-**{APP_VERSION} 업데이트:**
-- 점수제 구간 최적화
-- CCI 160~180 최적
-- 등락률 4~6% 최적
-- 이격도 2~8% 최적
-- 연속양봉 2~3일 최적
-- DART + 네이버 기업정보
+**{APP_VERSION} ?�데?�트:**
+- ?�수??구간 최적??- CCI 160~180 최적
+- ?�락�?4~6% 최적
+- ?�격??2~8% 최적
+- ?�속?�봉 2~3??최적
+- DART + ?�이�?기업?�보
 
-**전략:**
-- 감시종목 TOP5 (점수제)
-- 익일 시가 매도
+**?�략:**
+- 감시종목 TOP5 (?�수??
+- ?�일 ?��? 매도
 """)
 
 
-# ==================== 푸터 ====================
+# ==================== ?�터 ====================
 st.markdown("---")
-st.caption(f"{FOOTER_DASHBOARD} | 점수제 구간 최적화 + AI 분석")
+st.caption(f"{FOOTER_DASHBOARD} | ?�수??구간 최적??+ AI 분석")
