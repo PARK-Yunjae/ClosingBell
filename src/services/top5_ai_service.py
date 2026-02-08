@@ -20,6 +20,8 @@ from bs4 import BeautifulSoup
 from src.config.settings import settings
 from src.services.http_utils import request_with_retry, redact_url, mask_text
 
+from src.utils.news_utils import fetch_news_headlines
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,7 +127,7 @@ def fetch_naver_company_info(stock_code: str) -> Dict:
         return {}
 
 
-def fetch_naver_news(stock_name: str, limit: int = 5) -> List[Dict]:
+def fetch_news_headlines(stock_name: str, limit: int = 5) -> List[Dict]:
     """네이버 검색 API로 뉴스 수집 (메모리만, DB 저장 X)"""
     try:
         from src.services.news_service import search_naver_news
@@ -325,7 +327,7 @@ def analyze_top5_stocks(target_date: str = None, limit: int = 5) -> Dict:
             company_info = fetch_naver_company_info(stock['stock_code'])
             
             # 2. 네이버 뉴스 수집 (메모리만, API 사용)
-            news_list = fetch_naver_news(stock['stock_name'], limit=5)
+            news_list = fetch_news_headlines(stock['stock_name'], limit=5)
             logger.info(f"     뉴스 {len(news_list)}개 수집 (메모리)")
             
             # 3. AI 분석

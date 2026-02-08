@@ -387,15 +387,40 @@ class ScreenerScheduler:
         except ImportError:
             logger.warning("pullback_scanner 모듈 없음 - 눌림목 스캔 스킵")
 
+        # 16:07 눌림목 D+1~D+5 가격 추적 (OHLCV 업데이트 후)
+        # ※ 기존 시그널의 후속 성과를 자동 기록
+        try:
+            from src.services.pullback_tracker import run_pullback_tracking
+            self.add_job(
+                job_id='pullback_tracking',
+                func=run_pullback_tracking,
+                hour=16,
+                minute=7,
+            )
+        except ImportError:
+            logger.warning("pullback_tracker 모듈 없음 - 눌림목 추적 스킵")
+
         # 16:50 보유종목 동기화 + 전체 보유종목 분석 리포트
         try:
             from src.services.account_service import sync_holdings_watchlist
             from src.services.holdings_analysis_service import generate_holdings_reports
 
             def _holdings_sync_and_analyze():
-                # 1단계: 계좌 동기화
+                # 1단계: 계좌 동기화 + 매매일지 자동 기록
                 result = sync_holdings_watchlist()
                 logger.info(f"[holdings] 동기화 완료: {result}")
+
+                # v10.1: 매매일지 거래 발생 시 디스코드 알림
+                journal_trades = result.get("journal_trades", [])
+                if journal_trades:
+                    try:
+                        from src.services.trade_journal_service import format_trade_discord
+                        msg = format_trade_discord(journal_trades)
+                        if msg and self.discord_notifier:
+                            self.discord_notifier.send_message(msg)
+                            logger.info(f"[journal] 디스코드 알림: {len(journal_trades)}건")
+                    except Exception as e:
+                        logger.warning(f"[journal] 디스코드 알림 실패: {e}")
 
                 # 2단계: 전체 보유종목 리포트 생성 (매일)
                 report_result = generate_holdings_reports(
@@ -415,6 +440,30 @@ class ScreenerScheduler:
             )
         except ImportError:
             logger.warning("account_service 모듈 없음 - 보유종목 동기화 스킵")
+
+        # 17:00 금요일 주간 매매 리포트
+        try:
+            def _weekly_journal_report():
+                from datetime import date as _date
+                if _date.today().weekday() != 4:  # 금요일만
+                    return
+                from src.services.trade_journal_service import generate_weekly_report
+                report = generate_weekly_report()
+                if self.discord_notifier:
+                    # 디스코드 2000자 제한
+                    if len(report) > 1900:
+                        report = report[:1900] + "\n\n... (대시보드에서 전체 확인)"
+                    self.discord_notifier.send_message(report)
+                    logger.info("[journal] 주간 리포트 전송 완료")
+
+            self.add_job(
+                job_id='weekly_journal',
+                func=_weekly_journal_report,
+                hour=17,
+                minute=0,
+            )
+        except Exception:
+            logger.warning("weekly_journal 스케줄 등록 실패")
 
         # Optional: Healthcheck 스케줄 (환경변수 지정 시)
         health_time = os.getenv("SCHEDULE_HEALTHCHECK_TIME", "").strip()

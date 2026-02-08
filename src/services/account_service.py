@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from typing import Dict, List, Optional, Set
 
 from src.adapters.kiwoom_rest_client import get_kiwoom_client
@@ -92,9 +92,25 @@ def add_manual_watch(stock_code: str, stock_name: str = "") -> None:
 
 
 def sync_holdings_watchlist() -> Dict[str, object]:
-    """현재 보유종목을 누적 관찰 테이블에 반영."""
+    """현재 보유종목을 누적 관찰 테이블에 반영.
+    v10.1: 변화 감지 시 trade_journal 자동 기록
+    """
     db = get_database()
     now = datetime.now().isoformat(timespec="seconds")
+
+    # v10.1: 이전 보유 상태 스냅샷 (매매일지용)
+    prev_rows = db.fetch_all(
+        "SELECT stock_code, stock_name, last_qty, last_price "
+        "FROM holdings_watch WHERE status = 'holding'"
+    )
+    prev_holdings = {
+        r["stock_code"]: {
+            "name": r.get("stock_name", ""),
+            "qty": int(r["last_qty"] or 0),
+            "price": float(r["last_price"] or 0),
+        }
+        for r in prev_rows
+    }
 
     result = fetch_account_holdings()
     holdings = result["holdings"]
@@ -156,8 +172,26 @@ def sync_holdings_watchlist() -> Dict[str, object]:
             sold_count += 1
             changed_codes.add(code)
 
+    # v10.1: 변화 감지 시 매매일지 자동 기록
+    journal_trades = []
+    if changed_codes:
+        try:
+            from src.services.trade_journal_service import record_trade_changes
+            curr_holdings = {
+                h["code"]: {
+                    "name": h.get("name", ""),
+                    "qty": int(h.get("qty", 0)),
+                    "price": float(h.get("price", 0)),
+                }
+                for h in holdings
+            }
+            journal_trades = record_trade_changes(prev_holdings, curr_holdings)
+        except Exception as e:
+            logger.warning(f"매매일지 기록 실패 (무시): {e}")
+
     return {
         "holding_count": len(holdings),
         "sold_marked": sold_count,
         "changed_codes": sorted(changed_codes),
+        "journal_trades": journal_trades,
     }

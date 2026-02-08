@@ -34,7 +34,7 @@ with st.sidebar:
     render_sidebar_nav()
 
 st.title("📉 눌림목 스캐너")
-st.caption("ClosingBell v9.1 | 거래량 폭발 후 거감음봉 + MA 지지 종목 감시")
+st.caption("ClosingBell v10.1 | 거래량 폭발 후 거감음봉 + MA 지지 종목 감시")
 
 
 # ============================================================
@@ -210,7 +210,7 @@ def _draw_mini_chart(code: str, spike_date: str = "", signal_date: str = ""):
     fig.update_xaxes(dtick="M1", tickformat="%m/%d", row=2, col=1)
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 # ============================================================
@@ -277,6 +277,21 @@ with col_date:
 with col_range:
     history_days = st.selectbox("조회 기간", [3, 7, 14, 30], index=1, format_func=lambda x: f"최근 {x}일")
 
+# 휴장일 보정
+try:
+    from src.utils.market_calendar import is_market_open
+    if not is_market_open(sel_date):
+        corrected = sel_date
+        for _ in range(10):
+            corrected -= timedelta(days=1)
+            if is_market_open(corrected):
+                break
+        weekday_kr = ['월','화','수','목','금','토','일'][sel_date.weekday()]
+        st.caption(f"⚠️ {sel_date.strftime('%m/%d')}({weekday_kr}) 휴장일 → {corrected.strftime('%m/%d')} 표시")
+        sel_date = corrected
+except ImportError:
+    pass
+
 date_str = sel_date.strftime("%Y-%m-%d")
 
 
@@ -291,6 +306,13 @@ try:
     today_signals = repo.get_signals_by_date(date_str)
 except Exception:
     today_signals = []
+
+# v10.1: S/R + 공매도 조회용 DB
+try:
+    from src.infrastructure.database import get_database
+    _pb_db = get_database()
+except Exception:
+    _pb_db = None
 
 if not today_signals:
     st.info(f"{date_str}의 눌림목 시그널이 없습니다.")
@@ -346,6 +368,39 @@ else:
             if reason:
                 st.caption(f"💡 {reason}")
 
+            # v10.1: 지지/저항 + 공매도 표시
+            try:
+                if not _pb_db:
+                    raise Exception("no db")
+                sr_row = _pb_db.fetch_one(
+                    "SELECT nearest_support, nearest_resistance, support_distance_pct, "
+                    "resistance_distance_pct, score, summary "
+                    "FROM support_resistance_cache WHERE stock_code = ? "
+                    "ORDER BY date DESC LIMIT 1", (code,)
+                )
+                ss_row = _pb_db.fetch_one(
+                    "SELECT short_ratio, short_volume, trade_volume "
+                    "FROM short_selling_daily WHERE stock_code = ? "
+                    "ORDER BY date DESC LIMIT 1", (code,)
+                )
+                if sr_row or ss_row:
+                    sr_cols = st.columns(3)
+                    if sr_row:
+                        sr = dict(sr_row)
+                        sup = sr.get("nearest_support", 0)
+                        res = sr.get("nearest_resistance", 0)
+                        if sup:
+                            sr_cols[0].caption(f"🟢 지지: {sup:,.0f}원 ({sr.get('support_distance_pct', 0):.1f}%↓)")
+                        if res:
+                            sr_cols[1].caption(f"🔴 저항: {res:,.0f}원 ({sr.get('resistance_distance_pct', 0):.1f}%↑)")
+                    if ss_row:
+                        ss = dict(ss_row)
+                        short_r = ss.get("short_ratio", 0) or 0
+                        short_emoji = "🔴" if short_r >= 5 else ("🟡" if short_r >= 2 else "🟢")
+                        sr_cols[2].caption(f"📉 공매도: {short_r:.1f}% {short_emoji}")
+            except Exception:
+                pass  # 테이블 미존재시 무시
+
             # AI 분석
             ai_comment = row.get("ai_comment", "")
             if ai_comment:
@@ -392,7 +447,7 @@ else:
                 "주도": "🔥" if r.get("is_leading_sector") else "",
             })
         df_spikes = pd.DataFrame(spike_data)
-        st.dataframe(df_spikes, use_container_width=True, hide_index=True)
+        st.dataframe(df_spikes, width="stretch", hide_index=True)
 
     # 감시풀 차트 (접기)
     if HAS_PLOTLY:
@@ -444,7 +499,7 @@ else:
                 "폭발일": r.get("spike_date", ""),
             })
         df_hist = pd.DataFrame(hist_data)
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        st.dataframe(df_hist, width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -474,7 +529,60 @@ if HAS_PLOTLY and spikes and pd is not None:
             xaxis_title="날짜", yaxis_title="종목 수",
             margin=dict(l=10, r=10, t=10, b=10),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
+
+
+# ── D+1~D+5 성과 추적 ──
+st.markdown("---")
+st.subheader("📊 눌림목 D+1~D+5 성과")
+st.caption("시그널 발생 후 실제 수익률 추적 (OHLCV 기반, 매일 16:07 자동 갱신)")
+
+try:
+    from src.services.pullback_tracker import get_pullback_performance
+
+    perf_days = st.selectbox("분석 기간", [7, 14, 30, 90], index=2,
+                             format_func=lambda x: f"최근 {x}일", key="pb_perf")
+    perf = get_pullback_performance(days=perf_days)
+
+    if perf.get("tracked_signals", 0) > 0:
+        st.markdown(f"**추적 시그널: {perf['tracked_signals']}개** / 전체 {perf['total_signals']}개")
+
+        # D+1 ~ D+5 전체 통계
+        d_cols = st.columns(5)
+        for i in range(1, 6):
+            d_stat = perf.get(f"d{i}", {})
+            with d_cols[i - 1]:
+                avg = d_stat.get("avg", 0)
+                wr = d_stat.get("win_rate", 0)
+                n = d_stat.get("n", 0)
+                color = "normal" if avg > 0 else "inverse"
+                st.metric(
+                    f"D+{i}",
+                    f"{avg:+.2f}%",
+                    delta=f"승률 {wr:.0f}% ({n}건)",
+                    delta_color=color,
+                )
+
+        # 시그널 강도별 비교
+        by_str = perf.get("by_strength", {})
+        if by_str:
+            st.markdown("**시그널 강도별 D+1 성과:**")
+            str_cols = st.columns(len(by_str))
+            for i, (strength, data) in enumerate(sorted(by_str.items())):
+                with str_cols[i]:
+                    emoji = {"강": "🔴", "중": "🟠", "약": "🟡"}.get(strength, "⚪")
+                    d1 = data.get("d1", {})
+                    d5 = data.get("d5", {})
+                    st.markdown(f"**{emoji} {strength}**")
+                    st.write(f"D+1: {d1.get('avg', 0):+.2f}% (승률 {d1.get('win_rate', 0):.0f}%)")
+                    st.write(f"D+5: {d5.get('avg', 0):+.2f}% (승률 {d5.get('win_rate', 0):.0f}%)")
+    else:
+        st.info("📊 아직 추적 데이터가 없습니다. 시그널 발생 다음 거래일부터 자동 수집됩니다.")
+
+except ImportError:
+    st.info("pullback_tracker 모듈 미설치 - D+1~D+5 추적 비활성")
+except Exception as e:
+    st.warning(f"성과 로드 실패: {e}")
 
 
 # ── 조건 안내 ──
@@ -506,4 +614,4 @@ with st.expander("📖 스캐닝 조건 상세"):
 **디스코드 알림**: 시그널 발생 시 자동 웹훅 발송
 """)
 
-st.caption("ClosingBell v9.1")
+st.caption("ClosingBell v10.1")

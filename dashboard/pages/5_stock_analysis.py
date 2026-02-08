@@ -37,7 +37,7 @@ try:
         OHLCV_FULL_DIR,
     )
 except ImportError:
-    APP_FULL_VERSION = "ClosingBell v9.1"
+    APP_FULL_VERSION = "ClosingBell v10.1"
     FOOTER_DASHBOARD = APP_FULL_VERSION
     SIDEBAR_TITLE = "🔔 ClosingBell"
     OHLCV_DIR = None
@@ -169,9 +169,15 @@ def _load_ohlcv_df(code: str) -> Tuple[Optional[object], str]:
         df = fdr.DataReader(code, start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'))
         if df is not None and not df.empty:
             df = df.reset_index()
-            df.columns = [c.lower() for c in df.columns]
-            if "date" not in df.columns and "index" in df.columns:
-                df = df.rename(columns={"index": "date"})
+            df.columns = [c.lower().strip() for c in df.columns]
+            # 날짜 컬럼 통일
+            for col in ['index', 'unnamed: 0', '']:
+                if col in df.columns and col != 'date':
+                    df = df.rename(columns={col: 'date'})
+                    break
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = df.dropna(subset=['date'])
             return df, "온라인"
     except Exception:
         pass
@@ -415,7 +421,7 @@ with col2:
 
 # 리포트 생성 버튼
 if not read_only:
-    run = st.button("🔍 분석 리포트 생성", type="primary", width="stretch")
+    run = st.button("🔍 분석 리포트 생성", type="primary", use_container_width=True)
     if run:
         if not code or not code.isdigit():
             st.error("종목코드를 숫자 6자리로 입력해주세요.")
@@ -446,6 +452,17 @@ else:
 
 if not report_path or not report_path.exists():
     st.warning("아직 리포트가 없어요. 스케줄러 실행 후 다시 확인해보세요.")
+    
+    # 보유종목 목록이 있으면 안내
+    if holdings:
+        holding_names = [f"{h.get('stock_name', '')} ({h.get('stock_code', '')})" 
+                        for h in holdings if h.get('status') == 'holding']
+        if holding_names:
+            st.info(f"📋 현재 보유종목: {', '.join(holding_names)}")
+            st.caption(
+                "💡 리포트 생성: 매일 16:50 자동 실행 또는 수동 생성 버튼 사용\n\n"
+                "⚠️ 휴장일에는 리포트가 생성되지 않습니다"
+            )
     st.stop()
 
 # 선택된 종목 정보 표시
@@ -626,7 +643,7 @@ with tab1:
                         ],
                     )
                     if fig:
-                        st.plotly_chart(fig, width="stretch")
+                        st.plotly_chart(fig, use_container_width=True)
                     _info_card(
                         "CCI란?",
                         "CCI는 '지금 주가가 평균에서 얼마나 벗어났는지' 보여주는 도구예요.<br>"
@@ -650,7 +667,7 @@ with tab1:
                         ],
                     )
                     if fig:
-                        st.plotly_chart(fig, width="stretch")
+                        st.plotly_chart(fig, use_container_width=True)
                     _info_card(
                         "RSI란?",
                         "RSI는 '최근 14일 동안 오른 날이 많았나 내린 날이 많았나'를 보여줘요.<br>"
@@ -862,7 +879,7 @@ with tab2:
                     dtick="M1", tickformat="%y/%m",
                     row=2, col=1,
                 )
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, use_container_width=True)
 
                 # ── 매물대 분포 차트 ──
                 st.markdown("### 🧱 매물대 분포 (많이 거래된 가격대)")
@@ -890,7 +907,7 @@ with tab2:
                         yaxis_title="가격대 (원)",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(vp_fig, width="stretch")
+                    st.plotly_chart(vp_fig, use_container_width=True)
                     st.caption("🔴 빨간 막대 = 현재가가 이 가격대 안에 있음 / 🔵 파란 막대 = 다른 가격대")
                 else:
                     if vp_error:
@@ -971,7 +988,7 @@ with tab2:
                     showlegend=False,
                     margin=dict(l=10, r=10, t=30, b=10),
                 )
-                st.plotly_chart(cci_rsi_fig, width="stretch")
+                st.plotly_chart(cci_rsi_fig, use_container_width=True)
 
             # ── 거래원 추이 차트 ──
             broker_df = _fetch_broker_series(code)
@@ -999,7 +1016,7 @@ with tab2:
                         yaxis_title="이상 점수",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(bk_fig, width="stretch")
+                    st.plotly_chart(bk_fig, use_container_width=True)
                 else:
                     chart_df = chart_df.set_index("screen_date")
                     st.line_chart(chart_df)
@@ -1037,7 +1054,7 @@ with tab2:
                         yaxis_title="20일 평균 대비 배율",
                         margin=dict(l=10, r=10, t=10, b=10),
                     )
-                    st.plotly_chart(vol_fig, width="stretch")
+                    st.plotly_chart(vol_fig, use_container_width=True)
                     st.caption("🔴 빨강 = 평균의 2배 이상 / 🟠 주황 = 1.5배 이상 / 🔵 파랑 = 정상")
 
 

@@ -32,7 +32,7 @@ from src.config.settings import settings
 from src.config.constants import get_top_n_count, MIN_DAILY_DATA_COUNT
 from src.config.app_config import MAPPING_FILE, OHLCV_FULL_DIR
 from src.utils.stock_filters import filter_universe_stocks
-from src.domain.models import StockData, ScreeningResult, ScreeningStatus
+from src.domain.models import StockData, StockInfo, StockScore, ScoreDetail, ScreeningResult, ScreeningStatus
 from src.domain.score_calculator import (
     ScoreCalculatorV5,
     StockScoreV5,
@@ -164,195 +164,21 @@ class ScreenerService:
             # 3. 점수 계산
             scores = self.calculator.calculate_scores(stock_data_list)
             
-            # ================================================
-            # v6.2: CCI 하드 필터 적용
-            # ================================================
-            scores_filtered, cci_filtered_count = filter_by_cci(scores, CCI_HARD_LIMIT)
+            # v10.1: 하드필터 제거 (점수제에서 자연 반영)
+            scores_filtered = scores
             
             # ================================================
             # v6.2: 시가총액 정보 로드 (점수 가산 없음, 대기업 표시용)
             # ================================================
             market_cap_info = self._load_market_cap_info(scores_filtered)
             
-            # ================================================
-            # v8.0: 거래원 스캔 (Top20 → calc_broker_score → score_detail에 반영)
-            # 프리뷰(12:00)는 장중 변동 → broker_score=6(중립) 고정
-            # ================================================
+            # v8.0: 거래원 스캔
             broker_adjustments = {}
             if not is_preview:
-                try:
-                    from src.services.broker_signal import (
-                        get_broker_adjustments, calc_broker_score, BROKER_SCORE_NEUTRAL
-                    )
-                    codes_top20 = [s.stock_code for s in scores_filtered[:20]]
-                    broker_adjustments = get_broker_adjustments(codes_top20)
-                    
-                    # 거래원 점수를 score_detail에 직접 반영 + score_total 재계산
-                    for score in scores_filtered:
-                        adj = broker_adjustments.get(score.stock_code)
-                        if adj:
-                            bs = calc_broker_score(adj.anomaly_score)
-                            score.score_detail.broker_score = bs
-                            score.score_detail.raw_broker_anomaly = adj.anomaly_score
-                        else:
-                            # 거래원 조회 불가/이상 미감지 → 중립
-                            score.score_detail.broker_score = BROKER_SCORE_NEUTRAL
-                            score.score_detail.raw_broker_anomaly = 0
-                        # score_total 재계산
-                        score.score_total = score.score_detail.total
-                    
-                    # 재정렬
-                    scores_filtered.sort(key=lambda x: (-x.score_total, -x.trading_value))
-                    for i, s in enumerate(scores_filtered, 1):
-                        s.rank = i
-                    
-                    if broker_adjustments:
-                        logger.info(f"거래원 v8: {len(broker_adjustments)}개 이상감지")
-                        
-                        # v8: broker_signals DB 저장
-                        try:
-                            from src.infrastructure.repository import get_broker_signal_repository
-                            import json as _json
-                            broker_repo = get_broker_signal_repository()
-                            for code, adj in broker_adjustments.items():
-                                # 종목명 조회
-                                _adj_name = code
-                                try:
-                                    from src.config.app_config import MAPPING_FILE
-                                    if MAPPING_FILE and MAPPING_FILE.exists():
-                                        import csv
-                                        with open(MAPPING_FILE, "r", encoding="utf-8") as _mf:
-                                            for _mr in csv.DictReader(_mf):
-                                                if str(_mr.get("code", "")).zfill(6) == code:
-                                                    _adj_name = _mr.get("name", code)
-                                                    break
-                                except Exception:
-                                    pass
+                broker_adjustments = self._apply_broker_scores(scores_filtered, screen_date)
 
-                                broker_repo.save_signal(
-                                    screen_date=screen_date,
-                                    stock_code=code,
-                                    stock_name=_adj_name,
-                                    anomaly_score=adj.anomaly_score,
-                                    broker_score=calc_broker_score(adj.anomaly_score),
-                                    tag=adj.tag,
-                                    buyers_json=_json.dumps(adj.buyers_raw, ensure_ascii=False) if adj.buyers_raw else "",
-                                    sellers_json=_json.dumps(adj.sellers_raw, ensure_ascii=False) if adj.sellers_raw else "",
-                                    unusual_score=adj.unusual_score,
-                                    asymmetry_score=adj.asymmetry_score,
-                                    distribution_score=adj.distribution_score,
-                                    foreign_score=adj.foreign_score,
-                                    frgn_buy=adj.frgn_buy,
-                                    frgn_sell=adj.frgn_sell,
-                                )
-                            logger.info(f"broker_signals DB 저장: {len(broker_adjustments)}건")
-                        except Exception as db_err:
-                            logger.warning(f"broker_signals DB 저장 실패 (무시): {db_err}")
-                except ImportError:
-                    logger.debug("broker_signal 모듈 없음, 건너뜀")
-                except Exception as e:
-                    logger.warning(f"거래원 스캔 실패 (무시): {e}")
-
-            # ================================================
-            # v9.0: 매물대(Volume Profile) 표시용 계산 (총점 미반영)
-            # ================================================
-            try:
-                logger.info("[매물대] Volume Profile 계산 시작...")
-                vp_count = 0
-                vp_cfg = settings.vp
-                vp_source = vp_cfg.source
-                use_kiwoom = (vp_source in {"auto", "kiwoom"})
-                use_local = (vp_source in {"auto", "local"})
-                kiwoom_client = None
-                kiwoom_available = True
-                if use_kiwoom and os.getenv("DASHBOARD_ONLY", "").lower() != "true":
-                    try:
-                        from src.adapters.kiwoom_rest_client import get_kiwoom_client
-                        kiwoom_client = get_kiwoom_client()
-                    except Exception as e:
-                        logger.warning(f"[매물대] 키움 클라이언트 로드 실패: {e}")
-                        kiwoom_client = None
-                        kiwoom_available = False
-                vp_data_cache = None
-                for score in scores_filtered:
-                    code = score.stock_code
-                    current_price = score.current_price
-                    try:
-                        vp_result = None
-                        vp_meta = ""
-                        if use_kiwoom and kiwoom_client is not None and kiwoom_available:
-                            try:
-                                if vp_data_cache is None:
-                                    data = kiwoom_client.get_volume_profile(
-                                        stock_code=code,
-                                        cycle_tp=str(vp_cfg.cycle),
-                                        prpscnt=str(vp_cfg.bands),
-                                        cur_prc_entry=str(vp_cfg.cur_entry),
-                                        prps_cnctr_rt=str(vp_cfg.concentration_rate),
-                                        mrkt_tp=str(vp_cfg.market),
-                                        stex_tp=str(vp_cfg.stex_tp),
-                                        trde_qty_tp=str(vp_cfg.trde_qty_tp),
-                                        tr_id=str(vp_cfg.api_id),
-                                    )
-                                    # 빈 응답 감지: 키움 VP 데이터가 비어있으면 로컬 폴백
-                                    if isinstance(data, dict) and not any(
-                                        isinstance(v, list) and v for v in data.values()
-                                    ):
-                                        logger.warning("[매물대] 빈 VP 응답 - 로컬 폴백 전환")
-                                        kiwoom_available = False
-                                        data = {}
-                                    vp_data_cache = data
-                                else:
-                                    data = vp_data_cache
-                                vp_result = calc_volume_profile_from_kiwoom(
-                                    data=data,
-                                    current_price=current_price,
-                                    n_days=vp_cfg.cycle,
-                                    cur_entry=vp_cfg.cur_entry,
-                                    stock_code=code,
-                                )
-                                vp_meta = f"kiwoom/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
-                            except Exception as e:
-                                logger.debug(f"VP(kiwoom) {code} 오류: {e}")
-                                vp_result = None
-
-                        if vp_result is not None and vp_result.tag == "데이터부족":
-                            vp_result = None
-
-                        # 키움 실패 시 로컬 CSV 폴백 (1회만)
-                        if vp_result is None and use_local:
-                            vp_result = calc_volume_profile_from_csv(
-                                stock_code=code,
-                                current_price=current_price,
-                                ohlcv_dir=OHLCV_FULL_DIR,
-                                n_days=vp_cfg.cycle,
-                                n_bands=vp_cfg.bands,
-                            )
-                            vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
-
-                        # 모든 폴백 실패 시 기본값 (크래시 방지)
-                        if vp_result is None:
-                            from src.domain.volume_profile import VolumeProfileResult
-                            vp_result = VolumeProfileResult()
-                            vp_meta = ""
-
-                        score.score_detail.raw_vp_score = vp_result.score
-                        score.score_detail.raw_vp_above_pct = vp_result.above_pct
-                        score.score_detail.raw_vp_below_pct = vp_result.below_pct
-                        score.score_detail.raw_vp_tag = vp_result.tag
-                        score.score_detail.raw_vp_meta = vp_meta
-                        if vp_result.tag != "데이터부족":
-                            vp_count += 1
-                    except Exception as e:
-                        logger.debug(f"VP {code} 오류: {e}")
-                        score.score_detail.raw_vp_score = VP_SCORE_NEUTRAL
-                        score.score_detail.raw_vp_above_pct = 0.0
-                        score.score_detail.raw_vp_below_pct = 0.0
-                        score.score_detail.raw_vp_tag = "오류"
-                        score.score_detail.raw_vp_meta = ""
-                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료")
-            except Exception as e:
-                logger.warning(f"[매물대] 계산 실패 (무시): {e}")
+            # v9.0: 매물대(Volume Profile) 계산
+            self._calculate_volume_profiles(scores_filtered)
             
             # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
             top_n_count = get_top_n_count()
@@ -405,7 +231,7 @@ class ScreenerService:
                 "screen_time": screen_time,
                 "total_count": len(scores),
                 "filtered_count": len(scores_filtered),  # v6.2
-                "cci_filtered_out": cci_filtered_count,  # v6.2
+                "cci_filtered_out": 0,  # v10.1: 하드필터 제거됨
                 "top_n": top_n,
                 "large_cap_top5": large_cap_top5,  # v6.2: 대기업 TOP5
                 "all_scores": scores_filtered,  # 필터링된 목록
@@ -429,7 +255,7 @@ class ScreenerService:
                 self._send_alert(result, is_preview)
             
             # 6. 콘솔 출력
-            self._print_results(top_n)
+            logger.info(f"TOP5: {[s.stock_name for s in top_n]}")
             
             logger.info(f"스크리닝 완료: {execution_time:.1f}초")
             return result
@@ -469,8 +295,6 @@ class ScreenerService:
         - 없으면 → 가장 최근 스냅샷 사용 (FALLBACK 태그)
         - 그래도 없으면 → 후보 0개로 종료 (프로그램 유지)
         """
-        from src.domain.models import StockInfo
-        
         stocks = []
         names_dict = {}
         is_fallback = False
@@ -521,7 +345,6 @@ class ScreenerService:
             is_fallback = True
             
             try:
-                from src.infrastructure.repository import get_tv200_snapshot_repository
                 snapshot_repo = get_tv200_snapshot_repository()
                 
                 # 1차: 오늘 날짜 스냅샷
@@ -589,7 +412,6 @@ class ScreenerService:
                 codes.append(code)
             
             # DB 저장
-            from src.infrastructure.repository import get_tv200_snapshot_repository
             snapshot_repo = get_tv200_snapshot_repository()
             snapshot_repo.save_snapshot(
                 screen_date=today_str,
@@ -635,7 +457,6 @@ class ScreenerService:
                 filter_stage = stage
             
             try:
-                from src.infrastructure.repository import get_tv200_snapshot_repository
                 snapshot_repo = get_tv200_snapshot_repository()
                 snapshot_repo.save_snapshot(
                     screen_date=today_str,
@@ -831,8 +652,6 @@ class ScreenerService:
     def _save_result(self, result: Dict):
         """DB 저장 (기존 테이블 + v6.0 TOP5 테이블)"""
         try:
-            from src.domain.models import StockScore, ScoreDetail
-            
             # v5 → 레거시 변환
             legacy_scores = []
             for s in result["all_scores"]:
@@ -884,8 +703,6 @@ class ScreenerService:
         v6.3.1: 실시간 데이터 우선 - 저장 전 해당 날짜 기존 데이터 삭제
         """
         try:
-            from src.infrastructure.repository import get_top5_history_repository
-            
             top5_repo = get_top5_history_repository()
             top_n = result.get("top_n", [])
             screen_date = result["screen_date"]
@@ -1001,12 +818,10 @@ class ScreenerService:
                 else:
                     logger.warning("Discord 발송 실패")
                 
-            except ImportError as e:
-                logger.warning(f"v6.5 파이프라인 미설치, 기존 방식으로 fallback: {e}")
-                self._send_alert_legacy(top_n, cci_filtered, leading_sectors_text, is_preview)
             except Exception as e:
-                logger.warning(f"v6.5 파이프라인 실패, 기존 방식으로 fallback: {e}")
-                self._send_alert_legacy(top_n, cci_filtered, leading_sectors_text, is_preview)
+                logger.error(f"TOP5 파이프라인 실패: {e}")
+                import traceback
+                traceback.print_exc()
             
             # v6.2: 대기업 TOP5 별도 발송 (있는 경우)
             if large_cap_top5 and not is_preview:
@@ -1014,31 +829,6 @@ class ScreenerService:
                 
         except Exception as e:
             logger.error(f"알림 에러: {e}")
-    
-    def _send_alert_legacy(self, top_n: list, cci_filtered: int, leading_sectors_text: str, is_preview: bool):
-        """v8.0 fallback 알림 (파이프라인 실패 시)"""
-        try:
-            title = "🔮 감시종목 TOP5 (프리뷰)" if is_preview else "감시종목 TOP5"
-            if cci_filtered > 0:
-                title += f" (CCI과열 {cci_filtered}개 제외)"
-            
-            from src.services.discord_embed_builder import DiscordEmbedBuilder
-            embed_builder = DiscordEmbedBuilder()
-            embed = embed_builder.build_top5_embed(
-                stocks=top_n,
-                title=title,
-                leading_sectors_text=leading_sectors_text,
-                run_type="preview" if is_preview else "main",
-            )
-            
-            success = self.discord_notifier.send_embed(embed)
-            if success:
-                logger.info("감시종목 Discord 발송 완료 (fallback)")
-            else:
-                logger.warning("감시종목 Discord 발송 실패")
-                
-        except Exception as e:
-            logger.error(f"Fallback 알림 에러: {e}")
     
     def _send_large_cap_alert(self, large_cap_stocks: list):
         """v6.2: 대기업 TOP5 별도 알림"""
@@ -1059,50 +849,202 @@ class ScreenerService:
         except Exception as e:
             logger.warning(f"대기업 알림 실패: {e}")
     
-    def _print_results(self, top_n: List[StockScoreV5]):
-        """콘솔 출력 v6.2"""
-        print("\n" + "=" * 60)
-        print("🔔 감시종목 TOP5")
-        print("=" * 60)
-        
-        if not top_n:
-            print("적합한 종목 없음")
-            return
-        
-        for s in top_n:
-            d = s.score_detail
-            st = s.sell_strategy
-            grade_emoji = {"S": "🏆", "A": "🥇", "B": "🥈", "C": "🥉", "D": "⚠️"}
+
+    def _apply_broker_scores(self, scores_filtered: list, screen_date) -> dict:
+        """거래원 스캔 + 점수 반영 + DB 저장"""
+        try:
+            from src.services.broker_signal import (
+                get_broker_adjustments, calc_broker_score, BROKER_SCORE_NEUTRAL
+            )
+            codes_top20 = [s.stock_code for s in scores_filtered[:20]]
+            broker_adjustments = get_broker_adjustments(codes_top20)
             
-            # v6.2: 시가총액 정보 추가
-            market_cap = getattr(s, '_market_cap', 0)
-            cap_str = ""
-            if market_cap > 0:
-                if market_cap >= 10000:
-                    cap_str = f" | 시총 {market_cap/10000:.1f}조"
+            # 점수 반영
+            for score in scores_filtered:
+                adj = broker_adjustments.get(score.stock_code)
+                if adj:
+                    score.score_detail.broker_score = calc_broker_score(adj.anomaly_score)
+                    score.score_detail.raw_broker_anomaly = adj.anomaly_score
                 else:
-                    cap_str = f" | 시총 {market_cap:.0f}억"
+                    score.score_detail.broker_score = BROKER_SCORE_NEUTRAL
+                    score.score_detail.raw_broker_anomaly = 0
+                score.score_total = score.score_detail.total
             
-            print(f"\n#{s.rank} {s.stock_name} ({s.stock_code}){cap_str}")
-            print(f"   {s.score_total:.1f}점 {grade_emoji[s.grade.value]}{s.grade.value}")
-            print(f"   현재가: {s.current_price:,}원 ({s.change_rate:+.1f}%)")
-            print(f"   CCI: {d.raw_cci:.0f} | 이격도: {d.raw_distance:.1f}%")
-            print(f"   거래량: {d.raw_volume_ratio:.1f}배 | 연속: {d.raw_consec_days}일")
-            print(f"   매도: 시초 {st.open_sell_ratio}% / 목표 +{st.target_profit}%")
-        
-        print("\n" + "=" * 60)
+            # 재정렬
+            scores_filtered.sort(key=lambda x: (-x.score_total, -x.trading_value))
+            for i, s in enumerate(scores_filtered, 1):
+                s.rank = i
+            
+            # DB 저장
+            if broker_adjustments:
+                logger.info(f"거래원 v8: {len(broker_adjustments)}개 이상감지")
+                self._save_broker_signals(broker_adjustments, screen_date, calc_broker_score)
+            
+            return broker_adjustments
+        except ImportError:
+            logger.debug("broker_signal 모듈 없음, 건너뜀")
+            return {}
+        except Exception as e:
+            logger.warning(f"거래원 스캔 실패 (무시): {e}")
+            return {}
+    
+    def _save_broker_signals(self, broker_adjustments: dict, screen_date, calc_broker_score):
+        """거래원 이상감지 결과 DB 저장"""
+        try:
+            import json as _json
+            broker_repo = get_broker_signal_repository()
+            
+            for code, adj in broker_adjustments.items():
+                _name = self._resolve_stock_name(code)
+                broker_repo.save_signal(
+                    screen_date=screen_date,
+                    stock_code=code,
+                    stock_name=_name,
+                    anomaly_score=adj.anomaly_score,
+                    broker_score=calc_broker_score(adj.anomaly_score),
+                    tag=adj.tag,
+                    buyers_json=_json.dumps(adj.buyers_raw, ensure_ascii=False) if adj.buyers_raw else "",
+                    sellers_json=_json.dumps(adj.sellers_raw, ensure_ascii=False) if adj.sellers_raw else "",
+                    unusual_score=adj.unusual_score,
+                    asymmetry_score=adj.asymmetry_score,
+                    distribution_score=adj.distribution_score,
+                    foreign_score=adj.foreign_score,
+                    frgn_buy=adj.frgn_buy,
+                    frgn_sell=adj.frgn_sell,
+                )
+            logger.info(f"broker_signals DB 저장: {len(broker_adjustments)}건")
+        except Exception as e:
+            logger.warning(f"broker_signals DB 저장 실패 (무시): {e}")
+    
+    def _resolve_stock_name(self, code: str) -> str:
+        """종목코드로 종목명 조회"""
+        try:
+            if MAPPING_FILE and MAPPING_FILE.exists():
+                import csv
+                with open(MAPPING_FILE, "r", encoding="utf-8") as f:
+                    for row in csv.DictReader(f):
+                        if str(row.get("code", "")).zfill(6) == code:
+                            return row.get("name", code)
+        except Exception:
+            pass
+        return code
+    
+    def _calculate_volume_profiles(self, scores_filtered: list):
+        """매물대(Volume Profile) 계산"""
+        try:
+            logger.info("[매물대] Volume Profile 계산 시작...")
+            vp_count = 0
+            vp_cfg = settings.vp
+            use_kiwoom = (vp_cfg.source in {"auto", "kiwoom"})
+            use_local = (vp_cfg.source in {"auto", "local"})
+            
+            kiwoom_client = None
+            kiwoom_available = True
+            if use_kiwoom and os.getenv("DASHBOARD_ONLY", "").lower() != "true":
+                try:
+                    kiwoom_client = get_kiwoom_client()
+                except Exception as e:
+                    logger.warning(f"[매물대] 키움 클라이언트 로드 실패: {e}")
+                    kiwoom_available = False
+            
+            vp_data_cache = None
+            vp_error_count = 0
+            for score in scores_filtered:
+                code = score.stock_code
+                price = score.current_price
+                try:
+                    vp_result = None
+                    vp_meta = ""
+                    
+                    # 키움 API
+                    if use_kiwoom and kiwoom_client and kiwoom_available:
+                        try:
+                            if vp_data_cache is None:
+                                data = kiwoom_client.get_volume_profile(
+                                    stock_code=code,
+                                    cycle_tp=str(vp_cfg.cycle),
+                                    prpscnt=str(vp_cfg.bands),
+                                    cur_prc_entry=str(vp_cfg.cur_entry),
+                                    trde_qty_tp=str(vp_cfg.trde_qty_tp),
+                                    tr_id=str(vp_cfg.api_id),
+                                )
+                                if isinstance(data, dict) and not any(
+                                    isinstance(v, list) and v for v in data.values()
+                                ):
+                                    kiwoom_available = False
+                                    data = {}
+                                vp_data_cache = data
+                            else:
+                                data = vp_data_cache
+                            
+                            vp_result = calc_volume_profile_from_kiwoom(
+                                data=data, current_price=price,
+                                n_days=vp_cfg.cycle, cur_entry=vp_cfg.cur_entry,
+                                stock_code=code,
+                            )
+                            vp_meta = f"kiwoom/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                        except Exception as e:
+                            logger.debug(f"VP(kiwoom) {code} 오류: {e}")
+                    
+                    if vp_result is not None and vp_result.tag == "데이터부족":
+                        vp_result = None
+                    
+                    # 로컬 CSV 폴백
+                    if vp_result is None and use_local:
+                        vp_result = calc_volume_profile_from_csv(
+                            stock_code=code, current_price=price,
+                            ohlcv_dir=OHLCV_FULL_DIR,
+                            n_days=vp_cfg.cycle, n_bands=vp_cfg.bands,
+                        )
+                        vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                    
+                    if vp_result is None:
+                        vp_result = VolumeProfileResult()
+                        vp_meta = ""
+                    
+                    # 안전한 속성 접근 (score_detail 또는 vp_result가 None인 케이스 방어)
+                    if score.score_detail is not None and vp_result is not None:
+                        score.score_detail.raw_vp_score = vp_result.score
+                        score.score_detail.raw_vp_above_pct = vp_result.above_pct
+                        score.score_detail.raw_vp_below_pct = vp_result.below_pct
+                        score.score_detail.raw_vp_tag = vp_result.tag
+                        score.score_detail.raw_vp_meta = vp_meta
+                        if vp_result.tag != "데이터부족":
+                            vp_count += 1
+                    else:
+                        vp_error_count += 1
+                except Exception as e:
+                    vp_error_count += 1
+                    if score.score_detail is not None:
+                        score.score_detail.raw_vp_score = VP_SCORE_NEUTRAL
+                        score.score_detail.raw_vp_above_pct = 0.0
+                        score.score_detail.raw_vp_below_pct = 0.0
+                        score.score_detail.raw_vp_tag = "오류"
+                        score.score_detail.raw_vp_meta = ""
+            
+            # 요약 로그 (개별 오류 스팸 제거)
+            if vp_error_count > 0:
+                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료 (오류: {vp_error_count}개)")
+            else:
+                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료")
+        except Exception as e:
+            logger.warning(f"[매물대] 계산 실패 (무시): {e}")
 
 
-# 편의 함수
 def run_screening(
     screen_time: str = "15:00",
     save_to_db: bool = True,
     send_alert: bool = True,
     is_preview: bool = False,
 ) -> Dict:
-    """스크리닝 실행"""
+    """모듈 레벨 스크리닝 래퍼"""
     service = ScreenerService()
-    return service.run_screening(screen_time, save_to_db, send_alert, is_preview)
+    return service.run_screening(
+        screen_time=screen_time,
+        save_to_db=save_to_db,
+        send_alert=send_alert,
+        is_preview=is_preview,
+    )
 
 
 def run_main_screening() -> Dict:

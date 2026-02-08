@@ -221,9 +221,21 @@ def parse_coinfo_page(html: str) -> CompanyInfo:
     info = CompanyInfo()
     
     # ===== 시가총액 =====
-    cap_match = re.search(r'id="_market_sum">([^<]+)</em>억원', html, re.DOTALL)
+    # 패턴 1: id="_market_sum">TEXT</em>억원
+    cap_match = re.search(r'id="_market_sum"[^>]*>\s*([^<]+?)\s*</em>\s*억원', html, re.DOTALL)
+    if not cap_match:
+        # 패턴 2: _market_sum 뒤에 숫자+조/억
+        cap_match = re.search(r'_market_sum[^>]*>\s*([\d,.\s조]+?)\s*<', html, re.DOTALL)
     if cap_match:
-        info.market_cap = parse_market_cap(cap_match.group(1))
+        raw = cap_match.group(1).strip()
+        if raw and raw != '-':
+            info.market_cap = parse_market_cap(raw)
+    
+    # 폴백: 시가총액 텍스트 직접 검색
+    if not info.market_cap:
+        mcap_fb = re.search(r'시가총액[^0-9]*([\d,]+)\s*억', html)
+        if mcap_fb:
+            info.market_cap = parse_number(mcap_fb.group(1))
     
     # 시가총액 순위
     rank_match = re.search(r'코스피\s*<em>(\d+)</em>위', html)
@@ -569,13 +581,23 @@ def collect_company_info_with_dart(limit: int = 100) -> Dict:
                 basic = profile.get('basic') or {}
                 financial = profile.get('financial') or {}
                 
-                # v6.5.1: 네이버에서 PER/PBR/ROE 보충 수집
-                per, pbr, roe = None, None, None
+                # v6.5.1: 네이버에서 PER/PBR/ROE/시총 보충 수집
+                per, pbr, roe, market_cap, market_cap_rank = None, None, None, None, None
+                foreign_rate, analyst_recommend, target_price = None, None, None
+                high_52w, low_52w = None, None
                 try:
                     naver_info = fetch_naver_finance(stock_code)
-                    per = naver_info.per
-                    pbr = naver_info.pbr
-                    roe = naver_info.roe
+                    per = naver_info.get('per')
+                    pbr = naver_info.get('pbr')
+                    roe = naver_info.get('roe')
+                    market_cap = naver_info.get('market_cap')
+                    market_cap_rank = naver_info.get('market_cap_rank')
+                    foreign_rate = naver_info.get('foreign_rate')
+                    analyst_recommend = naver_info.get('analyst_recommend')
+                    target_price = naver_info.get('target_price')
+                    high_52w = naver_info.get('high_52w')
+                    low_52w = naver_info.get('low_52w')
+                    logger.debug(f"  네이버 보충: 시총={market_cap}, PER={per}, PBR={pbr}")
                 except Exception as e:
                     logger.debug(f"네이버 PER/PBR/ROE 수집 실패 ({stock_code}): {e}")
                 
@@ -592,6 +614,14 @@ def collect_company_info_with_dart(limit: int = 100) -> Dict:
                         'per': per,
                         'pbr': pbr,
                         'roe': roe,
+                        # v10.1: 시총 + 외국인 + 투자의견 보충
+                        'market_cap': market_cap,
+                        'market_cap_rank': market_cap_rank,
+                        'foreign_rate': foreign_rate,
+                        'analyst_recommend': analyst_recommend,
+                        'target_price': target_price,
+                        'high_52w': high_52w,
+                        'low_52w': low_52w,
                         'data_source': 'DART+NAVER',
                     }
                 )

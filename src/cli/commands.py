@@ -1,4 +1,4 @@
-﻿"""CLI command handlers for main.py."""
+"""CLI command handlers for main.py."""
 import logging
 
 

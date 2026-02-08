@@ -673,6 +673,9 @@ class Database:
         # v9.1 마이그레이션 (눌림목 스캐너)
         self.run_migration_v91_pullback()
         
+        # v10.0 마이그레이션 (공매도/지지저항)
+        self.run_migration_v10_short_sr()
+        
         logger.info("데이터베이스 초기화 완료")
     
     def run_migrations(self):
@@ -938,10 +941,114 @@ class Database:
         finally:
             # ai_comment 컬럼 추가 (기존 테이블 호환)
             try:
-                self.execute("ALTER TABLE pullback_signals ADD COLUMN ai_comment TEXT DEFAULT ''")
-                logger.info("pullback_signals.ai_comment 컬럼 추가")
+                cols = [r["name"] for r in self.fetch_all("PRAGMA table_info(pullback_signals)")]
+                if 'ai_comment' not in cols:
+                    self.execute("ALTER TABLE pullback_signals ADD COLUMN ai_comment TEXT DEFAULT ''")
+                    logger.info("pullback_signals.ai_comment 컬럼 추가")
             except Exception:
                 pass  # 이미 존재
+    
+    def run_migration_v10_short_sr(self):
+        """v10.0 마이그레이션: 공매도/대차거래/지지저항 테이블"""
+        try:
+            tables = self.fetch_all(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+                ('short_selling_daily',)
+            )
+            if len(tables) > 0:
+                logger.debug("v10.0 마이그레이션 스킵 (이미 적용됨)")
+                return True
+            
+            logger.info("v10.0 마이그레이션 시작 (공매도/지지저항)...")
+            
+            self.execute_script("""
+                -- 공매도 일별 데이터
+                CREATE TABLE IF NOT EXISTS short_selling_daily (
+                    stock_code TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    close_price INTEGER DEFAULT 0,
+                    change_rate REAL DEFAULT 0,
+                    trade_volume INTEGER DEFAULT 0,
+                    short_volume INTEGER DEFAULT 0,
+                    short_ratio REAL DEFAULT 0,
+                    cumulative_short INTEGER DEFAULT 0,
+                    short_avg_price INTEGER DEFAULT 0,
+                    short_trade_value INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (stock_code, date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_ss_date ON short_selling_daily(date);
+                CREATE INDEX IF NOT EXISTS idx_ss_code ON short_selling_daily(stock_code);
+                
+                -- 대차거래 일별 데이터
+                CREATE TABLE IF NOT EXISTS stock_lending_daily (
+                    stock_code TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    lending_volume INTEGER DEFAULT 0,
+                    repayment_volume INTEGER DEFAULT 0,
+                    net_change INTEGER DEFAULT 0,
+                    balance_shares INTEGER DEFAULT 0,
+                    balance_amount INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (stock_code, date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sl_date ON stock_lending_daily(date);
+                CREATE INDEX IF NOT EXISTS idx_sl_code ON stock_lending_daily(stock_code);
+                
+                -- 지지/저항 분석 결과 캐시
+                CREATE TABLE IF NOT EXISTS support_resistance_cache (
+                    stock_code TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    pivot_pp REAL DEFAULT 0,
+                    pivot_s1 REAL DEFAULT 0,
+                    pivot_s2 REAL DEFAULT 0,
+                    pivot_r1 REAL DEFAULT 0,
+                    pivot_r2 REAL DEFAULT 0,
+                    ma20 REAL DEFAULT 0,
+                    ma60 REAL DEFAULT 0,
+                    ma120 REAL DEFAULT 0,
+                    nearest_support REAL DEFAULT 0,
+                    nearest_resistance REAL DEFAULT 0,
+                    support_distance_pct REAL DEFAULT 0,
+                    resistance_distance_pct REAL DEFAULT 0,
+                    score REAL DEFAULT 0,
+                    tags_json TEXT DEFAULT '[]',
+                    summary TEXT DEFAULT '',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (stock_code, date)
+                );
+            """)
+            
+            # closing_top5_history에 공매도/SR 컬럼 추가
+            alter_columns = [
+                ("short_ratio", "REAL DEFAULT 0"),
+                ("short_score", "REAL DEFAULT 0"),
+                ("short_tags", "TEXT DEFAULT ''"),
+                ("sr_score", "REAL DEFAULT 0"),
+                ("sr_nearest_support", "REAL DEFAULT 0"),
+                ("sr_nearest_resistance", "REAL DEFAULT 0"),
+                ("sr_tags", "TEXT DEFAULT ''"),
+            ]
+            
+            cols = self.fetch_all("PRAGMA table_info(closing_top5_history)")
+            existing_cols = {c['name'] for c in cols}
+            
+            for col_name, col_type in alter_columns:
+                if col_name not in existing_cols:
+                    try:
+                        self.execute(
+                            f"ALTER TABLE closing_top5_history ADD COLUMN {col_name} {col_type}"
+                        )
+                        logger.info(f"  ALTER TABLE closing_top5_history: {col_name} 추가")
+                    except Exception as e:
+                        logger.debug(f"  ALTER TABLE 스킵 ({col_name}): {e}")
+            
+            logger.info("v10.0 마이그레이션 완료 (공매도/지지저항)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"v10.0 마이그레이션 실패: {e}")
+            return False
     
     def update_next_day_is_top3(self):
         """기존 next_day_results 데이터의 is_top3 값 업데이트"""

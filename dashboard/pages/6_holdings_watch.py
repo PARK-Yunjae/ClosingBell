@@ -9,7 +9,7 @@ try:
         SIDEBAR_TITLE,
     )
 except ImportError:
-    APP_FULL_VERSION = "ClosingBell v9.1"
+    APP_FULL_VERSION = "ClosingBell v10.1"
     FOOTER_DASHBOARD = APP_FULL_VERSION
     SIDEBAR_TITLE = "🔔 ClosingBell"
 

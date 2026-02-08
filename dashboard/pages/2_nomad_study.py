@@ -29,7 +29,7 @@ try:
         MSG_COMPANY_INFO_AUTO,
     )
 except ImportError:
-    APP_VERSION = "v9.1"
+    APP_VERSION = "v10.1"
     APP_FULL_VERSION = f"ClosingBell {APP_VERSION}"
     AI_ENGINE = "Gemini AI"
     SIDEBAR_TITLE = "🔔 ClosingBell"
@@ -306,6 +306,26 @@ else:
     default_date = date.fromisoformat(dates[0]) if dates else date.today()
 
 selected_date_input = st.sidebar.date_input("공부 날짜", value=default_date)
+
+# 휴장일 경고 + 직전 거래일로 자동 보정
+try:
+    from src.utils.market_calendar import is_market_open
+    if not is_market_open(selected_date_input):
+        weekday_kr = ['월','화','수','목','금','토','일'][selected_date_input.weekday()]
+        # 직전 거래일 찾기
+        corrected = selected_date_input
+        for _ in range(10):
+            corrected -= timedelta(days=1)
+            if is_market_open(corrected):
+                break
+        st.sidebar.caption(
+            f"⚠️ {selected_date_input.strftime('%m/%d')}({weekday_kr})은 휴장일 → "
+            f"**{corrected.strftime('%m/%d')}** 표시"
+        )
+        selected_date_input = corrected
+except ImportError:
+    pass
+
 selected_date = selected_date_input.isoformat()
 
 # 데이터 있는 가장 가까운 날짜로 이동 버튼

@@ -24,6 +24,7 @@ from typing import Dict, Optional, List
 
 from src.config.settings import settings
 from src.services.http_utils import mask_text
+from src.utils.formatters import format_market_cap
 from src.infrastructure.repository import (
     get_nomad_candidates_repository,
     get_nomad_news_repository,
@@ -35,13 +36,6 @@ logger = logging.getLogger(__name__)
 API_DELAY = 1.0
 
 
-def format_market_cap(cap) -> str:
-    """시가총액 포맷"""
-    if cap is None or cap <= 0:
-        return "-"
-    if cap >= 10000:
-        return f"{cap/10000:.1f}조"
-    return f"{cap:,.0f}억"
 
 
 def generate_ai_analysis(candidate: dict, news_list: list) -> tuple:

@@ -150,6 +150,10 @@ class EnrichedStock:
     enriched_at: str = ""
     enrich_errors: List[str] = field(default_factory=list)
     
+    # v10.0: 공매도/지지저항 분석
+    short_selling_score: Any = None   # ShortSellingScore
+    sr_analysis: Any = None           # SupportResistance
+    
     @classmethod
     def from_stock_score(cls, score: Any, rank: int = 0) -> 'EnrichedStock':
         """StockScoreV5에서 EnrichedStock 생성"""
@@ -232,6 +236,20 @@ class EnrichedStock:
             'news': [{'title': n.title, 'source': n.source} for n in self.news[:3]],
             'calculated': self.calculated.__dict__ if self.calculated else None,
             'enriched_at': self.enriched_at,
+            # v10.0: 공매도/지지저항
+            'short_selling': {
+                'score': self.short_selling_score.score,
+                'latest_ratio': self.short_selling_score.latest_short_ratio,
+                'tags': self.short_selling_score.tags,
+                'summary': self.short_selling_score.summary,
+            } if self.short_selling_score else None,
+            'support_resistance': {
+                'score': self.sr_analysis.score,
+                'nearest_support': self.sr_analysis.nearest_support,
+                'nearest_resistance': self.sr_analysis.nearest_resistance,
+                'tags': self.sr_analysis.tags,
+                'summary': self.sr_analysis.summary,
+            } if self.sr_analysis else None,
         }
 
 
@@ -371,6 +389,35 @@ class EnrichmentService:
         except Exception as e:
             logger.warning(f"뉴스 수집 실패 ({stock.stock_code}): {e}")
             stock.enrich_errors.append(f"News: {str(e)[:50]}")
+        
+        # 3. v10.0: 공매도/대차거래 분석
+        try:
+            from src.services.short_selling_service import fetch_and_analyze
+            from src.adapters.kiwoom_rest_client import get_kiwoom_client
+            broker = get_kiwoom_client()
+            stock.short_selling_score = fetch_and_analyze(stock.stock_code, broker)
+            logger.info(f"📉 공매도 분석: {stock.stock_code} → score={stock.short_selling_score.score}, ratio={stock.short_selling_score.latest_short_ratio}%, {stock.short_selling_score.summary}")
+        except Exception as e:
+            logger.warning(f"⚠️ 공매도 분석 실패 ({stock.stock_code}): {type(e).__name__}: {e}")
+            stock.enrich_errors.append(f"Short: {str(e)[:50]}")
+        
+        # 4. v10.0: 지지/저항선 분석
+        try:
+            from src.services.sr_calculator import calculate_support_resistance
+            from src.adapters.kiwoom_rest_client import get_kiwoom_client
+            broker = get_kiwoom_client()
+            prices = broker.get_daily_prices(stock.stock_code, count=120)
+            if prices:
+                current = stock.screen_price or (prices[-1].close if prices else 0)
+                stock.sr_analysis = calculate_support_resistance(
+                    stock.stock_code, prices, current_price=current
+                )
+                logger.info(f"📊 지지/저항: {stock.stock_code} → score={stock.sr_analysis.score}, S={stock.sr_analysis.nearest_support}, R={stock.sr_analysis.nearest_resistance}")
+            else:
+                logger.warning(f"⚠️ 지지/저항: {stock.stock_code} → 가격 데이터 없음 (prices=None)")
+        except Exception as e:
+            logger.warning(f"⚠️ 지지/저항 분석 실패 ({stock.stock_code}): {type(e).__name__}: {e}")
+            stock.enrich_errors.append(f"SR: {str(e)[:50]}")
         
         return stock
     

@@ -20,6 +20,7 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Any, Tuple
 
 from src.config.constants import get_top_n_count
+from src.utils.formatters import get_grade_value
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,7 @@ class Top5Pipeline:
                                 (screen_date.isoformat(), stock_code)
                             )
                             if existing:
+                                existing = dict(existing)
                                 already_analyzed[stock_code] = {
                                     'recommendation': existing.get('ai_recommendation', '관망'),
                                     'risk_level': existing.get('ai_risk_level', '보통'),
@@ -191,7 +193,7 @@ class Top5Pipeline:
                         else:
                             stocks_to_analyze.append(stock)
                 except Exception as e:
-                    logger.debug(f"AI 캐시 체크 실패 (전체 분석 진행): {e}")
+                    logger.info(f"AI 캐시 체크 실패 (전체 분석 진행): {type(e).__name__}: {e}")
                     stocks_to_analyze = enriched_stocks if enriched_stocks else scores[:self.top_n_count]
                 
                 # 새로 분석할 종목만 AI 호출
@@ -205,6 +207,7 @@ class Top5Pipeline:
                             'recommendation': ai_result.recommendation,
                             'risk_level': ai_result.risk_level,
                             'summary': ai_result.summary,
+                            'material': getattr(ai_result, 'material', ''),
                             'investment_point': ai_result.investment_point,
                             'risk_factor': ai_result.risk_factor,
                         }
@@ -314,17 +317,48 @@ class Top5Pipeline:
                         updated_count += 1
             
             logger.info(f"AI 필드 업데이트 완료: {updated_count}/{len(scores[:self.top_n_count])}개")
+            
+            # v10.0: 공매도/지지저항 필드 저장
+            if enriched_stocks:
+                ss_count = 0
+                missing_data_count = 0
+                for stock in enriched_stocks:
+                    code = getattr(stock, 'stock_code', '')
+                    ss = getattr(stock, 'short_selling_score', None)
+                    sr = getattr(stock, 'sr_analysis', None)
+                    
+                    logger.info(f"  공매도/SR 체크: {code} → ss={'있음' if ss else 'None'}, sr={'있음' if sr else 'None'}")
+                    
+                    if ss or sr:
+                        try:
+                            repo.update_short_sr_fields(
+                                screen_date=screen_date.isoformat(),
+                                stock_code=code,
+                                short_ratio=getattr(ss, 'latest_short_ratio', 0) if ss else 0,
+                                short_score=getattr(ss, 'score', 0) if ss else 0,
+                                short_tags=' '.join(getattr(ss, 'tags', [])) if ss else '',
+                                sr_score=getattr(sr, 'score', 0) if sr else 0,
+                                sr_nearest_support=getattr(sr, 'nearest_support', 0) if sr else 0,
+                                sr_nearest_resistance=getattr(sr, 'nearest_resistance', 0) if sr else 0,
+                                sr_tags=' '.join(getattr(sr, 'tags', [])) if sr else '',
+                            )
+                            ss_count += 1
+                            logger.debug(f"  ✅ 공매도/SR 저장: {code}")
+                        except Exception as e:
+                            logger.warning(f"  ❌ 공매도/SR 저장 실패 ({code}): {e}")
+                    else:
+                        missing_data_count += 1
+                
+                if ss_count > 0:
+                    logger.info(f"공매도/SR 필드 저장: {ss_count}개")
+                if missing_data_count > 0:
+                    logger.warning(f"⚠️ 공매도/SR 데이터 누락: {missing_data_count}개 종목 (Enrichment 확인 필요)")
+            
             return updated_count > 0
             
         except Exception as e:
             logger.error(f"AI 필드 업데이트 실패: {e}")
             return False
-    
-    def _get_grade_value(self, grade) -> str:
-        """등급 값 추출"""
-        if hasattr(grade, 'value'):
-            return grade.value
-        return str(grade) if grade else "-"
     
     def _get_cci(self, score) -> float:
         """CCI 값 추출"""
@@ -456,4 +490,32 @@ if __name__ == "__main__":
         for code, ai in result['ai_results'].items():
             print(f"  {code}: {ai.get('recommendation')} | {ai.get('risk_level')} | {ai.get('summary', '')[:30]}...")
     
+    # -------------------------------------------------------------------------
+    # v10.1: 데이터 누락 로깅 테스트 (DB 저장 시뮬레이션)
+    # -------------------------------------------------------------------------
+    print("\n" + "="*60)
+    print("데이터 누락 로깅 테스트 (Simulated)")
+    print("="*60)
+    
+    # 데이터가 없는 상태의 EnrichedStock 모의 객체
+    class MockEnrichedStock:
+        def __init__(self, code):
+            self.stock_code = code
+            # short_selling_score, sr_analysis 속성 없음 (또는 None)
+            self.short_selling_score = None
+            self.sr_analysis = None
+
+    # 저장 로직만 따로 테스트 (DB 연결 실패해도 로그는 찍히는지 확인)
+    try:
+        print(">> 공매도/SR 데이터가 없는 경우 경고 로그가 출력되어야 합니다:")
+        pipeline._save_to_db(
+            scores=[], 
+            enriched_stocks=[MockEnrichedStock('TEST01'), MockEnrichedStock('TEST02')],
+            ai_results={},
+            screen_date=date.today()
+        )
+    except Exception as e:
+        print(f"   (DB 연결 오류 무시): {e}")
+        print("   ✅ 위 로그에 '⚠️ 공매도/SR 데이터 누락'이 보이면 성공입니다.")
+
     print("\n" + "="*60)

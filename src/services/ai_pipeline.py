@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from src.utils.formatters import format_market_cap, format_trading_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,7 @@ class AIAnalysisResult:
     recommendation: str = ""      # 매수/관망/매도
     risk_level: str = ""          # 낮음/보통/높음
     summary: str = ""             # 핵심 요약 (30자 이내)
+    material: str = ""            # 상승 재료/테마 (15자 이내)
     investment_point: str = ""    # 투자 포인트
     risk_factor: str = ""         # 리스크 요인
     confidence: float = 0.0       # 신뢰도 (0~1)
@@ -48,6 +51,7 @@ class AIAnalysisResult:
             'recommendation': self.recommendation,
             'risk_level': self.risk_level,
             'summary': self.summary,
+            'material': self.material,
             'investment_point': self.investment_point,
             'risk_factor': self.risk_factor,
             'confidence': self.confidence,
@@ -70,6 +74,11 @@ BATCH_PROMPT_TEMPLATE = """
 3. 주도섹터(is_leading_sector=true)면 가점
 4. 거래대금 500억 미만이면 유동성 리스크 언급
 5. summary는 30자 이내로 핵심만
+6. 뉴스에서 상승 재료/테마를 파악하여 material에 기입 (예: "AI반도체 수혜", "실적 턴어라운드", "정부 정책 수혜")
+7. 뉴스가 없거나 재료를 특정할 수 없으면 material=""
+8. 공매도 비중 10% 이상이면 risk_factor에 "공매도 과열" 언급, risk_level 상향 고려
+9. 대차잔고 연속 증가 중이면 하방 압력 경고
+10. 지지선 근접(2% 이내)이면 반등 가능성 언급, 이평선 역배열이면 추세 전환 경고
 
 === 종목 데이터 ===
 {stock_data}
@@ -83,6 +92,7 @@ BATCH_PROMPT_TEMPLATE = """
     "recommendation": "매수|관망|매도",
     "risk_level": "낮음|보통|높음",
     "summary": "핵심 요약 30자 이내",
+    "material": "상승 재료/테마 15자 이내 (없으면 빈 문자열)",
     "investment_point": "투자 포인트 1문장",
     "risk_factor": "리스크 요인 1문장",
     "confidence": 0.0~1.0
@@ -119,6 +129,12 @@ STOCK_DATA_TEMPLATE = """
 
 📰 최근 뉴스
 {news_info}
+
+🔻 공매도/대차거래
+{short_selling_info}
+
+📍 지지/저항선
+{sr_info}
 """
 
 
@@ -168,22 +184,6 @@ class AIPipeline:
                 logger.error("google-genai 패키지가 설치되지 않았습니다")
                 return None
         return self._client
-    
-    def _format_market_cap(self, value: float) -> str:
-        """시가총액 포맷"""
-        if not value:
-            return "-"
-        if value >= 10000:
-            return f"{value/10000:.1f}조"
-        return f"{value:,.0f}억"
-    
-    def _format_trading_value(self, value: float) -> str:
-        """거래대금 포맷"""
-        if not value:
-            return "-"
-        if value >= 1000:
-            return f"{value/1000:.1f}조"
-        return f"{value:,.0f}억"
     
     def _format_stock_data(self, stock: Any, rank: int) -> str:
         """단일 종목 데이터 포맷"""
@@ -271,6 +271,40 @@ class AIPipeline:
                 news_lines.append(f"• {title}...")
             news_info = "\n".join(news_lines)
         
+        # v10.0: 공매도/대차거래
+        short_selling_info = "• 데이터 없음"
+        ss = getattr(stock, 'short_selling_score', None)
+        if ss and hasattr(ss, 'latest_short_ratio'):
+            ss_lines = []
+            if ss.latest_short_ratio > 0:
+                ss_lines.append(f"• 공매도 비중: {ss.latest_short_ratio:.1f}% (5일평균: {ss.avg_short_ratio_5d:.1f}%)")
+            if ss.short_ratio_change:
+                ss_lines.append(f"• 비중 변화: {ss.short_ratio_change:+.1f}%")
+            if ss.lending_consecutive_decrease > 0:
+                ss_lines.append(f"• 대차잔고: {ss.lending_consecutive_decrease}일 연속 감소")
+            elif ss.lending_trend_3d > 0:
+                ss_lines.append(f"• 대차잔고: 증가 추세")
+            if ss.tags:
+                ss_lines.append(f"• 신호: {' '.join(ss.tags)}")
+            if ss_lines:
+                short_selling_info = "\n".join(ss_lines)
+        
+        # v10.0: 지지/저항선
+        sr_info = "• 데이터 없음"
+        sr = getattr(stock, 'sr_analysis', None)
+        if sr and hasattr(sr, 'nearest_support'):
+            sr_lines = []
+            if sr.nearest_support > 0:
+                sr_lines.append(f"• 최근접 지지선: {int(sr.nearest_support):,}원 (거리: {sr.support_distance_pct:.1f}%)")
+            if sr.nearest_resistance > 0:
+                sr_lines.append(f"• 최근접 저항선: {int(sr.nearest_resistance):,}원 (거리: {sr.resistance_distance_pct:.1f}%)")
+            if sr.ma:
+                sr_lines.append(f"• 이평선 위치: {sr.ma.bullish_count}/5개 위에")
+            if sr.tags:
+                sr_lines.append(f"• 신호: {' '.join(sr.tags)}")
+            if sr_lines:
+                sr_info = "\n".join(sr_lines)
+        
         return STOCK_DATA_TEMPLATE.format(
             rank=rank,
             stock_name=stock_name,
@@ -279,8 +313,8 @@ class AIPipeline:
             grade=grade,
             price=price,
             change_rate=change_rate,
-            market_cap=self._format_market_cap(market_cap),
-            trading_value=self._format_trading_value(trading_value),
+            market_cap=format_market_cap(market_cap),
+            trading_value=format_trading_value(trading_value),
             cci=cci,
             cci_warning=cci_warning,
             disparity=disparity,
@@ -291,6 +325,8 @@ class AIPipeline:
             financial_info=financial_info,
             dart_info=dart_info,
             news_info=news_info,
+            short_selling_info=short_selling_info,
+            sr_info=sr_info,
         )
     
     def analyze_batch(self, stocks: List[Any]) -> List[AIAnalysisResult]:
@@ -377,6 +413,7 @@ class AIPipeline:
                     recommendation=ai_result.get('recommendation', '관망'),
                     risk_level=ai_result.get('risk_level', '보통'),
                     summary=ai_result.get('summary', '')[:50],
+                    material=ai_result.get('material', '')[:20],
                     investment_point=ai_result.get('investment_point', ''),
                     risk_factor=ai_result.get('risk_factor', ''),
                     confidence=float(ai_result.get('confidence', 0.5)),

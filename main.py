@@ -61,8 +61,6 @@ from src.services.screener_service import run_screening, ScreenerService
 from src.domain.score_calculator import (
     StockScoreV5,
     StockGrade,
-    SellStrategy,
-    SELL_STRATEGIES,
 )
 
 
@@ -71,7 +69,7 @@ def print_banner():
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║   🔔  ClosingBell v9.1                                       ║
+║   🔔  ClosingBell v10.1                                      ║
 ║                                                              ║
 ║   📊 7핵심 지표 점수제 (100점 만점)                            ║
 ║      CCI·등락률·이격도·연속·거래량·캔들·거래원 각 13점          ║
@@ -88,9 +86,8 @@ def print_banner():
 
 
 def print_score_detail(score: StockScoreV5, rank: int = None):
-    """종목 점수 상세 출력"""
+    """종목 점수 상세 출력 - v10.1"""
     d = score.score_detail
-    s = score.sell_strategy
     
     grade_emoji = {"S": "🏆", "A": "🥇", "B": "🥈", "C": "🥉", "D": "⚠️"}
     rank_str = f"#{rank} " if rank else ""
@@ -137,12 +134,11 @@ def print_score_detail(score: StockScoreV5, rank: int = None):
     print(f"      소계:            {bonus_total:>5.1f}/9")
     print()
     
-    # 매도 전략
-    print(f"   [매도 전략] 신뢰도: {s.confidence}")
-    print(f"      📈 시초가 {s.open_sell_ratio}% 매도")
-    if s.target_sell_ratio > 0:
-        print(f"      🎯 나머지 {s.target_sell_ratio}%: 목표가 +{s.target_profit}%")
-    print(f"      🛡️ 손절가: {s.stop_loss}%")
+    # v10.1: 위험 태그 표시
+    if hasattr(score, 'risk_tags') and score.risk_tags:
+        print()
+        print(f"   [위험 태그]")
+        print(f"      {' '.join(score.risk_tags)}")
 
 
 def print_result(result: dict):
@@ -164,15 +160,13 @@ def print_result(result: dict):
     else:
         print("\n❌ 적합한 종목이 없습니다.")
     
-    # 매도전략 안내
+    # v10.1: 등급 참고 안내
     print(f"\n{'='*60}")
-    print("📋 등급별 매도전략")
+    print("📋 등급 안내 (판단 참고용)")
     print(f"{'='*60}")
-    print("🏆 S등급 (85점+): 시초 30% + 목표 +4% | 손절 -3%")
-    print("🥇 A등급 (75-84): 시초 40% + 목표 +3% | 손절 -2.5%")
-    print("🥈 B등급 (65-74): 시초 50% + 목표 +2.5% | 손절 -2%")
-    print("🥉 C등급 (55-64): 시초 70% + 목표 +2% | 손절 -1.5%")
-    print("⚠️ D등급 (<55):   시초 전량매도 | 손절 -1%")
+    print("🏆 S등급 (85+) | 🥇 A등급 (75-84) | 🥈 B등급 (65-74)")
+    print("🥉 C등급 (55-64) | ⚠️ D등급 (<55)")
+    print("⚠️ = CCI과열/이격과대/등락과대 (감점 반영됨)")
 
 
 def run_scheduler_mode():

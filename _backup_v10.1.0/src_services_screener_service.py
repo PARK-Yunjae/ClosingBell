@@ -1,0 +1,1094 @@
+"""
+스크리닝 서비스 v8.0 (키움 REST API)
+
+책임:
+- 스크리닝 플로우 제어
+- 유니버스 조회 → 데이터 수집 → 점수 계산 → 저장 → 알림
+- 최소한의 하드필터 (데이터부족, 하락종목만 제외)
+- 나머지 조건은 모두 점수로 반영 (소프트 필터)
+
+v7.0 변경사항:
+- 키움증권 REST API 전환 (KIS → Kiwoom)
+- TV200 조건검색 → 거래대금+거래량 랭킹 조합
+  * 거래대금 상위 300개 (ka10032, 연속조회)
+  * 거래량 상위 150개 (ka10030, 연속조회)
+  * 교집합 + 필터: 거래대금≥150억, 등락률1~30%
+- 기존 TV200 스냅샷 폴백 유지
+
+v6.5 변경사항:
+- Top5Pipeline 연동 (Enrichment + AI 배치)
+- DART 기업정보/재무/위험공시 통합
+- AI 배치 호출 (5회 → 1회)
+"""
+
+import os
+import time
+import logging
+from datetime import date
+from pathlib import Path
+from typing import List, Optional, Dict
+
+from src.config.settings import settings
+from src.config.constants import get_top_n_count, MIN_DAILY_DATA_COUNT
+from src.config.app_config import MAPPING_FILE, OHLCV_FULL_DIR
+from src.utils.stock_filters import filter_universe_stocks
+from src.domain.models import StockData, StockInfo, StockScore, ScoreDetail, ScreeningResult, ScreeningStatus
+from src.domain.score_calculator import (
+    ScoreCalculatorV5,
+    StockScoreV5,
+    format_discord_embed,
+)
+from src.domain.volume_profile import (
+    calc_volume_profile_from_csv,
+    calc_volume_profile_from_kiwoom,
+    VP_SCORE_NEUTRAL,
+)
+from src.adapters.kiwoom_rest_client import get_kiwoom_client, KiwoomRestClient
+from src.adapters.discord_notifier import get_discord_notifier, DiscordNotifier
+from src.infrastructure.repository import (
+    get_screening_repository,
+    ScreeningRepository,
+)
+from src.services.sector_service import get_sector_service, SectorService
+from src.infrastructure.database import init_database
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# v6.2 설정값
+# ============================================================
+
+# CCI 하드 필터: 비활성화 (점수제에서 자연스럽게 반영됨)
+# 백필/TV200과 일치시키기 위해 999로 설정
+CCI_HARD_LIMIT = 999
+
+# 시가총액 분류 기준 (라벨 표시용, 점수 가산 없음)
+# (최소, 최대, 미사용, 라벨)
+MARKET_CAP_TIERS = [
+    (100000, float('inf'), 0, "mega"),    # 10조+
+    (30000, 100000, 0, "large"),          # 3조~10조
+    (10000, 30000, 0, "mid"),             # 1조~3조
+    (3000, 10000, 0, "small"),            # 3천억~1조
+    (0, 3000, 0, "micro"),                # 3천억 미만
+]
+
+# 대기업 기준 시가총액 (1조원 = 10000억)
+LARGE_CAP_THRESHOLD = 10000
+
+
+def get_market_cap_label(market_cap: float) -> str:
+    """시가총액 라벨 반환 (점수 가산 없음)
+    
+    Returns:
+        라벨 문자열 (mega/large/mid/small/micro/unknown)
+    """
+    if market_cap is None or market_cap <= 0:
+        return "unknown"
+    
+    for min_cap, max_cap, _, label in MARKET_CAP_TIERS:
+        if min_cap <= market_cap < max_cap:
+            return label
+    return "unknown"
+
+
+def filter_by_cci(scores: list, limit: int = CCI_HARD_LIMIT) -> tuple:
+    """CCI 과열 종목 필터링
+    
+    Returns:
+        (filtered_scores, filtered_out_count)
+    """
+    filtered = []
+    filtered_out = 0
+    
+    for s in scores:
+        cci = s.score_detail.raw_cci
+        if cci is not None and cci > limit:
+            filtered_out += 1
+            logger.debug(f"CCI 필터: {s.stock_name} CCI={cci:.0f} (>{limit})")
+        else:
+            filtered.append(s)
+    
+    if filtered_out > 0:
+        logger.info(f"CCI 하드필터: {filtered_out}개 제외 (CCI > {limit})")
+    
+    return filtered, filtered_out
+
+
+class ScreenerService:
+    """스크리닝 서비스 v7.0 (키움 REST API 기반)"""
+    
+    def __init__(
+        self,
+        broker_client: Optional[KiwoomRestClient] = None,
+        discord_notifier: Optional[DiscordNotifier] = None,
+        screening_repo: Optional[ScreeningRepository] = None,
+    ):
+        self.broker_client = broker_client or get_kiwoom_client()
+        self.discord_notifier = discord_notifier or get_discord_notifier()
+        self.screening_repo = screening_repo or get_screening_repository()
+        self.calculator = ScoreCalculatorV5()
+        
+        logger.info("ScreenerService 초기화 (키움 REST API)")
+    
+    def run_screening(
+        self,
+        screen_time: str = "15:00",
+        save_to_db: bool = True,
+        send_alert: bool = True,
+        is_preview: bool = False,
+    ) -> Dict:
+        """스크리닝 실행"""
+        start_time = time.time()
+        screen_date = date.today()
+        
+        logger.info(f"스크리닝 시작: {screen_date} {screen_time}")
+        
+        try:
+            # 1. 유니버스 조회
+            stocks = self._get_universe()
+            if not stocks:
+                return self._empty_result(screen_date, screen_time, start_time, 
+                                         is_preview, "유니버스 비어있음")
+            
+            logger.info(f"유니버스: {len(stocks)}개")
+            
+            # 2. 데이터 수집 (최소 하드필터만)
+            stock_data_list = self._collect_data(stocks)
+            if not stock_data_list:
+                return self._empty_result(screen_date, screen_time, start_time,
+                                         is_preview, "수집된 종목 없음")
+            
+            logger.info(f"데이터 수집: {len(stock_data_list)}개")
+            
+            # 3. 점수 계산
+            scores = self.calculator.calculate_scores(stock_data_list)
+            
+            # v10.1: 하드필터 제거 (점수제에서 자연 반영)
+            scores_filtered = scores
+            
+            # ================================================
+            # v6.2: 시가총액 정보 로드 (점수 가산 없음, 대기업 표시용)
+            # ================================================
+            market_cap_info = self._load_market_cap_info(scores_filtered)
+            
+            # v8.0: 거래원 스캔
+            broker_adjustments = {}
+            if not is_preview:
+                broker_adjustments = self._apply_broker_scores(scores_filtered, screen_date)
+
+            # v9.0: 매물대(Volume Profile) 계산
+            self._calculate_volume_profiles(scores_filtered)
+            
+            # ★ P0-B: TOP_N_COUNT를 settings에서 가져오도록 통일
+            top_n_count = get_top_n_count()
+            
+            # TOP5 선정 (필터링된 목록에서)
+            top_n = self.calculator.select_top_n(scores_filtered, top_n_count)
+            
+            # v6.2: 대기업 TOP5 별도 추출
+            large_cap_top5 = [s for s in scores_filtered 
+                            if getattr(s, '_market_cap', 0) >= LARGE_CAP_THRESHOLD][:top_n_count]
+            
+            # ================================================
+            # v6.3: 주도섹터 계산
+            # ================================================
+            sector_service = get_sector_service()
+            sector_mapping = self._load_sector_mapping()
+            
+            # 후보 종목들로 주도섹터 계산
+            candidates_for_sector = []
+            for score in scores_filtered:
+                sector = sector_mapping.get(score.stock_code, 'Unknown')
+                candidates_for_sector.append({
+                    'code': score.stock_code,
+                    'name': score.stock_name,
+                    'sector': sector,
+                    'change_rate': score.change_rate,
+                    'trading_value': getattr(score, '_trading_value', 0),
+                })
+            
+            sector_stats = sector_service.calculate_leading_sectors(
+                candidates_for_sector, 
+                cache_date=screen_date.isoformat()
+            )
+            
+            # TOP5에 섹터 정보 추가
+            for score in top_n:
+                sector = sector_mapping.get(score.stock_code, 'Unknown')
+                sector_info = sector_service.get_sector_info(score.stock_code, sector, sector_stats)
+                score._sector = sector_info.sector
+                score._sector_rank = sector_info.sector_rank
+                score._is_leading_sector = sector_info.is_leading_sector
+            
+            leading_sectors_text = sector_service.format_leading_sectors_text()
+            logger.info(f"주도섹터: {leading_sectors_text}")
+            
+            execution_time = time.time() - start_time
+            
+            result = {
+                "screen_date": screen_date,
+                "screen_time": screen_time,
+                "total_count": len(scores),
+                "filtered_count": len(scores_filtered),  # v6.2
+                "cci_filtered_out": 0,  # v10.1: 하드필터 제거됨
+                "top_n": top_n,
+                "large_cap_top5": large_cap_top5,  # v6.2: 대기업 TOP5
+                "all_scores": scores_filtered,  # 필터링된 목록
+                "execution_time_sec": execution_time,
+                "status": "SUCCESS",
+                "is_preview": is_preview,
+                "error_message": None,
+                "global_info": "",  # v8.0: 글로벌 점수 조정 제거
+                "market_cap_info": market_cap_info,  # v6.2
+                "leading_sectors_text": leading_sectors_text,  # v6.3
+                "sector_stats": sector_stats,  # v6.3
+                "broker_adjustments": broker_adjustments,  # v7.1: 거래원 이상신호
+            }
+            
+            # 4. DB 저장
+            if save_to_db and not is_preview:
+                self._save_result(result)
+            
+            # 5. 알림 발송
+            if send_alert:
+                self._send_alert(result, is_preview)
+            
+            # 6. 콘솔 출력
+            logger.info(f"TOP5: {[s.stock_name for s in top_n]}")
+            
+            logger.info(f"스크리닝 완료: {execution_time:.1f}초")
+            return result
+            
+        except Exception as e:
+            logger.error(f"스크리닝 에러: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            if send_alert:
+                try:
+                    self.discord_notifier.send_error_alert(e, "스크리닝 에러")
+                except Exception:
+                    pass
+            
+            return self._empty_result(screen_date, screen_time, start_time,
+                                     is_preview, str(e))
+    
+    def _get_universe(self) -> List:
+        """유니버스 조회 (키움 REST API 기반)
+        
+        v7.0: TV200 조건검색 → 키움 거래대금/거래량 상위 조합으로 전환
+        
+        알고리즘 (명세서 준수):
+        1) ka10032에서 300개 조회
+        2) ka10030에서 150개 조회 → {code: rank} 딕셔너리
+        3) 필터링:
+           - 거래량 150위 이내
+           - 거래대금 >= 150억
+           - 등락률 1% ~ 30%
+           - 가격 2,000 ~ 10,000원
+        4) filter_universe_stocks() 적용 (ETF/스팩 등 제외)
+        5) 스냅샷 저장 (source='KIWOOM_RANK')
+        
+        폴백:
+        - API 실패 → 오늘 tv200_snapshot(after) 조회
+        - 없으면 → 가장 최근 스냅샷 사용 (FALLBACK 태그)
+        - 그래도 없으면 → 후보 0개로 종료 (프로그램 유지)
+        """
+        stocks = []
+        names_dict = {}
+        is_fallback = False
+        
+        try:
+            # 키움 REST API로 유니버스 조회
+            raw_stocks, names_dict = self.broker_client.get_rank_universe(
+                min_trading_value=15000,  # 150억 (백만원 단위)
+                min_change_rate=1.0,
+                max_change_rate=29.0,
+                volume_rank_limit=150,
+            )
+            
+            if raw_stocks:
+                # StockInfo 객체로 변환
+                stocks_before_filter = [
+                    StockInfo(code=s['code'], name=s['name']) 
+                    for s in raw_stocks
+                ]
+                
+                # 원본 결과 저장 (비교 분석용)
+                self._save_universe_snapshot(
+                    stocks_before_filter, names_dict, 
+                    filter_stage="before", source="KIWOOM_RANK"
+                )
+                
+                # Step 4: ETF/스팩/리츠/인버스 등 제외
+                stocks, excluded_count = filter_universe_stocks(
+                    stocks_before_filter, log_details=True
+                )
+                logger.info(f"🎯 키움 유니버스 최종: {len(stocks)}개 (패턴 제외: {excluded_count}개)")
+                
+                # 필터 후 결과 저장 (스냅샷 - 백필에서 사용)
+                self._save_universe_snapshot(
+                    stocks, names_dict, 
+                    filter_stage="after", source="KIWOOM_RANK"
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ 키움 유니버스 조회 실패: {e}")
+            is_fallback = True
+        
+        # 폴백 로직 (API 실패 또는 결과 부족)
+        min_candidates = int(os.getenv("MIN_CANDIDATES", "10"))
+        
+        if len(stocks) < min_candidates:
+            logger.warning(f"⚠️ 유니버스 부족 ({len(stocks)}개), 스냅샷 폴백 시도")
+            is_fallback = True
+            
+            try:
+                snapshot_repo = get_tv200_snapshot_repository()
+                
+                # 1차: 오늘 날짜 스냅샷
+                today_str = self._get_actual_trading_date().isoformat()
+                snapshot = snapshot_repo.get_snapshot(today_str, filter_stage='after')
+                
+                # 2차: 가장 최근 스냅샷
+                if not snapshot:
+                    all_dates = snapshot_repo.get_all_dates(filter_stage='after')
+                    if all_dates:
+                        latest_date = max(all_dates)
+                        snapshot = snapshot_repo.get_snapshot(latest_date, filter_stage='after')
+                        logger.warning(f"📅 최근 스냅샷 사용: {latest_date}")
+                
+                if snapshot and snapshot.get('codes'):
+                    codes = snapshot['codes']
+                    names = snapshot.get('names', {})
+                    
+                    # StockInfo로 변환
+                    existing_codes = {s.code for s in stocks}
+                    for code in codes:
+                        if code not in existing_codes:
+                            stocks.append(StockInfo(
+                                code=code, 
+                                name=names.get(code, '')
+                            ))
+                    
+                    logger.info(f"🔄 폴백 후 유니버스: {len(stocks)}개 (FALLBACK)")
+                    
+            except Exception as e:
+                logger.error(f"폴백 스냅샷 조회 실패: {e}")
+        
+        # 결과가 0개여도 프로그램은 계속 실행
+        if not stocks:
+            logger.warning("⚠️ 유니버스 0개 - 스크리닝 건너뜀 (프로그램 유지)")
+        
+        # 폴백 태그 저장 (알림에서 사용)
+        self._is_fallback_universe = is_fallback
+        
+        return stocks
+    
+    def _save_universe_snapshot(
+        self, 
+        stocks: List, 
+        names_dict: Dict[str, str],
+        filter_stage: str,
+        source: str = "KIWOOM_RANK"
+    ):
+        """유니버스 스냅샷 저장
+        
+        Args:
+            stocks: 종목 리스트
+            names_dict: 코드 → 이름 딕셔너리
+            filter_stage: 'before' 또는 'after'
+            source: 소스 ('KIWOOM_RANK', 'TV200' 등)
+        """
+        try:
+            screen_date = self._get_actual_trading_date()
+            today_str = screen_date.isoformat() if hasattr(screen_date, 'isoformat') else str(screen_date)
+            
+            # 코드 리스트 추출
+            codes = []
+            for s in stocks:
+                code = s.code if hasattr(s, 'code') else str(s)
+                codes.append(code)
+            
+            # DB 저장
+            snapshot_repo = get_tv200_snapshot_repository()
+            snapshot_repo.save_snapshot(
+                screen_date=today_str,
+                codes=codes,
+                names=names_dict,
+                filter_stage=filter_stage,
+                source=source,
+            )
+            logger.info(f"📸 스냅샷 저장: {today_str} {filter_stage} ({len(codes)}개) [source={source}]")
+            
+        except Exception as e:
+            logger.warning(f"스냅샷 저장 실패: {e}")
+    def _save_tv200_result(self, stocks: List, stage: str = "raw"):
+        """TV200 결과 DB 스냅샷 저장 (v6.4 - JSON 파일 저장 제거)
+        
+        Args:
+            stocks: 종목 리스트
+            stage: 저장 단계 (before_filter, after_filter)
+        """
+        from datetime import datetime
+        
+        try:
+            # v6.3.3: 실제 거래일 기준 날짜 사용 (휴일 대응)
+            screen_date = self._get_actual_trading_date()
+            today_str = screen_date.isoformat() if hasattr(screen_date, 'isoformat') else str(screen_date)
+            
+            # 코드/이름 추출
+            codes = []
+            names_dict = {}
+            
+            for s in stocks:
+                code = s.code if hasattr(s, 'code') else str(s)
+                name = getattr(s, 'name', '')
+                codes.append(code)
+                names_dict[code] = name
+            
+            # v6.3.3: DB 스냅샷 저장 (JSON 파일 저장 제거)
+            if stage == 'after_filter':
+                filter_stage = 'after'
+            elif stage == 'before_filter':
+                filter_stage = 'before'
+            else:
+                filter_stage = stage
+            
+            try:
+                snapshot_repo = get_tv200_snapshot_repository()
+                snapshot_repo.save_snapshot(
+                    screen_date=today_str,
+                    codes=codes,
+                    names=names_dict,
+                    filter_stage=filter_stage,
+                    source='TV200',
+                )
+                logger.info(f"TV200 스냅샷 저장: {today_str} {filter_stage} ({len(stocks)}개)")
+            except Exception as e:
+                logger.warning(f"TV200 스냅샷 DB 저장 실패: {e}")
+            
+        except Exception as e:
+            logger.warning(f"TV200 결과 저장 실패: {e}")
+    
+    def _get_actual_trading_date(self) -> date:
+        """실제 거래일 반환 (v6.3.3)
+        
+        휴일에 실행해도 가장 최근 거래일을 반환합니다.
+        """
+        from datetime import datetime, timedelta
+        
+        today = datetime.now().date()
+        
+        # 주말 체크 (0=월, 6=일)
+        while today.weekday() >= 5:  # 토, 일
+            today -= timedelta(days=1)
+        
+        # TODO: 공휴일 체크는 추후 추가
+        # 현재는 주말만 처리
+        
+        return today
+    
+    def _collect_data(self, stocks: List) -> List[StockData]:
+        """데이터 수집 (최소 하드필터)"""
+        stock_data_list = []
+        
+        for i, stock in enumerate(stocks):
+            try:
+                daily_prices = self.broker_client.get_daily_prices(
+                    stock.code,
+                    count=MIN_DAILY_DATA_COUNT + 10,
+                )
+                
+                if len(daily_prices) < MIN_DAILY_DATA_COUNT:
+                    continue
+                
+                today = daily_prices[-1]
+                yesterday = daily_prices[-2]
+                change_rate = ((today.close - yesterday.close) / yesterday.close) * 100
+                
+                # 하락종목 제외 (종가매매는 상승종목 대상)
+                if change_rate < 0:
+                    continue
+                
+                # 거래대금 계산 (여러 소스에서 시도)
+                trading_value = 0.0
+                market_cap = 0.0  # v6.5: 시총 추가
+                
+                # 1차: 일봉 데이터에서
+                if today.trading_value > 0:
+                    trading_value = today.trading_value / 100_000_000
+                
+                # 2차: 현재가 API에서 (거래대금 + 시총)
+                if trading_value <= 0 or market_cap <= 0:
+                    try:
+                        current_data = self.broker_client.get_current_price(stock.code)
+                        if current_data:
+                            if current_data.trading_value > 0 and trading_value <= 0:
+                                trading_value = current_data.trading_value / 100_000_000
+                            # v6.5: 시총 가져오기 (억원 단위)
+                            if hasattr(current_data, 'market_cap') and current_data.market_cap > 0:
+                                market_cap = current_data.market_cap
+                    except Exception as e:
+                        logger.debug(f"현재가 조회 실패: {stock.code} - {e}")
+                
+                # 3차: 조건검색 결과에서
+                if trading_value <= 0 and hasattr(stock, 'trading_value') and stock.trading_value > 0:
+                    trading_value = stock.trading_value
+                
+                # 4차: 거래량 × 종가로 추정
+                if trading_value <= 0 and today.volume > 0:
+                    trading_value = (today.volume * today.close) / 100_000_000
+                
+                stock_data = StockData(
+                    code=stock.code,
+                    name=stock.name,
+                    daily_prices=daily_prices,
+                    current_price=today.close,
+                    trading_value=trading_value,
+                    market_cap=market_cap,  # v6.5: 시총 전달
+                )
+                stock_data_list.append(stock_data)
+                
+                if (i + 1) % 20 == 0:
+                    logger.info(f"진행: {i + 1}/{len(stocks)}")
+                    
+            except Exception as e:
+                logger.debug(f"수집 실패: {stock.code} - {e}")
+        
+        return stock_data_list
+    
+    def _load_market_cap_info(self, scores: list) -> dict:
+        """v6.2: 시가총액 정보 로드 (점수 가산 없음, 대기업 표시용)
+        
+        Returns:
+            통계 정보 dict
+        """
+        stats = {"mega": 0, "large": 0, "mid": 0, "small": 0, "micro": 0, "unknown": 0}
+        
+        try:
+            import sqlite3
+            
+            db_path = os.path.join(os.path.dirname(__file__), '../../data/screener.db')
+            if not os.path.exists(db_path):
+                db_path = 'data/screener.db'
+            
+            market_caps = {}
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT stock_code, market_cap FROM nomad_candidates WHERE market_cap > 0")
+                for code, cap in cursor.fetchall():
+                    market_caps[code] = cap
+                conn.close()
+            except Exception as e:
+                logger.warning(f"시가총액 DB 조회 실패: {e}")
+            
+            # 시가총액 정보만 저장 (점수 가산 없음)
+            for score in scores:
+                market_cap = market_caps.get(score.stock_code, 0)
+                label = get_market_cap_label(market_cap)
+                
+                # 시가총액 정보 저장 (대기업 필터용)
+                score._market_cap = market_cap
+                score._market_cap_label = label
+                stats[label] += 1
+            
+            logger.info(f"시가총액 정보 로드: {stats}")
+            return stats
+            
+        except Exception as e:
+            logger.warning(f"시가총액 정보 로드 실패: {e}")
+            return stats
+    
+    def _load_sector_mapping(self) -> Dict[str, str]:
+        """v6.3: stock_mapping.csv에서 종목코드 → 섹터 매핑 로드"""
+        try:
+            import pandas as pd
+            from pathlib import Path
+            
+            # stock_mapping.csv 경로
+            mapping_paths = [
+                MAPPING_FILE,  # from app_config
+                Path("data/stock_mapping.csv"),
+                Path(__file__).parent.parent.parent / "data" / "stock_mapping.csv",
+            ]
+            
+            for path in mapping_paths:
+                if path.exists():
+                    df = pd.read_csv(path, encoding='utf-8-sig')
+                    df.columns = df.columns.str.lower()
+                    
+                    if 'code' in df.columns and 'sector' in df.columns:
+                        # 코드 6자리 패딩
+                        df['code'] = df['code'].astype(str).str.zfill(6)
+                        mapping = dict(zip(df['code'], df['sector']))
+                        logger.debug(f"섹터 매핑 로드: {len(mapping)}종목 from {path}")
+                        return mapping
+            
+            logger.warning("stock_mapping.csv를 찾을 수 없음")
+            return {}
+            
+        except Exception as e:
+            logger.warning(f"섹터 매핑 로드 실패: {e}")
+            return {}
+    
+    def _empty_result(self, screen_date, screen_time, start_time, 
+                      is_preview, error_msg) -> Dict:
+        """빈 결과"""
+        return {
+            "screen_date": screen_date,
+            "screen_time": screen_time,
+            "total_count": 0,
+            "top_n": [],
+            "all_scores": [],
+            "execution_time_sec": time.time() - start_time,
+            "status": "FAILED",
+            "is_preview": is_preview,
+            "error_message": error_msg,
+        }
+    
+    def _save_result(self, result: Dict):
+        """DB 저장 (기존 테이블 + v6.0 TOP5 테이블)"""
+        try:
+            # v5 → 레거시 변환
+            legacy_scores = []
+            for s in result["all_scores"]:
+                d = s.score_detail
+                legacy = StockScore(
+                    stock_code=s.stock_code,
+                    stock_name=s.stock_name,
+                    current_price=s.current_price,
+                    change_rate=s.change_rate,
+                    trading_value=s.trading_value,
+                    score_detail=ScoreDetail(
+                        cci_value=d.cci_score / 1.5,
+                        cci_slope=d.distance_score / 1.5,
+                        ma20_slope=d.ma20_3day_bonus * 3.33,
+                        candle=d.candle_score / 1.5,
+                        change=d.change_score / 1.5,
+                        raw_cci=d.raw_cci,
+                        raw_ma20=d.raw_ma20,
+                    ),
+                    score_total=s.score_total,
+                    rank=s.rank,
+                )
+                legacy_scores.append(legacy)
+            
+            legacy_result = ScreeningResult(
+                screen_date=result["screen_date"],
+                screen_time=result["screen_time"],
+                total_count=result["total_count"],
+                top3=legacy_scores[:5],
+                all_items=legacy_scores,
+                execution_time_sec=result["execution_time_sec"],
+                status=ScreeningStatus.SUCCESS,
+            )
+            
+            screening_id = self.screening_repo.save_screening(legacy_result)
+            logger.info(f"DB 저장: ID={screening_id}")
+            
+            # ================================================
+            # v6.0: closing_top5_history 테이블에도 저장
+            # ================================================
+            self._save_top5_history(result)
+            
+        except Exception as e:
+            logger.error(f"DB 저장 실패: {e}")
+    
+    def _save_top5_history(self, result: Dict):
+        """v6.0: TOP5를 closing_top5_history에 저장
+        
+        v6.3.1: 실시간 데이터 우선 - 저장 전 해당 날짜 기존 데이터 삭제
+        """
+        try:
+            top5_repo = get_top5_history_repository()
+            top_n = result.get("top_n", [])
+            screen_date = result["screen_date"]
+            
+            if not top_n:
+                logger.info("TOP5 비어있음 - 저장 스킵")
+                return
+            
+            # v6.3.1: 실시간 데이터 우선 - 기존 데이터 삭제 후 새로 저장
+            # (백필 데이터가 있어도 실시간 데이터로 덮어쓰기)
+            deleted = top5_repo.delete_by_date(screen_date.isoformat())
+            if deleted > 0:
+                logger.info(f"기존 TOP5 삭제: {deleted}건 (실시간 데이터로 교체)")
+            
+            for score in top_n:
+                d = score.score_detail
+                
+                history_data = {
+                    'screen_date': screen_date.isoformat(),
+                    'rank': score.rank,
+                    'stock_code': score.stock_code,
+                    'stock_name': score.stock_name,
+                    'screen_price': score.current_price,
+                    'screen_score': score.score_total,
+                    'grade': score.grade.value,
+                    'cci': d.raw_cci,
+                    'rsi': getattr(d, 'raw_rsi', None),
+                    'change_rate': score.change_rate,
+                    'disparity_20': d.raw_distance,
+                    'consecutive_up': d.raw_consec_days,
+                    'volume_ratio_5': d.raw_volume_ratio,
+                    'data_source': 'realtime',
+                    # v6.3: 주도섹터 정보
+                    'sector': getattr(score, '_sector', None),
+                    'sector_rank': getattr(score, '_sector_rank', None),
+                    'is_leading_sector': 1 if getattr(score, '_is_leading_sector', False) else 0,
+                    # v6.3.1: 거래대금/거래량
+                    'trading_value': score.trading_value,
+                    'volume': getattr(score, 'volume', None),  # v6.5.2: _volume → volume
+                }
+                
+                history_id = top5_repo.upsert(history_data)
+                logger.debug(f"TOP5 저장: #{score.rank} {score.stock_name} (id={history_id})")
+            
+            logger.info(f"TOP5 저장 완료: {len(top_n)}개")
+            
+        except Exception as e:
+            logger.error(f"TOP5 저장 실패: {e}")
+    
+    def _send_alert(self, result: Dict, is_preview: bool):
+        """알림 발송 (감시종목 TOP5) v6.5 - DART+AI 배치 통합"""
+        try:
+            top_n = result["top_n"]
+            cci_filtered = result.get("cci_filtered_out", 0)
+            large_cap_top5 = result.get("large_cap_top5", [])
+            leading_sectors_text = result.get("leading_sectors_text", "")
+            
+            # 감시종목 TOP5 발송
+            if not top_n:
+                self.discord_notifier.send_message("📊 감시종목: 적합한 종목 없음")
+                return
+            
+            # ============================================================
+            # v6.5: 새 파이프라인 시도 (Enrichment + AI 배치)
+            # ============================================================
+            try:
+                from src.services.top5_pipeline import Top5Pipeline
+                
+                run_type = "preview" if is_preview else "main"
+                pipeline = Top5Pipeline(
+                    use_enrichment=True,
+                    use_ai=True,
+                    save_to_db=not is_preview,  # 메인만 DB 저장
+                )
+                
+                # 파이프라인에서 Discord 발송하지 않고 Embed만 생성
+                pipeline._discord_notifier = False  # False로 설정하면 자동 생성 안 함
+                
+                logger.info(f"🚀 v6.5 파이프라인 시작 ({run_type})")
+                
+                pipeline_result = pipeline.process_top5(
+                    scores=top_n,
+                    run_type=run_type,
+                    leading_sectors_text=leading_sectors_text,
+                )
+                
+                ai_results = pipeline_result.get('ai_results', {})
+                
+                # CCI 필터 정보 추가
+                title = "🔮 감시종목 TOP5 (프리뷰)" if is_preview else "감시종목 TOP5"
+                if cci_filtered > 0:
+                    title += f" (CCI과열 {cci_filtered}개 제외)"
+                
+                # v6.5 Embed Builder 사용
+                from src.services.discord_embed_builder import DiscordEmbedBuilder
+                embed_builder = DiscordEmbedBuilder()
+                # ★ EnrichedStock 사용 (DART 정보 포함)
+                enriched_stocks = pipeline_result.get('enriched_stocks', [])
+                stocks_for_embed = enriched_stocks if enriched_stocks else top_n
+                embed = embed_builder.build_top5_embed(
+                    stocks=stocks_for_embed,
+                    title=title,
+                    leading_sectors_text=leading_sectors_text,
+                    ai_results=ai_results if ai_results else None,
+                    run_type=run_type,
+                )
+                
+                success = self.discord_notifier.send_embed(embed)
+                if success:
+                    ai_count = len(ai_results) if ai_results else 0
+                    enriched_count = len(pipeline_result.get('enriched_stocks', []))
+                    logger.info(f"✅ v6.5 Discord 발송 완료 (Enriched: {enriched_count}, AI: {ai_count})")
+                else:
+                    logger.warning("Discord 발송 실패")
+                
+            except Exception as e:
+                logger.error(f"TOP5 파이프라인 실패: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # v6.2: 대기업 TOP5 별도 발송 (있는 경우)
+            if large_cap_top5 and not is_preview:
+                self._send_large_cap_alert(large_cap_top5)
+                
+        except Exception as e:
+            logger.error(f"알림 에러: {e}")
+    
+    def _send_large_cap_alert(self, large_cap_stocks: list):
+        """v6.2: 대기업 TOP5 별도 알림"""
+        try:
+            if not large_cap_stocks:
+                return
+            
+            # 간단한 텍스트 형식으로 발송
+            lines = ["🏢 **대기업 TOP5** (시총 1조+)\n"]
+            for i, s in enumerate(large_cap_stocks[:5], 1):
+                market_cap = getattr(s, '_market_cap', 0)
+                cap_str = f"{market_cap/10000:.1f}조" if market_cap >= 10000 else f"{market_cap:.0f}억"
+                lines.append(f"#{i} {s.stock_name} | {s.score_total:.1f}점 | 시총 {cap_str}")
+            
+            self.discord_notifier.send_message("\n".join(lines))
+            logger.info("대기업 TOP5 알림 발송 완료")
+            
+        except Exception as e:
+            logger.warning(f"대기업 알림 실패: {e}")
+    
+
+    def _apply_broker_scores(self, scores_filtered: list, screen_date) -> dict:
+        """거래원 스캔 + 점수 반영 + DB 저장"""
+        try:
+            from src.services.broker_signal import (
+                get_broker_adjustments, calc_broker_score, BROKER_SCORE_NEUTRAL
+            )
+            codes_top20 = [s.stock_code for s in scores_filtered[:20]]
+            broker_adjustments = get_broker_adjustments(codes_top20)
+            
+            # 점수 반영
+            for score in scores_filtered:
+                adj = broker_adjustments.get(score.stock_code)
+                if adj:
+                    score.score_detail.broker_score = calc_broker_score(adj.anomaly_score)
+                    score.score_detail.raw_broker_anomaly = adj.anomaly_score
+                else:
+                    score.score_detail.broker_score = BROKER_SCORE_NEUTRAL
+                    score.score_detail.raw_broker_anomaly = 0
+                score.score_total = score.score_detail.total
+            
+            # 재정렬
+            scores_filtered.sort(key=lambda x: (-x.score_total, -x.trading_value))
+            for i, s in enumerate(scores_filtered, 1):
+                s.rank = i
+            
+            # DB 저장
+            if broker_adjustments:
+                logger.info(f"거래원 v8: {len(broker_adjustments)}개 이상감지")
+                self._save_broker_signals(broker_adjustments, screen_date, calc_broker_score)
+            
+            return broker_adjustments
+        except ImportError:
+            logger.debug("broker_signal 모듈 없음, 건너뜀")
+            return {}
+        except Exception as e:
+            logger.warning(f"거래원 스캔 실패 (무시): {e}")
+            return {}
+    
+    def _save_broker_signals(self, broker_adjustments: dict, screen_date, calc_broker_score):
+        """거래원 이상감지 결과 DB 저장"""
+        try:
+            import json as _json
+            broker_repo = get_broker_signal_repository()
+            
+            for code, adj in broker_adjustments.items():
+                _name = self._resolve_stock_name(code)
+                broker_repo.save_signal(
+                    screen_date=screen_date,
+                    stock_code=code,
+                    stock_name=_name,
+                    anomaly_score=adj.anomaly_score,
+                    broker_score=calc_broker_score(adj.anomaly_score),
+                    tag=adj.tag,
+                    buyers_json=_json.dumps(adj.buyers_raw, ensure_ascii=False) if adj.buyers_raw else "",
+                    sellers_json=_json.dumps(adj.sellers_raw, ensure_ascii=False) if adj.sellers_raw else "",
+                    unusual_score=adj.unusual_score,
+                    asymmetry_score=adj.asymmetry_score,
+                    distribution_score=adj.distribution_score,
+                    foreign_score=adj.foreign_score,
+                    frgn_buy=adj.frgn_buy,
+                    frgn_sell=adj.frgn_sell,
+                )
+            logger.info(f"broker_signals DB 저장: {len(broker_adjustments)}건")
+        except Exception as e:
+            logger.warning(f"broker_signals DB 저장 실패 (무시): {e}")
+    
+    def _resolve_stock_name(self, code: str) -> str:
+        """종목코드로 종목명 조회"""
+        try:
+            if MAPPING_FILE and MAPPING_FILE.exists():
+                import csv
+                with open(MAPPING_FILE, "r", encoding="utf-8") as f:
+                    for row in csv.DictReader(f):
+                        if str(row.get("code", "")).zfill(6) == code:
+                            return row.get("name", code)
+        except Exception:
+            pass
+        return code
+    
+    def _calculate_volume_profiles(self, scores_filtered: list):
+        """매물대(Volume Profile) 계산"""
+        try:
+            logger.info("[매물대] Volume Profile 계산 시작...")
+            vp_count = 0
+            vp_cfg = settings.vp
+            use_kiwoom = (vp_cfg.source in {"auto", "kiwoom"})
+            use_local = (vp_cfg.source in {"auto", "local"})
+            
+            kiwoom_client = None
+            kiwoom_available = True
+            if use_kiwoom and os.getenv("DASHBOARD_ONLY", "").lower() != "true":
+                try:
+                    kiwoom_client = get_kiwoom_client()
+                except Exception as e:
+                    logger.warning(f"[매물대] 키움 클라이언트 로드 실패: {e}")
+                    kiwoom_available = False
+            
+            vp_data_cache = None
+            vp_error_count = 0
+            for score in scores_filtered:
+                code = score.stock_code
+                price = score.current_price
+                try:
+                    vp_result = None
+                    vp_meta = ""
+                    
+                    # 키움 API
+                    if use_kiwoom and kiwoom_client and kiwoom_available:
+                        try:
+                            if vp_data_cache is None:
+                                data = kiwoom_client.get_volume_profile(
+                                    stock_code=code,
+                                    cycle_tp=str(vp_cfg.cycle),
+                                    prpscnt=str(vp_cfg.bands),
+                                    cur_prc_entry=str(vp_cfg.cur_entry),
+                                    trde_qty_tp=str(vp_cfg.trde_qty_tp),
+                                    tr_id=str(vp_cfg.api_id),
+                                )
+                                if isinstance(data, dict) and not any(
+                                    isinstance(v, list) and v for v in data.values()
+                                ):
+                                    kiwoom_available = False
+                                    data = {}
+                                vp_data_cache = data
+                            else:
+                                data = vp_data_cache
+                            
+                            vp_result = calc_volume_profile_from_kiwoom(
+                                data=data, current_price=price,
+                                n_days=vp_cfg.cycle, cur_entry=vp_cfg.cur_entry,
+                                stock_code=code,
+                            )
+                            vp_meta = f"kiwoom/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                        except Exception as e:
+                            logger.debug(f"VP(kiwoom) {code} 오류: {e}")
+                    
+                    if vp_result is not None and vp_result.tag == "데이터부족":
+                        vp_result = None
+                    
+                    # 로컬 CSV 폴백
+                    if vp_result is None and use_local:
+                        vp_result = calc_volume_profile_from_csv(
+                            stock_code=code, current_price=price,
+                            ohlcv_dir=OHLCV_FULL_DIR,
+                            n_days=vp_cfg.cycle, n_bands=vp_cfg.bands,
+                        )
+                        vp_meta = f"local/{vp_cfg.cycle}d/{vp_cfg.bands}b/cur{vp_cfg.cur_entry}"
+                    
+                    if vp_result is None:
+                        vp_result = VolumeProfileResult()
+                        vp_meta = ""
+                    
+                    # 안전한 속성 접근 (score_detail 또는 vp_result가 None인 케이스 방어)
+                    if score.score_detail is not None and vp_result is not None:
+                        score.score_detail.raw_vp_score = vp_result.score
+                        score.score_detail.raw_vp_above_pct = vp_result.above_pct
+                        score.score_detail.raw_vp_below_pct = vp_result.below_pct
+                        score.score_detail.raw_vp_tag = vp_result.tag
+                        score.score_detail.raw_vp_meta = vp_meta
+                        if vp_result.tag != "데이터부족":
+                            vp_count += 1
+                    else:
+                        vp_error_count += 1
+                except Exception as e:
+                    vp_error_count += 1
+                    if score.score_detail is not None:
+                        score.score_detail.raw_vp_score = VP_SCORE_NEUTRAL
+                        score.score_detail.raw_vp_above_pct = 0.0
+                        score.score_detail.raw_vp_below_pct = 0.0
+                        score.score_detail.raw_vp_tag = "오류"
+                        score.score_detail.raw_vp_meta = ""
+            
+            # 요약 로그 (개별 오류 스팸 제거)
+            if vp_error_count > 0:
+                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료 (오류: {vp_error_count}개)")
+            else:
+                logger.info(f"[매물대] {vp_count}/{len(scores_filtered)}개 계산 완료")
+        except Exception as e:
+            logger.warning(f"[매물대] 계산 실패 (무시): {e}")
+
+
+def run_screening(
+    screen_time: str = "15:00",
+    save_to_db: bool = True,
+    send_alert: bool = True,
+    is_preview: bool = False,
+) -> Dict:
+    """모듈 레벨 스크리닝 래퍼"""
+    service = ScreenerService()
+    return service.run_screening(
+        screen_time=screen_time,
+        save_to_db=save_to_db,
+        send_alert=send_alert,
+        is_preview=is_preview,
+    )
+
+
+def run_main_screening() -> Dict:
+    """메인 스크리닝 (settings.screening.screening_time_main 사용)"""
+    return run_screening(
+        screen_time=settings.screening.screening_time_main,
+        save_to_db=True,
+        send_alert=True,
+        is_preview=False,
+    )
+
+
+def run_preview_screening() -> Dict:
+    """프리뷰 스크리닝 (settings.screening.screening_time_preview 사용)"""
+    return run_screening(
+        screen_time=settings.screening.screening_time_preview,
+        save_to_db=False,
+        send_alert=True,
+        is_preview=True,
+    )
+
+
+if __name__ == "__main__":
+    import sys
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    )
+    
+    try:
+        init_database()
+    except Exception:
+        pass
+    
+    mode = sys.argv[1] if len(sys.argv) > 1 else "test"
+    
+    if mode == "main":
+        result = run_main_screening()
+    elif mode == "preview":
+        result = run_preview_screening()
+    else:
+        result = run_screening(save_to_db=False, send_alert=False)
+    
+    print(f"\n상태: {result['status']}")
+    print(f"분석: {result['total_count']}개")
+    print(f"시간: {result['execution_time_sec']:.1f}초")

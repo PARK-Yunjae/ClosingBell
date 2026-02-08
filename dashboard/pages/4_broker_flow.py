@@ -186,6 +186,23 @@ with col_d1:
     selected_date = st.date_input(
         "📅 날짜 선택", value=datetime.now().date(), max_value=datetime.now().date(),
     )
+
+# 휴장일 보정
+try:
+    from src.utils.market_calendar import is_market_open
+    if not is_market_open(selected_date):
+        from datetime import timedelta as _td
+        corrected = selected_date
+        for _ in range(10):
+            corrected -= _td(days=1)
+            if is_market_open(corrected):
+                break
+        weekday_kr = ['월','화','수','목','금','토','일'][selected_date.weekday()]
+        st.caption(f"⚠️ {selected_date.strftime('%m/%d')}({weekday_kr}) 휴장일 → {corrected.strftime('%m/%d')} 표시")
+        selected_date = corrected
+except ImportError:
+    pass
+
 screen_date_str = selected_date.strftime("%Y-%m-%d")
 
 
@@ -421,4 +438,4 @@ else:
 # 푸터
 # ============================================================
 st.markdown("---")
-st.caption("ClosingBell v9.1 | 거래원 수급 추적")
+st.caption("ClosingBell v10.1 | 거래원 수급 추적")

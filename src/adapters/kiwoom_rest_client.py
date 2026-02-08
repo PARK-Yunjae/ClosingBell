@@ -186,6 +186,11 @@ class KiwoomRestClient:
         'rank_info': '/api/dostk/rkinfo',      # ka10030/ka10032 거래량/거래대금 상위
         'volume_profile': '/api/dostk/stkinfo',  # ka10025 매물대집중요청 (문서 기준)
         'account_balance': '/api/dostk/acnt',  # kt00018 ????????
+        # v10.0: 공매도/대차/기관외인
+        'short_selling': '/api/dostk/shsa',    # ka10014 공매도추이
+        'stock_lending': '/api/dostk/slb',     # ka20068/ka10069 대차거래
+        'institutional': '/api/dostk/mrkcond', # ka10045 기관매매추이
+        'foreign_trade': '/api/dostk/frgnistt',# ka10008 외국인매매동향
 }
     
     # Rate Limit: 초당 10회 (안전하게 0.12초 간격)
@@ -789,6 +794,114 @@ class KiwoomRestClient:
         
         return filtered, names_dict
     
+    # ========================================
+    # v10.0: 공매도 추이 (ka10014)
+    # ========================================
+    def get_short_selling_trend(
+        self, stock_code: str, start_date: str, end_date: str
+    ) -> List[Dict]:
+        """종목별 공매도 일별 추이
+        
+        Args:
+            stock_code: 종목코드 (6자리)
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD)
+            
+        Returns:
+            공매도 일별 데이터 리스트
+        """
+        body = {
+            "stk_cd": stock_code,
+            "tm_tp": "1",           # 기간 조회
+            "strt_dt": start_date,
+            "end_dt": end_date,
+        }
+        
+        data = self._request(
+            "POST", self.ENDPOINTS['short_selling'], "ka10014", body
+        )
+        
+        return data.get('shrts_trnsn', [])
+    
+    # ========================================
+    # v10.0: 대차거래 추이 - 종목별 (ka20068)
+    # ========================================
+    def get_stock_lending_trend(
+        self, stock_code: str, start_date: str, end_date: str
+    ) -> List[Dict]:
+        """종목별 대차거래 일별 추이
+        
+        Args:
+            stock_code: 종목코드 (6자리)
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD)
+            
+        Returns:
+            대차거래 일별 데이터 리스트
+        """
+        body = {
+            "stk_cd": stock_code,
+            "strt_dt": start_date,
+            "end_dt": end_date,
+            "all_tp": "0",          # 종목별
+        }
+        
+        data = self._request(
+            "POST", self.ENDPOINTS['stock_lending'], "ka20068", body
+        )
+        
+        return data.get('dbrt_trde_trnsn', [])
+    
+    # ========================================
+    # v10.0: 대차거래 상위 10종목 (ka10069)
+    # ========================================
+    def get_top_stock_lending(
+        self, market: str, start_date: str, end_date: str = ""
+    ) -> Dict:
+        """시장별 대차거래 상위 10종목
+        
+        Args:
+            market: "001" (코스피) or "101" (코스닥)
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD, 빈값=당일)
+        """
+        body = {
+            "strt_dt": start_date,
+            "end_dt": end_date,
+            "mrkt_tp": market,
+        }
+        
+        data = self._request(
+            "POST", self.ENDPOINTS['stock_lending'], "ka10069", body
+        )
+        
+        return data
+    
+    # ========================================
+    # v10.0: 종목별 기관매매추이 (ka10045)
+    # ========================================
+    def get_institutional_trend(
+        self, stock_code: str, start_date: str, end_date: str
+    ) -> Dict:
+        """종목별 기관/외인 순매매 추이
+        
+        Returns:
+            기관추정평균가, 외인추정평균가, 일별 순매매 리스트
+        """
+        body = {
+            "stk_cd": stock_code,
+            "strt_dt": start_date,
+            "end_dt": end_date,
+            "orgn_prsm_unp_tp": "1",  # 기관 매수단가
+            "for_prsm_unp_tp": "1",   # 외인 매수단가
+        }
+        
+        data = self._request(
+            "POST", self.ENDPOINTS['institutional'], "ka10045", body
+        )
+        
+        return data
+
     # ========================================
     # 유틸리티
     # ========================================

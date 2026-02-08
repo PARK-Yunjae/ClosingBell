@@ -22,6 +22,23 @@ from src.analyzers.broker_tracker import analyze_broker_flow
 from src.analyzers.news_timeline import analyze_news_timeline
 from src.analyzers.entry_exit_calculator import calculate_entry_exit
 
+# ── 상수 정의 (하드코딩 제거) ──
+CCI_OVERBOUGHT_EXTREME = 200
+CCI_OVERBOUGHT = 100
+CCI_OVERSOLD = -100
+CCI_OVERSOLD_EXTREME = -200
+
+RSI_OVERBOUGHT_EXTREME = 80
+RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 30
+RSI_OVERSOLD_EXTREME = 20
+
+GRADE_S = 85
+GRADE_A = 75
+GRADE_B_PLUS = 65
+GRADE_B = 55
+GRADE_C_PLUS = 45
+GRADE_C = 35
 
 @dataclass
 class StockReportResult:
@@ -109,22 +126,22 @@ def _fmt_src(p: Optional[str]) -> str:
 
 def _cci_text(v):
     if v is None: return "데이터 없음"
-    if v >= 200: return "매우 과열 (고점 주의)"
-    if v >= 100: return "과열 경향"
-    if v >= 50:  return "약간 높음 (양호)"
+    if v >= CCI_OVERBOUGHT_EXTREME: return "매우 과열 (고점 주의)"
+    if v >= CCI_OVERBOUGHT: return "과열 경향"
+    if v >= 50: return "약간 높음 (양호)"
     if v >= -50: return "보통 (안정적)"
-    if v >= -100: return "약간 낮음 (관망)"
-    if v >= -200: return "과냉각 (반등 가능)"
+    if v >= CCI_OVERSOLD: return "약간 낮음 (관망)"
+    if v >= CCI_OVERSOLD_EXTREME: return "과냉각 (반등 가능)"
     return "매우 과냉각 (바닥 근처)"
 
 def _rsi_text(v):
     if v is None: return "데이터 없음"
-    if v >= 80: return "매우 과열 (조정 가능)"
-    if v >= 70: return "과열"
+    if v >= RSI_OVERBOUGHT_EXTREME: return "매우 과열 (조정 가능)"
+    if v >= RSI_OVERBOUGHT: return "과열"
     if v >= 55: return "약간 강세 (적당)"
     if v >= 45: return "중립"
-    if v >= 30: return "약세"
-    if v >= 20: return "과냉각 (반등 기대)"
+    if v >= RSI_OVERSOLD: return "약세"
+    if v >= RSI_OVERSOLD_EXTREME: return "과냉각 (반등 기대)"
     return "매우 과냉각"
 
 def _change_word(pct):
@@ -139,18 +156,18 @@ def _change_word(pct):
 
 def _sig(level): return {"good":"🟢","neutral":"🟡","warning":"🔴"}.get(level,"⚪")
 def _chg_sig(p): return "good" if p and p>=1 else ("warning" if p and p<=-1 else "neutral")
-def _cci_sig(v): return "good" if v is not None and -100<=v<=100 and v>=0 else ("warning" if v is not None and abs(v)>100 else "neutral")
-def _rsi_sig(v): return "good" if v is not None and 30<=v<=70 else ("warning" if v is not None and (v>70 or v<30) else "neutral")
+def _cci_sig(v): return "good" if v is not None and CCI_OVERSOLD<=v<=CCI_OVERBOUGHT and v>=0 else ("warning" if v is not None and (v>CCI_OVERBOUGHT or v<CCI_OVERSOLD) else "neutral")
+def _rsi_sig(v): return "good" if v is not None and RSI_OVERSOLD<=v<=RSI_OVERBOUGHT else ("warning" if v is not None and (v>RSI_OVERBOUGHT or v<RSI_OVERSOLD) else "neutral")
 def _vp_sig(t):  return "good" if "상승" in t else ("warning" if "저항" in t else "neutral")
 def _bk_sig(t):  return "good" if t in ("정상","") else ("warning" if "주의" in t or "이상" in t else "neutral")
 
 def _grade(s):
-    if s>=85: return "A+"
-    if s>=75: return "A"
-    if s>=65: return "B+"
-    if s>=55: return "B"
-    if s>=45: return "C+"
-    if s>=35: return "C"
+    if s>=GRADE_S: return "A+"
+    if s>=GRADE_A: return "A"
+    if s>=GRADE_B_PLUS: return "B+"
+    if s>=GRADE_B: return "B"
+    if s>=GRADE_C_PLUS: return "C+"
+    if s>=GRADE_C: return "C"
     return "D"
 
 def _ma_align(ma5, ma20, ma60, ma120, cur):
@@ -446,7 +463,7 @@ def _build_easy_summary(chg_pct, close, opn, high, low, vol, tv,
         tag = broker.tag if broker.status == "ok" else "데이터 없음"
         L.append(f"- {_sig(_bk_sig(tag))} **거래원**: {tag}")
     if score is not None:
-        g = "good" if score >= 65 else ("neutral" if score >= 45 else "warning")
+        g = "good" if score >= GRADE_B_PLUS else ("neutral" if score >= GRADE_C_PLUS else "warning")
         L.append(f"- {_sig(g)} **종합**: {score:.0f}점 (등급 {_grade(score)})")
     L.append("")
 
@@ -583,7 +600,7 @@ def _build_easy_summary(chg_pct, close, opn, high, low, vol, tv,
     L.append("")
     if tech and tech.cci is not None:
         L.append(f"**CCI(14일)**: {tech.cci:.1f} → {_sig(_cci_sig(tech.cci))} {_cci_text(tech.cci)}")
-        L.append("  +100이상=과열 / -100이하=과냉각 / 사이=보통")
+        L.append(f"  +{CCI_OVERBOUGHT}이상=과열 / {CCI_OVERSOLD}이하=과냉각 / 사이=보통")
     if tech and tech.rsi is not None:
         L.append(f"**RSI(14일)**: {tech.rsi:.1f} → {_sig(_rsi_sig(tech.rsi))} {_rsi_text(tech.rsi)}")
         L.append("  70이상=과열 / 30이하=과냉각")
@@ -994,3 +1011,18 @@ def generate_stock_report(stock_code: str, full: bool = False) -> StockReportRes
     summary = f"{code} | {', '.join(parts)}" if parts else f"{code} | 리포트 생성"
 
     return StockReportResult(lines=L, summary=summary)
+
+
+if __name__ == "__main__":
+    # 리팩토링된 상수 및 함수 테스트
+    print("=" * 60)
+    print("StockReport 상수 및 함수 테스트")
+    print("=" * 60)
+    
+    print(f"CCI 과열 기준: {CCI_OVERBOUGHT} (기존 100)")
+    print(f"RSI 과열 기준: {RSI_OVERBOUGHT} (기존 70)")
+    print(f"S등급 기준점수: {GRADE_S} (기존 85)")
+    
+    print(f"\nCCI 150 평가: {_cci_text(150)}")
+    print(f"RSI 25 평가: {_rsi_text(25)}")
+    print(f"점수 88점 등급: {_grade(88)}")

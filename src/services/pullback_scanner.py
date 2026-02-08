@@ -1,12 +1,13 @@
-"""눌림목(거감음봉) 스캐너 v9.1
+"""눌림목(거감음봉) 스캐너 v10.1
 
-유목민 거래량 단타법 기반:
+유목민 거래량 단타법 기반 + 9.5년 백테스트 검증:
 1) 거래량 1000만주+ 폭발 감지 → 감시풀 등록
 2) D+1~D+3 모니터링: 거감 80%↑ + 음봉 + MA 지지 → 시그널
-3) 재료/섹터 필터: 주도섹터 유지, 뉴스 존재
+3) v10.1 강도 재정의: vol≤8% + 낙폭≤7% = "강" (D+1 +0.80%, 승률 47%)
+4) 재료/섹터/수급/공매도 교차검증
 
 스케줄:
-  15:10 → run_pullback_scan()        눌림목 시그널 (실시간 API) + 디스코드
+  14:55 → run_pullback_scan()        눌림목 시그널 (실시간 API) + 디스코드
   16:05 → run_volume_spike_scan()    거래량 폭발 감지 (OHLCV CSV)
 """
 
@@ -37,6 +38,12 @@ PULLBACK_WATCH_DAYS = 3             # 감시 기간 (D+1 ~ D+3)
 PULLBACK_VOL_RATIO = 0.20           # 거래량 급감 기준 (폭발일 대비 20% 이하)
 PULLBACK_MA_TOLERANCE = 0.02        # MA 지지 허용 오차 (±2%)
 PULLBACK_MAX_DROP = 0.15            # 고점 대비 최대 낙폭 15%
+
+# v10.1: 백테스트 기반 강도 기준 (9.5년 6458건 분석)
+# vol≤8% + drop≤7% → D+1 +0.80%, 승률 47%, +3%/-3% 익절 시 +0.40%/56%
+PULLBACK_VOL_STRONG = 0.08          # 극감: ≤8% → "강"
+PULLBACK_DROP_STRONG = 0.07         # 근접: ≤7% → "강"
+PULLBACK_VOL_ULTRA = 0.05           # 초극감: ≤5% → 추가 강화
 
 
 # ============================================================
@@ -277,7 +284,7 @@ def _enrich_sector(code: str) -> Tuple[str, bool]:
     return sector, is_leading
 
 
-def _check_recent_news(stock_name: str, days: int = 3) -> Tuple[bool, str]:
+def check_recent_news(stock_name: str, days: int = 3) -> Tuple[bool, str]:
     """최근 N일 뉴스 존재 여부 + 첫번째 헤드라인
 
     Returns:
@@ -375,7 +382,7 @@ def _enrich_signal(signal: PullbackSignal) -> PullbackSignal:
     signal.is_leading_sector = is_leading
 
     # 뉴스 (최근 3일)
-    has_news, headline = _check_recent_news(signal.stock_name, days=3)
+    has_news, headline = check_recent_news(signal.stock_name, days=3)
     signal.has_recent_news = has_news
 
     # reason에 섹터/뉴스 정보 추가
@@ -387,6 +394,56 @@ def _enrich_signal(signal: PullbackSignal) -> PullbackSignal:
         extras.append(f"📰{headline}")
     elif not has_news:
         extras.append("📰재료없음")
+    
+    # v10.0: 공매도/지지저항 교차 검증
+    try:
+        from src.services.short_selling_service import fetch_and_analyze
+        from src.services.sr_calculator import calculate_support_resistance
+        from src.adapters.kiwoom_rest_client import get_kiwoom_client
+        
+        broker = get_kiwoom_client()
+        
+        # 공매도 분석
+        ss = fetch_and_analyze(signal.stock_code, broker, lookback_days=10)
+        if ss and ss.tags:
+            if ss.is_dangerous:
+                extras.append(f"🔻{' '.join(ss.tags[:2])}")
+                if signal.signal_strength == "강":
+                    signal.signal_strength = "중"  # 공매도 과열이면 강도 하향
+            elif ss.is_favorable:
+                extras.append(f"✅{' '.join(ss.tags[:2])}")
+                if signal.signal_strength == "중":
+                    signal.signal_strength = "강"  # 숏커버링이면 강도 상향 (황금 눌림목)
+        
+        # 지지선 분석
+        prices = broker.get_daily_prices(signal.stock_code, count=60)
+        if prices:
+            sr = calculate_support_resistance(signal.stock_code, prices, signal.close_price)
+            if sr.near_support:
+                extras.append(f"📍지지근접({sr.support_distance_pct:.1f}%)")
+                if signal.signal_strength == "중":
+                    signal.signal_strength = "강"
+            if "🔺이평정배열" in sr.tags:
+                extras.append("🔺정배열")
+            elif "🔻이평역배열" in sr.tags:
+                extras.append("🔻역배열")
+                if signal.signal_strength == "강":
+                    signal.signal_strength = "중"
+        
+        # 수급 분석
+        from src.services.flow_service import fetch_and_analyze_flow
+        fl = fetch_and_analyze_flow(signal.stock_code, broker, lookback_days=10)
+        if fl and fl.tags:
+            if fl.is_strong_flow:
+                extras.append(f"💰{' '.join(fl.tags[:2])}")
+                if signal.signal_strength == "중":
+                    signal.signal_strength = "강"  # 수급 강세 + 눌림목 = 황금
+            elif fl.is_weak_flow:
+                extras.append(f"⚠️수급약세")
+                if signal.signal_strength == "강":
+                    signal.signal_strength = "중"
+    except Exception as e:
+        logger.debug(f"[pullback] 공매도/SR 보강 실패 ({signal.stock_code}): {e}")
 
     if extras:
         signal.reason = signal.reason + " | " + " | ".join(extras)
@@ -604,23 +661,41 @@ def scan_pullback_signals(target_date: Optional[date] = None) -> List[PullbackSi
         if drop_pct > PULLBACK_MAX_DROP:
             continue
 
-        # ── 시그널 강도 판정 ──
-        strength = "중"
+        # ── 시그널 강도 판정 (v10.1 백테스트 기반) ──
+        # vol≤8% + drop≤7% = "강" (D+1 +0.80%, 승률 47%)
+        # vol≤5% + drop≤7% = "강+" (D+1 +0.63%, 승률 49%)
+        strength = "약"
         reasons = []
-        if vol_ratio <= 0.10:
-            reasons.append("거래량 90%↑ 급감")
-            strength = "강"
+
+        is_vol_ultra = vol_ratio <= PULLBACK_VOL_ULTRA    # ≤5%
+        is_vol_strong = vol_ratio <= PULLBACK_VOL_STRONG   # ≤8%
+        is_drop_strong = drop_pct <= PULLBACK_DROP_STRONG  # ≤7%
+
+        # 거래량 설명
+        vol_pct = (1 - vol_ratio) * 100
+        if is_vol_ultra:
+            reasons.append(f"거래량 {vol_pct:.0f}%↑ 극감")
+        elif is_vol_strong:
+            reasons.append(f"거래량 {vol_pct:.0f}%↑ 급감")
         elif vol_ratio <= 0.15:
-            reasons.append(f"거래량 {(1 - vol_ratio) * 100:.0f}% 급감")
-            strength = "강"
+            reasons.append(f"거래량 {vol_pct:.0f}% 급감")
         else:
-            reasons.append(f"거래량 {(1 - vol_ratio) * 100:.0f}% 감소")
+            reasons.append(f"거래량 {vol_pct:.0f}% 감소")
 
         reasons.append(f"{ma_support} 지지 ({ma_dist * 100:.1f}%)")
-        if drop_pct <= 0.05:
-            reasons.append("고점 근접")
-            if strength != "강":
-                strength = "강"
+
+        if is_drop_strong:
+            reasons.append(f"고점 근접 ({drop_pct*100:.1f}%)")
+
+        # 강도 결정
+        if is_vol_strong and is_drop_strong:
+            strength = "강"   # 핵심 조합: vol≤8% + drop≤7%
+        elif is_vol_strong or is_drop_strong:
+            strength = "중"   # 한쪽만 충족
+        elif vol_ratio <= 0.15:
+            strength = "중"   # 거래량 85%+ 급감
+        else:
+            strength = "약"   # 기본 4조건만 통과
 
         signal = PullbackSignal(
             stock_code=code,

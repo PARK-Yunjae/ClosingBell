@@ -1,4 +1,4 @@
-﻿"""Holdings analysis service (v9.0)."""
+"""Holdings analysis service (v9.0)."""
 from __future__ import annotations
 
 from dataclasses import dataclass

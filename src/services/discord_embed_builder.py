@@ -15,6 +15,13 @@ from dataclasses import dataclass
 
 from src.config.constants import get_top_n_count
 
+from src.utils.formatters import (
+    format_market_cap as _fmt_mcap,
+    format_trading_value as _fmt_tv,
+    format_volume as _fmt_vol,
+    get_grade_value as _get_gv,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,69 +121,6 @@ class DiscordEmbedBuilder:
             return text
         return text[:max_length - len(suffix)] + suffix
     
-    def _format_market_cap(self, value: float) -> str:
-        """시가총액 포맷"""
-        if not value:
-            return "-"
-        if value >= 10000:
-            return f"{value/10000:.1f}조"
-        return f"{value:,.0f}억"
-    
-    def _format_trading_value(self, value: float) -> str:
-        """거래대금 포맷"""
-        if not value:
-            return "-"
-        if value >= 1000:
-            return f"{value/1000:.1f}조"
-        return f"{value:,.0f}억"
-    
-    def _format_volume(self, value: int) -> str:
-        """거래량(주) 포맷 (만주 단위 통일)"""
-        if not value:
-            return "-"
-        if value >= 100000000:  # 1억주 이상
-            return f"{value/100000000:.1f}억주"
-        if value >= 10000:      # 만주 이상
-            return f"{value/10000:.0f}만주"  # 700만주, 1000만주 형태
-        return f"{value:,}주"
-    
-    def _get_grade_value(self, grade) -> str:
-        """등급 값 추출 (Enum 또는 문자열)
-        
-        처리 케이스:
-        - StockGrade.S (Enum 객체) → 'S'
-        - 'StockGrade.S' (문자열) → 'S'
-        - 'S' (문자열) → 'S'
-        - None → '-'
-        """
-        if grade is None:
-            return "-"
-        
-        # Enum인 경우 (hasattr로 체크)
-        if hasattr(grade, 'value'):
-            val = grade.value
-            # value가 또 객체면 str로 변환 후 처리
-            val_str = str(val)
-            if 'StockGrade.' in val_str:
-                return val_str.split('.')[-1]
-            return val_str
-        
-        # 문자열인 경우
-        grade_str = str(grade)
-        
-        # 'StockGrade.S' 형태 처리
-        if 'StockGrade.' in grade_str:
-            return grade_str.split('.')[-1]
-        
-        # '<StockGrade.S: 'S'>' 형태 처리 (repr)
-        if '<StockGrade.' in grade_str:
-            # S, A, B, C, D 중 하나 추출
-            for g in ['S', 'A', 'B', 'C', 'D']:
-                if f'.{g}' in grade_str or f"'{g}'" in grade_str:
-                    return g
-        
-        return grade_str
-
     def _get_layout(self, layout: Optional[str]) -> str:
         """Resolve discord layout from args or settings."""
         if layout:
@@ -415,13 +359,14 @@ class DiscordEmbedBuilder:
             field = self._build_stock_field(stock, i, ai_results)
             fields.append(field)
         
-        # 등급 설명
+        # 등급 설명 (v10.1: 매도전략 제거, 등급은 판단 참고용)
         legend = self._build_grade_legend()
-        fields.append({
-            "name": "📋 등급별 매도전략",
-            "value": legend,
-            "inline": False,
-        })
+        if legend:
+            fields.append({
+                "name": "📋 등급 안내",
+                "value": legend,
+                "inline": False,
+            })
         
         # AI 범례 (AI 결과가 있을 때만)
         if ai_results:
@@ -571,7 +516,7 @@ class DiscordEmbedBuilder:
         vp_meta_short = self._format_vp_meta(vp_meta)
         vp_meta_text = f" [{vp_meta_short}]" if vp_meta_short else ""
         line1 = (
-            f"{price_display} | 시총 {self._format_market_cap(market_cap)} | "
+            f"{price_display} | 시총 {_fmt_mcap(market_cap)} | "
             f"VP: {vp_emoji}{vp_display} (위{vp_above:.0f}%/아래{vp_below:.0f}%){vp_meta_text}"
         )
 
@@ -586,8 +531,43 @@ class DiscordEmbedBuilder:
         if len(summary) > 60:
             summary = summary[:57] + "…"
         line2 = f"AI: {rec_emoji}{rec} ({risk_emoji}{risk}) · {summary}"
+        
+        # 재료/테마
+        material = str(ai.get("material", "") or "").strip()
+        material_line = f"🎯 {material}" if material else ""
+
+        # 뉴스 헤드라인
+        news_list = getattr(stock, 'news', [])
+        news_line = ""
+        if news_list:
+            import re as _re
+            title = getattr(news_list[0], 'title', '').strip()
+            title = _re.sub(r'<[^>]+>', '', title)
+            if len(title) > 50:
+                title = title[:47] + "…"
+            if title:
+                news_line = f"📰 {title}"
 
         lines = [line1, line2]
+        if material_line:
+            lines.append(material_line)
+        if news_line:
+            lines.append(news_line)
+        
+        # v10.0: 공매도/지지저항 라인
+        ss_sr_parts = []
+        ss = getattr(stock, 'short_selling_score', None)
+        if ss and hasattr(ss, 'summary') and ss.summary and ss.summary not in ("데이터없음", "분석실패"):
+            ss_sr_parts.append(f"🔻{ss.summary}")
+        sr = getattr(stock, 'sr_analysis', None)
+        if sr and hasattr(sr, 'summary') and sr.summary:
+            ss_sr_parts.append(f"📍{sr.summary}")
+        fl = getattr(stock, 'flow_score', None)
+        if fl and hasattr(fl, 'summary') and fl.summary and fl.summary not in ("데이터없음", "분석실패"):
+            ss_sr_parts.append(f"💰{fl.summary}")
+        if ss_sr_parts:
+            lines.append(" │ ".join(ss_sr_parts))
+        
         memo = (
             getattr(stock, "memo", "")
             or getattr(stock, "note", "")
@@ -685,7 +665,7 @@ class DiscordEmbedBuilder:
         # v8.0: 심플 필드 구성 (가격 + 시총 + DART + AI만)
         # ============================================================
         
-        field_value = f"현재가: {current_price:,}원 ({change_rate:+.1f}%) | 시총: {self._format_market_cap(market_cap)}"
+        field_value = f"현재가: {current_price:,}원 ({change_rate:+.1f}%) | 시총: {_fmt_mcap(market_cap)}"
 
         # v9.0: 매물대(Volume Profile) 표시 (데이터 없으면 중립 기본값)
         vp_score = None
@@ -760,18 +740,50 @@ class DiscordEmbedBuilder:
         
         field_value += dart_text
         
+        # 📰 뉴스 헤드라인 (EnrichedStock.news)
+        news_list = getattr(stock, 'news', [])
+        if news_list:
+            import re as _re
+            headlines = []
+            for n in news_list[:2]:
+                title = getattr(n, 'title', '').strip()
+                title = _re.sub(r'<[^>]+>', '', title)
+                if len(title) > 55:
+                    title = title[:52] + "…"
+                if title:
+                    headlines.append(f"📰 {title}")
+            if headlines:
+                field_value += "\n" + "\n".join(headlines)
+        
+        # v10.0: 공매도/지지저항
+        ss = getattr(stock, 'short_selling_score', None)
+        sr = getattr(stock, 'sr_analysis', None)
+        fl = getattr(stock, 'flow_score', None)
+        ss_sr_parts = []
+        if ss and hasattr(ss, 'summary') and ss.summary and ss.summary not in ("데이터없음", "분석실패"):
+            ss_sr_parts.append(f"🔻{ss.summary}")
+        if sr and hasattr(sr, 'summary') and sr.summary:
+            ss_sr_parts.append(f"📍{sr.summary}")
+        if fl and hasattr(fl, 'summary') and fl.summary and fl.summary not in ("데이터없음", "분석실패"):
+            ss_sr_parts.append(f"💰{fl.summary}")
+        if ss_sr_parts:
+            field_value += "\n" + " │ ".join(ss_sr_parts)
+        
         # AI 분석 결과
         if ai_results and stock_code in ai_results:
             ai = ai_results[stock_code]
             rec = ai.get('recommendation', '관망')
             risk = ai.get('risk_level', '보통')
             summary = ai.get('summary', '')
+            material = ai.get('material', '')
             
             field_value += (
                 f"\n━━━━━━━━━━\n🤖 **AI 분석**\n"
                 f"추천: {REC_EMOJI.get(rec, '❓')} {rec} | "
                 f"위험도: {RISK_EMOJI.get(risk, '❓')} {risk}"
             )
+            if material:
+                field_value += f"\n🎯 재료: {material}"
             if summary:
                 if len(summary) > 80:
                     summary = summary[:77] + "..."
@@ -811,14 +823,18 @@ class DiscordEmbedBuilder:
             stock_code = getattr(stock, 'stock_code', '')
             stock_name = getattr(stock, 'stock_name', '')
             score = getattr(stock, 'score_total', 0) or getattr(stock, 'screen_score', 0)
-            grade = self._get_grade_value(getattr(stock, 'grade', '-'))
+            grade = _get_gv(getattr(stock, 'grade', '-'))
             change = getattr(stock, 'change_rate', 0)
             
-            # AI 추천
+            # AI 추천 + 재료
             rec_str = ""
             if ai_results and stock_code in ai_results:
-                rec = ai_results[stock_code].get('recommendation', '')
+                ai = ai_results[stock_code]
+                rec = ai.get('recommendation', '')
+                material = ai.get('material', '')
                 rec_str = f" {REC_EMOJI.get(rec, '')}"
+                if material:
+                    rec_str += f" 🎯{material}"
             
             line = f"**{i}. {stock_name}** {GRADE_EMOJI.get(grade, '')}{grade} ({score:.0f}점) {change:+.1f}%{rec_str}"
             lines.append(line)

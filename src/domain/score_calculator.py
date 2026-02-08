@@ -231,6 +231,7 @@ class StockScoreV5:
     rank: int = 0
     market_cap: float = 0.0  # 시가총액 (억원) - v6.5 추가
     volume: int = 0  # 거래량 (주) - v6.5 추가
+    risk_tags: List[str] = field(default_factory=list)  # v10.1: 위험 태그 (하드필터 대체)
     
     @property
     def grade(self) -> StockGrade:
@@ -272,11 +273,11 @@ class StockScoreV5:
 # ============================================================
 
 def calc_cci_score(cci: float) -> float:
-    """CCI 점수 (13점 만점) - v8.0
+    """CCI 점수 (13점 만점) - v10.1 감점 강화
     
     최적 구간: 160~180 (만점)
-    멀어질수록 점진적 감점
-    음수: 많이 감점
+    180~220: 점진 감점
+    220+: 급격 감점 (백테스트: CCI>220 → D+1 -0.79%)
     """
     if cci is None:
         return 6.5
@@ -294,27 +295,31 @@ def calc_cci_score(cci: float) -> float:
         distance = 160 - cci
         return max(4.33, 13 - distance * 0.0542)  # 비례축소
     
-    # 180 초과: 점진적 감점 (과열)
-    distance = cci - 180
-    return max(2.6, 13 - distance * 0.0867)  # 비례축소
+    # 180~220: 점진 감점
+    if cci <= 220:
+        return max(5.0, 13 - (cci - 180) * 0.15)  # 220에서 7점
+    
+    # 220+: 급격 감점 (위험 구간)
+    return max(0, 7.0 - (cci - 220) * 0.10)  # 290에서 0점
 
 
 def calc_change_score(change_rate: float) -> float:
-    """등락률 점수 (13점 만점) - v8.0
+    """등락률 점수 (13점 만점) - v10.1 감점 강화
     
     최적 구간: 4~6% (만점)
-    멀어질수록 점진적 감점
+    6~8%: 점진 감점
+    8%+: 급격 감점 (백테스트: >8% → D+1 -0.41%)
     """
     if change_rate is None:
         return 6.5
     
     # 음수: 많이 감점
     if change_rate < 0:
-        return max(0, 4.33 + change_rate * 0.433)  # 0% → 4.33점, -10% → 0점
+        return max(0, 4.33 + change_rate * 0.433)
     
     # 25%+: 많이 감점 (급등 추격 위험)
     if change_rate >= 25:
-        return 1.73
+        return 0
     
     # 최적 구간: 4~6% (만점)
     if 4 <= change_rate <= 6:
@@ -323,25 +328,29 @@ def calc_change_score(change_rate: float) -> float:
     # 4% 미만: 점진적 감점
     if change_rate < 4:
         distance = 4 - change_rate
-        return max(6.07, 13 - distance * 1.733)  # 비례축소
+        return max(6.07, 13 - distance * 1.733)
     
-    # 6% 초과: 점진적 감점 (추격매수 위험 증가)
-    distance = change_rate - 6
-    return max(2.6, 13 - distance * 0.546)  # 비례축소
+    # 6~8%: 점진 감점
+    if change_rate <= 8:
+        return max(7.0, 13 - (change_rate - 6) * 2.0)  # 8%에서 9점
+    
+    # 8%+: 급격 감점 (위험 구간)
+    return max(0, 9.0 - (change_rate - 8) * 0.75)  # 20%에서 0점
 
 
 def calc_distance_score(distance: float) -> float:
-    """이격도 점수 (13점 만점) - v8.0
+    """이격도 점수 (13점 만점) - v10.1 감점 강화
     
     최적 구간: 2~8% (만점)
-    멀어질수록 점진적 감점
+    8~10%: 점진 감점
+    10%+: 급격 감점 (백테스트: >10% → D+5 음수)
     """
     if distance is None:
         return 6.5
     
     # 음수: 많이 감점 (MA20 아래 = 약세)
     if distance < 0:
-        return max(0, 4.33 + distance * 0.433)  # 0% → 4.33점, -10% → 0점
+        return max(0, 4.33 + distance * 0.433)
     
     # 최적 구간: 2~8% (만점)
     if 2 <= distance <= 8:
@@ -349,10 +358,14 @@ def calc_distance_score(distance: float) -> float:
     
     # 2% 미만: 점진적 감점 (아직 덜 올랐음)
     if distance < 2:
-        return max(8.67, 13 - (2 - distance) * 2.167)  # 비례축소
+        return max(8.67, 13 - (2 - distance) * 2.167)
     
-    # 8% 초과: 점진적 감점 (과열)
-    return max(2.6, 13 - (distance - 8) * 0.52)  # 비례축소
+    # 8~10%: 점진 감점
+    if distance <= 10:
+        return max(6.0, 13 - (distance - 8) * 2.5)  # 10%에서 8점
+    
+    # 10%+: 급격 감점 (위험 구간)
+    return max(0, 8.0 - (distance - 10) * 1.0)  # 18%에서 0점
 
 
 def calc_consec_score(consec_days: int) -> float:
@@ -639,6 +652,18 @@ class ScoreCalculatorV5:
             raw_rsi=rsi or 0.0,
         )
         
+        # v10.1: 위험 태그 생성 (하드필터 대체, 참고용)
+        # 백테스트 기반: CCI>220 → D+1 -0.79%, 이격>10% → D+5 음수, 등락>8% → D+1 -0.41%
+        risk_tags = []
+        if cci is not None and cci > 220:
+            risk_tags.append(f"⚠️CCI과열({cci:.0f})")
+        if distance is not None and distance > 10:
+            risk_tags.append(f"⚠️이격과대({distance:.1f}%)")
+        if change_rate is not None and change_rate > 8:
+            risk_tags.append(f"⚠️등락과대({change_rate:.1f}%)")
+        if is_high_eq_close:
+            risk_tags.append("⚠️고가=종가")
+
         return StockScoreV5(
             stock_code=stock.code,
             stock_name=stock.name,
@@ -647,8 +672,9 @@ class ScoreCalculatorV5:
             trading_value=stock.trading_value,
             score_detail=score_detail,
             score_total=score_detail.total,
-            market_cap=getattr(stock, 'market_cap', 0.0),  # v6.5: 시총 전달
-            volume=today.volume if today else 0,  # v6.5: 거래량 전달
+            market_cap=getattr(stock, 'market_cap', 0.0),
+            volume=today.volume if today else 0,
+            risk_tags=risk_tags,
         )
     
     def calculate_scores(
