@@ -16,7 +16,7 @@ st.set_page_config(
     page_title="ClosingBell v2",
     page_icon="🔔",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 LOG_DIR = Path(__file__).parent.parent / "data" / "logs"

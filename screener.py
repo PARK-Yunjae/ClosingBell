@@ -14,6 +14,7 @@ from config import (
     TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE,
     NASDAQ_DROP_THRESHOLD, OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV,
     TV200_CONDITION_NAME, API_DELAY,
+    EXCLUDE_NAMES, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
 )
 from kis_api import KisAPI
 
@@ -71,6 +72,14 @@ class Screener:
 
         logger.info("유니버스: %d종목", len(universe))
 
+        # 종목 유형 필터 (SPAC, ETF, 우선주 등 제외)
+        before_filter = len(universe)
+        universe = [s for s in universe if not self._is_excluded(s)]
+        excluded = before_filter - len(universe)
+        if excluded > 0:
+            logger.info("종목 필터: %d개 제외 (SPAC/ETF/우선주 등) → %d종목",
+                        excluded, len(universe))
+
         # 가격 필터 (가격=0이면 현재가 API로 보완)
         filtered = []
         price_zero = 0
@@ -95,6 +104,14 @@ class Screener:
         logger.info("가격 필터 후: %d종목 (원본 %d, 범위 %d~%d원)",
                      len(filtered), len(universe), MIN_PRICE, MAX_PRICE)
         universe = filtered
+
+        # ETF 제외
+        ETF_KEYWORDS = ["KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
+                        "KOSEF", "ACE ", "PLUS ", "BNK", "파워", "레버리지", "인버스"]
+        before_etf = len(universe)
+        universe = [s for s in universe
+                    if not any(kw in s.get("name", "") for kw in ETF_KEYWORDS)]
+        logger.info("ETF 필터: %d → %d종목", before_etf, len(universe))
 
         # 각 종목 지표 계산
         scored = []
@@ -153,6 +170,35 @@ class Screener:
         stocks = [s for s in stocks if 1.0 <= s.get("change_rate", 0) <= 29.0]
         logger.info("거래량순위 fallback: %d종목", len(stocks))
         return stocks
+
+    def _is_excluded(self, stock: dict) -> bool:
+        """SPAC, ETF, 우선주, 리츠 등 제외 대상 판별"""
+        name = stock.get("name", "")
+        code = stock.get("code", "").strip().zfill(6)
+
+        # 1. 이름 키워드 필터
+        for keyword in EXCLUDE_NAMES:
+            if keyword in name:
+                return True
+
+        # 2. 우선주 필터 (코드 끝자리: 보통주=0, 우선주=5,7,8,9)
+        if EXCLUDE_PREF_STOCK and code[-1] in ("5", "7", "8", "9"):
+            return True
+        # 이름에 "우", "우B" 포함
+        if EXCLUDE_PREF_STOCK and (name.endswith("우") or name.endswith("우B")):
+            return True
+
+        # 3. ETF 필터 (stock_mapping에서 market 확인)
+        if EXCLUDE_ETF:
+            info = self.stock_map.get(code, {})
+            market = info.get("market", "")
+            if "ETF" in market.upper():
+                return True
+            # 이름에 ETF 포함
+            if "ETF" in name.upper():
+                return True
+
+        return False
 
     # ──────────────────────────────────────────────
     # 지표 계산

@@ -271,7 +271,10 @@ class KisAPI:
 # ──────────────────────────────────────────────
 def _safe_int(v) -> int:
     try:
-        return int(str(v).replace(",", ""))
+        s = str(v).replace(",", "").strip()
+        if not s or s == "None":
+            return 0
+        return int(float(s))
     except (ValueError, TypeError):
         return 0
 
