@@ -142,6 +142,12 @@ class Screener:
 
         top5 = scored[:top_n]
 
+        # 섹터 분석 (전체 유니버스 기준)
+        sector_stats = self._analyze_sectors(scored)
+
+        # 전일 추천 수익률 계산
+        prev_returns = self._calc_prev_returns()
+
         return {
             "date": today,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -149,7 +155,89 @@ class Screener:
             "universe_count": len(universe),
             "top5": [self._stock_summary(s, i + 1) for i, s in enumerate(top5)],
             "all_scored": [self._stock_summary(s, i + 1) for i, s in enumerate(scored)],
+            "sector_summary": sector_stats,
+            "prev_returns": prev_returns,
         }
+
+    # ──────────────────────────────────────────────
+    # 섹터 분석 + 전일 수익률
+    # ──────────────────────────────────────────────
+    def _analyze_sectors(self, scored: list) -> list[dict]:
+        """유니버스 섹터별 종목 수 + 평균 등락률"""
+        from collections import defaultdict
+        sector_data = defaultdict(lambda: {"count": 0, "total_change": 0.0, "stocks": []})
+
+        for s in scored:
+            sector = s.get("sector") or "기타"
+            # stock_map에서 sector 보완
+            if sector == "기타":
+                info = self.stock_map.get(s.get("code", ""), {})
+                sector = info.get("sector", "기타")
+            sector_data[sector]["count"] += 1
+            sector_data[sector]["total_change"] += s.get("change_rate", 0)
+            sector_data[sector]["stocks"].append(s.get("name", ""))
+
+        result = []
+        for sector, data in sector_data.items():
+            avg_change = data["total_change"] / data["count"] if data["count"] > 0 else 0
+            result.append({
+                "sector": sector,
+                "count": data["count"],
+                "avg_change": round(avg_change, 2),
+                "stocks": data["stocks"][:5],  # 상위 5개만
+            })
+
+        result.sort(key=lambda x: x["avg_change"], reverse=True)
+        return result
+
+    def _calc_prev_returns(self) -> list[dict]:
+        """전일 추천 종목의 오늘 수익률 계산"""
+        import json
+        from config import LOG_DIR
+
+        # 가장 최근 로그 찾기 (오늘 제외)
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_files = sorted(LOG_DIR.glob("*.json"))
+        prev_log = None
+        for lf in reversed(log_files):
+            if lf.stem != today:
+                prev_log = lf
+                break
+
+        if not prev_log:
+            return []
+
+        try:
+            prev_data = json.loads(prev_log.read_text(encoding="utf-8"))
+            if prev_data.get("skipped"):
+                return []
+
+            results = []
+            for stock in prev_data.get("top5", []):
+                code = stock["code"]
+                buy_price = stock["price"]  # 추천일 종가
+
+                # 오늘 현재가 조회 (API)
+                try:
+                    cur = self.api.get_current_price(code)
+                    today_price = cur["price"]
+                    if buy_price > 0 and today_price > 0:
+                        ret = (today_price / buy_price - 1) * 100
+                        results.append({
+                            "date": prev_log.stem,
+                            "code": code,
+                            "name": stock.get("name", ""),
+                            "rank": stock.get("rank", 0),
+                            "buy_price": buy_price,
+                            "today_price": today_price,
+                            "return_pct": round(ret, 2),
+                        })
+                except Exception:
+                    pass
+
+            return results
+        except Exception:
+            return []
 
     # ──────────────────────────────────────────────
     # 유니버스
@@ -430,15 +518,19 @@ class Screener:
     # ──────────────────────────────────────────────
     def _stock_summary(self, stock: dict, rank: int) -> dict:
         """종목 요약 (JSON 저장/디스코드용)"""
+        code = stock.get("code", "").strip().zfill(6)
         name = stock.get("name", "")
-        if not name:
-            info = self.stock_map.get(stock.get("code", ""), {})
-            name = info.get("name", stock.get("code", "?"))
+        sector = ""
+        if not name or not sector:
+            info = self.stock_map.get(code, {})
+            name = name or info.get("name", code)
+            sector = info.get("sector", "")
 
         return {
             "rank": rank,
-            "code": stock.get("code", ""),
+            "code": code,
             "name": name,
+            "sector": sector,
             "price": stock.get("price", 0),
             "change_rate": stock.get("change_rate", 0),
             "score": stock.get("score", 0),

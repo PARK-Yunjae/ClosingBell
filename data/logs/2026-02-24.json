@@ -1,6 +1,6 @@
 {
   "date": "2026-02-24",
-  "timestamp": "2026-02-24T20:51:08",
+  "timestamp": "2026-02-24T21:18:35",
   "market": {
     "kospi": 5969.64,
     "kospi_change": 2.11,
@@ -16,6 +16,7 @@
       "rank": 1,
       "code": "090710",
       "name": "휴림로봇",
+      "sector": "기계·장비",
       "price": 15190,
       "change_rate": 3.1929,
       "score": 82.5,
@@ -28,6 +29,7 @@
       "rank": 2,
       "code": "417200",
       "name": "LS머트리얼즈",
+      "sector": "전기·전자",
       "price": 17450,
       "change_rate": 3.9928,
       "score": 79.3,
@@ -40,6 +42,7 @@
       "rank": 3,
       "code": "290550",
       "name": "디케이티",
+      "sector": "전기·전자",
       "price": 12480,
       "change_rate": 4.1736,
       "score": 77.1,
@@ -52,6 +55,7 @@
       "rank": 4,
       "code": "012800",
       "name": "대창",
+      "sector": "금속",
       "price": 1625,
       "change_rate": 4.5689,
       "score": 68.8,
@@ -64,6 +68,7 @@
       "rank": 5,
       "code": "103840",
       "name": "우양",
+      "sector": "음식료·담배",
       "price": 3375,
       "change_rate": 4.8137,
       "score": 68.3,
@@ -78,6 +83,7 @@
       "rank": 1,
       "code": "090710",
       "name": "휴림로봇",
+      "sector": "기계·장비",
       "price": 15190,
       "change_rate": 3.1929,
       "score": 82.5,
@@ -90,6 +96,7 @@
       "rank": 2,
       "code": "417200",
       "name": "LS머트리얼즈",
+      "sector": "전기·전자",
       "price": 17450,
       "change_rate": 3.9928,
       "score": 79.3,
@@ -102,6 +109,7 @@
       "rank": 3,
       "code": "290550",
       "name": "디케이티",
+      "sector": "전기·전자",
       "price": 12480,
       "change_rate": 4.1736,
       "score": 77.1,
@@ -114,6 +122,7 @@
       "rank": 4,
       "code": "012800",
       "name": "대창",
+      "sector": "금속",
       "price": 1625,
       "change_rate": 4.5689,
       "score": 68.8,
@@ -126,6 +135,7 @@
       "rank": 5,
       "code": "103840",
       "name": "우양",
+      "sector": "음식료·담배",
       "price": 3375,
       "change_rate": 4.8137,
       "score": 68.3,
@@ -138,6 +148,7 @@
       "rank": 6,
       "code": "147830",
       "name": "제룡산업",
+      "sector": "금속",
       "price": 8630,
       "change_rate": 7.606,
       "score": 63.4,
@@ -150,6 +161,7 @@
       "rank": 7,
       "code": "267320",
       "name": "나인테크",
+      "sector": "기계·장비",
       "price": 3965,
       "change_rate": 2.7202,
       "score": 62.8,
@@ -162,6 +174,7 @@
       "rank": 8,
       "code": "003000",
       "name": "부광약품",
+      "sector": "제약",
       "price": 5870,
       "change_rate": 9.311,
       "score": 62.8,
@@ -174,6 +187,7 @@
       "rank": 9,
       "code": "253590",
       "name": "네오셈",
+      "sector": "기계·장비",
       "price": 17600,
       "change_rate": 6.861,
       "score": 62.0,
@@ -186,6 +200,7 @@
       "rank": 10,
       "code": "001740",
       "name": "SK네트웍스",
+      "sector": "유통",
       "price": 5910,
       "change_rate": 7.2595,
       "score": 61.4,
@@ -198,6 +213,7 @@
       "rank": 11,
       "code": "036540",
       "name": "SFA반도체",
+      "sector": "전기·전자",
       "price": 7320,
       "change_rate": 2.809,
       "score": 60.0,
@@ -210,6 +226,7 @@
       "rank": 12,
       "code": "452260",
       "name": "한화갤러리아",
+      "sector": "유통",
       "price": 3085,
       "change_rate": 8.8183,
       "score": 58.6,
@@ -222,6 +239,7 @@
       "rank": 13,
       "code": "125020",
       "name": "티씨머티리얼즈",
+      "sector": "전기·전자",
       "price": 5960,
       "change_rate": 1.5332,
       "score": 55.3,
@@ -234,6 +252,7 @@
       "rank": 14,
       "code": "011500",
       "name": "한농화성",
+      "sector": "화학",
       "price": 26100,
       "change_rate": 10.828,
       "score": 55.3,
@@ -246,6 +265,7 @@
       "rank": 15,
       "code": "011930",
       "name": "신성이엔지",
+      "sector": "전기·전자",
       "price": 2145,
       "change_rate": 2.6316,
       "score": 55.0,
@@ -258,6 +278,7 @@
       "rank": 16,
       "code": "254490",
       "name": "미래반도체",
+      "sector": "유통",
       "price": 20500,
       "change_rate": 12.6993,
       "score": 53.3,
@@ -270,6 +291,7 @@
       "rank": 17,
       "code": "068240",
       "name": "다원시스",
+      "sector": "전기·전자",
       "price": 3785,
       "change_rate": 16.2826,
       "score": 51.9,
@@ -282,6 +304,7 @@
       "rank": 18,
       "code": "208370",
       "name": "셀바스헬스케어",
+      "sector": "의료·정밀기기",
       "price": 5350,
       "change_rate": 4.902,
       "score": 51.8,
@@ -294,6 +317,7 @@
       "rank": 19,
       "code": "222080",
       "name": "씨아이에스",
+      "sector": "기계·장비",
       "price": 15060,
       "change_rate": 17.5644,
       "score": 49.3,
@@ -306,6 +330,7 @@
       "rank": 20,
       "code": "032820",
       "name": "우리기술",
+      "sector": "전기·전자",
       "price": 17150,
       "change_rate": 1.2995,
       "score": 48.1,
@@ -318,6 +343,7 @@
       "rank": 21,
       "code": "417840",
       "name": "저스템",
+      "sector": "기계·장비",
       "price": 8300,
       "change_rate": 22.963,
       "score": 44.0,
@@ -330,6 +356,7 @@
       "rank": 22,
       "code": "001510",
       "name": "SK증권",
+      "sector": "증권",
       "price": 1812,
       "change_rate": 9.3543,
       "score": 42.7,
@@ -342,6 +369,7 @@
       "rank": 23,
       "code": "005440",
       "name": "현대지에프홀딩스",
+      "sector": "금융",
       "price": 18750,
       "change_rate": 20.1923,
       "score": 40.7,
@@ -354,6 +382,7 @@
       "rank": 24,
       "code": "319400",
       "name": "현대무벡스",
+      "sector": "기계·장비",
       "price": 33450,
       "change_rate": 24.3494,
       "score": 40.0,
@@ -366,6 +395,7 @@
       "rank": 25,
       "code": "048410",
       "name": "현대바이오",
+      "sector": "화학",
       "price": 20000,
       "change_rate": 12.5492,
       "score": 39.4,
@@ -378,6 +408,7 @@
       "rank": 26,
       "code": "206650",
       "name": "유바이오로직스",
+      "sector": "제약",
       "price": 16200,
       "change_rate": 14.4068,
       "score": 37.1,
@@ -390,6 +421,7 @@
       "rank": 27,
       "code": "047040",
       "name": "대우건설",
+      "sector": "건설",
       "price": 8110,
       "change_rate": 8.1333,
       "score": 36.2,
@@ -402,6 +434,7 @@
       "rank": 28,
       "code": "034830",
       "name": "한국토지신탁",
+      "sector": "금융",
       "price": 1716,
       "change_rate": 16.8142,
       "score": 35.5,
@@ -414,6 +447,7 @@
       "rank": 29,
       "code": "035810",
       "name": "이지홀딩스",
+      "sector": "음식료·담배",
       "price": 8530,
       "change_rate": 10.4922,
       "score": 33.0,
@@ -426,6 +460,7 @@
       "rank": 30,
       "code": "306620",
       "name": "지아이에스",
+      "sector": "기계·장비",
       "price": 3310,
       "change_rate": 6.26,
       "score": 30.0,
@@ -438,6 +473,7 @@
       "rank": 31,
       "code": "412350",
       "name": "레이저쎌",
+      "sector": "기계·장비",
       "price": 4600,
       "change_rate": 10.9771,
       "score": 30.0,
@@ -450,6 +486,7 @@
       "rank": 32,
       "code": "024840",
       "name": "KBI메탈",
+      "sector": "금속",
       "price": 2510,
       "change_rate": 9.1304,
       "score": 28.1,
@@ -462,6 +499,7 @@
       "rank": 33,
       "code": "396300",
       "name": "세아메카닉스",
+      "sector": "금속",
       "price": 5070,
       "change_rate": 22.316,
       "score": 26.4,
@@ -474,6 +512,7 @@
       "rank": 34,
       "code": "036170",
       "name": "에이치엠넥스",
+      "sector": "전기·전자",
       "price": 2795,
       "change_rate": 24.2222,
       "score": 25.0,
@@ -486,6 +525,7 @@
       "rank": 35,
       "code": "321370",
       "name": "센서뷰",
+      "sector": "전기·전자",
       "price": 2510,
       "change_rate": 13.3183,
       "score": 16.1,
@@ -498,6 +538,7 @@
       "rank": 36,
       "code": "006340",
       "name": "대원전선",
+      "sector": "전기·전자",
       "price": 6510,
       "change_rate": 19.6691,
       "score": 10.5,
@@ -505,6 +546,160 @@
       "ma20_gap": 64.1,
       "cci_slope": 0,
       "ma20_slope": 3
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "금융",
+      "count": 2,
+      "avg_change": 18.5,
+      "stocks": [
+        "현대지에프홀딩스",
+        "한국토지신탁"
+      ]
+    },
+    {
+      "sector": "기계·장비",
+      "count": 8,
+      "avg_change": 11.86,
+      "stocks": [
+        "휴림로봇",
+        "나인테크",
+        "네오셈",
+        "씨아이에스",
+        "저스템"
+      ]
+    },
+    {
+      "sector": "제약",
+      "count": 2,
+      "avg_change": 11.86,
+      "stocks": [
+        "부광약품",
+        "유바이오로직스"
+      ]
+    },
+    {
+      "sector": "화학",
+      "count": 2,
+      "avg_change": 11.69,
+      "stocks": [
+        "한농화성",
+        "현대바이오"
+      ]
+    },
+    {
+      "sector": "금속",
+      "count": 4,
+      "avg_change": 10.91,
+      "stocks": [
+        "대창",
+        "제룡산업",
+        "KBI메탈",
+        "세아메카닉스"
+      ]
+    },
+    {
+      "sector": "유통",
+      "count": 3,
+      "avg_change": 9.59,
+      "stocks": [
+        "SK네트웍스",
+        "한화갤러리아",
+        "미래반도체"
+      ]
+    },
+    {
+      "sector": "증권",
+      "count": 1,
+      "avg_change": 9.35,
+      "stocks": [
+        "SK증권"
+      ]
+    },
+    {
+      "sector": "전기·전자",
+      "count": 10,
+      "avg_change": 8.99,
+      "stocks": [
+        "LS머트리얼즈",
+        "디케이티",
+        "SFA반도체",
+        "티씨머티리얼즈",
+        "신성이엔지"
+      ]
+    },
+    {
+      "sector": "건설",
+      "count": 1,
+      "avg_change": 8.13,
+      "stocks": [
+        "대우건설"
+      ]
+    },
+    {
+      "sector": "음식료·담배",
+      "count": 2,
+      "avg_change": 7.65,
+      "stocks": [
+        "우양",
+        "이지홀딩스"
+      ]
+    },
+    {
+      "sector": "의료·정밀기기",
+      "count": 1,
+      "avg_change": 4.9,
+      "stocks": [
+        "셀바스헬스케어"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-02-23",
+      "code": "278470",
+      "name": "에이피알",
+      "rank": 1,
+      "buy_price": 297500,
+      "today_price": 295000,
+      "return_pct": -0.84
+    },
+    {
+      "date": "2026-02-23",
+      "code": "004490",
+      "name": "세방전지",
+      "rank": 2,
+      "buy_price": 71600,
+      "today_price": 71300,
+      "return_pct": -0.42
+    },
+    {
+      "date": "2026-02-23",
+      "code": "001440",
+      "name": "대한전선",
+      "rank": 3,
+      "buy_price": 34250,
+      "today_price": 33900,
+      "return_pct": -1.02
+    },
+    {
+      "date": "2026-02-23",
+      "code": "200710",
+      "name": "에이디테크놀로지",
+      "rank": 4,
+      "buy_price": 44250,
+      "today_price": 47200,
+      "return_pct": 6.67
+    },
+    {
+      "date": "2026-02-23",
+      "code": "018260",
+      "name": "삼성에스디에스",
+      "rank": 5,
+      "buy_price": 175600,
+      "today_price": 174700,
+      "return_pct": -0.51
     }
   ]
 }
