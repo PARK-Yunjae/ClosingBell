@@ -1,0 +1,18 @@
+{
+  "date": "2026-02-24",
+  "timestamp": "2026-02-24T15:06:00",
+  "market": {
+    "kospi": 5969.64,
+    "kospi_change": 2.11,
+    "kosdaq": 1165.0,
+    "kosdaq_change": 1.13,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": null
+  },
+  "universe_count": 0,
+  "top5": [],
+  "all_scored": [],
+  "skipped": true,
+  "reason": "샘플 데이터 - 실제 스크리닝 후 갱신됩니다"
+}
