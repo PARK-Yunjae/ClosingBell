@@ -107,7 +107,8 @@ class Screener:
 
         # ETF 제외
         ETF_KEYWORDS = ["KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
-                        "KOSEF", "ACE ", "PLUS ", "BNK", "파워", "레버리지", "인버스"]
+                        "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
+                        "파워", "레버리지", "인버스"]
         before_etf = len(universe)
         universe = [s for s in universe
                     if not any(kw in s.get("name", "") for kw in ETF_KEYWORDS)]

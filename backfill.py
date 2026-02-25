@@ -26,7 +26,8 @@ from config import (
     MA20_GAP_OPTIMAL, MA20_GAP_ZERO,
     CHANGE_OPTIMAL, CHANGE_ZERO,
     SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE, SCORE_CCI_SLOPE, SCORE_MA20_SLOPE,
-    TOP_N, MIN_PRICE, MAX_PRICE,
+    TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE,
+    NASDAQ_DROP_THRESHOLD,
     EXCLUDE_NAMES, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
 )
 from screener import bell_score, _count_rising
@@ -390,6 +391,25 @@ def main():
         # 시장 현황
         market = get_market_for_date(global_df, date)
 
+        # 나스닥 급락 스킵 (스케줄러와 동일)
+        nasdaq_chg = market.get("nasdaq_change", 0)
+        if nasdaq_chg <= NASDAQ_DROP_THRESHOLD:
+            logger.info("  나스닥 급락 (%.1f%%) → 스킵", nasdaq_chg)
+            result = {
+                "date": date, "timestamp": f"{date}T15:06:00",
+                "market": market, "skipped": True,
+                "reason": f"나스닥 전일 {nasdaq_chg:+.1f}% (기준: {NASDAQ_DROP_THRESHOLD}%)",
+                "universe_count": 0,
+                "top5": [], "all_scored": [], "sector_summary": [], "prev_returns": [],
+            }
+            if not args.dry:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            prev_log = result
+            total_stats["skipped"] += 1
+            total_stats["days"] += 1
+            continue
+
         # 유니버스
         universe = simulate_universe(date, all_ohlcv, stock_map)
 
@@ -409,6 +429,16 @@ def main():
             total_stats["days"] += 1
             continue
 
+        # ETF 2차 필터 (스케줄러와 동일)
+        ETF_KEYWORDS = ["KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
+                        "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
+                        "파워", "레버리지", "인버스"]
+        before_etf = len(universe)
+        universe = [s for s in universe
+                    if not any(kw in s.get("name", "") for kw in ETF_KEYWORDS)]
+        if before_etf != len(universe):
+            logger.info("  ETF 2차 필터: %d → %d종목", before_etf, len(universe))
+
         # 지표 + 점수
         scored = []
         for stock in universe:
@@ -418,9 +448,20 @@ def main():
 
         scored.sort(key=lambda x: x["score"], reverse=True)
 
+        # TOP_N 결정 — 보수 모드 (스케줄러와 동일)
+        top_n = TOP_N
+        # 코스피 MA20 계산
+        kospi_col = global_df[global_df["date"] <= pd.Timestamp(date)].dropna(subset=["kospi_close"])
+        if len(kospi_col) >= 20:
+            kospi_ma20 = kospi_col["kospi_close"].tail(20).mean()
+            kospi_now = market.get("kospi", 0)
+            if kospi_now > 0 and kospi_now < kospi_ma20:
+                top_n = TOP_N_CONSERVATIVE
+                logger.info("  코스피 %.0f < MA20 %.0f → 보수 모드 (TOP%d)", kospi_now, kospi_ma20, top_n)
+
         # TOP5
         top5 = []
-        for j, s in enumerate(scored[:TOP_N]):
+        for j, s in enumerate(scored[:top_n]):
             top5.append({**s, "rank": j + 1})
 
         # 전체

@@ -9,7 +9,7 @@
     "nasdaq": 22540.59,
     "nasdaq_change": -1.59
   },
-  "universe_count": 97,
+  "universe_count": 95,
   "top5": [
     {
       "code": "251270",
@@ -54,20 +54,6 @@
       "rank": 3
     },
     {
-      "code": "282720",
-      "name": "금양그린파워",
-      "sector": "건설",
-      "price": 11780,
-      "change_rate": 3.97,
-      "score": 77.3,
-      "cci": 203.9,
-      "ma20_gap": 11.2,
-      "cci_slope": 1,
-      "ma20_slope": 3,
-      "next_open": 12000,
-      "rank": 4
-    },
-    {
       "code": "055550",
       "name": "신한지주",
       "sector": "금융",
@@ -79,6 +65,20 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 96000,
+      "rank": 4
+    },
+    {
+      "code": "024060",
+      "name": "흥구석유",
+      "sector": "유통",
+      "price": 14620,
+      "change_rate": 6.72,
+      "score": 76.5,
+      "cci": 97.8,
+      "ma20_gap": 8.1,
+      "cci_slope": 3,
+      "ma20_slope": 3,
+      "next_open": 13850,
       "rank": 5
     }
   ],
@@ -126,20 +126,6 @@
       "rank": 3
     },
     {
-      "code": "282720",
-      "name": "금양그린파워",
-      "sector": "건설",
-      "price": 11780,
-      "change_rate": 3.97,
-      "score": 77.3,
-      "cci": 203.9,
-      "ma20_gap": 11.2,
-      "cci_slope": 1,
-      "ma20_slope": 3,
-      "next_open": 12000,
-      "rank": 4
-    },
-    {
       "code": "055550",
       "name": "신한지주",
       "sector": "금융",
@@ -151,7 +137,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 96000,
-      "rank": 5
+      "rank": 4
     },
     {
       "code": "024060",
@@ -165,7 +151,7 @@
       "cci_slope": 3,
       "ma20_slope": 3,
       "next_open": 13850,
-      "rank": 6
+      "rank": 5
     },
     {
       "code": "105560",
@@ -179,7 +165,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 150500,
-      "rank": 7
+      "rank": 6
     },
     {
       "code": "005830",
@@ -193,7 +179,7 @@
       "cci_slope": 3,
       "ma20_slope": 3,
       "next_open": 172100,
-      "rank": 8
+      "rank": 7
     },
     {
       "code": "045390",
@@ -207,7 +193,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 4660,
-      "rank": 9
+      "rank": 8
     },
     {
       "code": "002100",
@@ -221,7 +207,7 @@
       "cci_slope": 3,
       "ma20_slope": 2,
       "next_open": 9350,
-      "rank": 10
+      "rank": 9
     },
     {
       "code": "475960",
@@ -235,21 +221,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 58600,
-      "rank": 11
-    },
-    {
-      "code": "138930",
-      "name": "BNK금융지주",
-      "sector": "금융",
-      "price": 18500,
-      "change_rate": 3.87,
-      "score": 63.6,
-      "cci": 140.2,
-      "ma20_gap": 14.7,
-      "cci_slope": 0,
-      "ma20_slope": 3,
-      "next_open": 19120,
-      "rank": 12
+      "rank": 10
     },
     {
       "code": "139130",
@@ -263,7 +235,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 17930,
-      "rank": 13
+      "rank": 11
     },
     {
       "code": "316140",
@@ -277,7 +249,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 33500,
-      "rank": 14
+      "rank": 12
     },
     {
       "code": "038500",
@@ -291,7 +263,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 20300,
-      "rank": 15
+      "rank": 13
     },
     {
       "code": "100700",
@@ -305,7 +277,7 @@
       "cci_slope": 3,
       "ma20_slope": 2,
       "next_open": 2590,
-      "rank": 16
+      "rank": 14
     },
     {
       "code": "003620",
@@ -319,7 +291,7 @@
       "cci_slope": 2,
       "ma20_slope": 3,
       "next_open": 4020,
-      "rank": 17
+      "rank": 15
     },
     {
       "code": "382800",
@@ -333,7 +305,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 3870,
-      "rank": 18
+      "rank": 16
     },
     {
       "code": "056080",
@@ -347,7 +319,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 33900,
-      "rank": 19
+      "rank": 17
     },
     {
       "code": "261520",
@@ -361,7 +333,7 @@
       "cci_slope": 0,
       "ma20_slope": 1,
       "next_open": 12100,
-      "rank": 20
+      "rank": 18
     },
     {
       "code": "030960",
@@ -375,7 +347,7 @@
       "cci_slope": 2,
       "ma20_slope": 1,
       "next_open": 8300,
-      "rank": 21
+      "rank": 19
     },
     {
       "code": "039200",
@@ -389,7 +361,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 51800,
-      "rank": 22
+      "rank": 20
     },
     {
       "code": "330860",
@@ -403,7 +375,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 24050,
-      "rank": 23
+      "rank": 21
     },
     {
       "code": "499790",
@@ -417,7 +389,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 61500,
-      "rank": 24
+      "rank": 22
     },
     {
       "code": "011930",
@@ -431,7 +403,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 2270,
-      "rank": 25
+      "rank": 23
     },
     {
       "code": "010060",
@@ -445,7 +417,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 148800,
-      "rank": 26
+      "rank": 24
     },
     {
       "code": "090710",
@@ -459,7 +431,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 14270,
-      "rank": 27
+      "rank": 25
     },
     {
       "code": "065350",
@@ -473,7 +445,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 74500,
-      "rank": 28
+      "rank": 26
     },
     {
       "code": "050890",
@@ -487,7 +459,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 9650,
-      "rank": 29
+      "rank": 27
     },
     {
       "code": "031980",
@@ -501,7 +473,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 73100,
-      "rank": 30
+      "rank": 28
     },
     {
       "code": "255220",
@@ -515,7 +487,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 3400,
-      "rank": 31
+      "rank": 29
     },
     {
       "code": "052690",
@@ -529,7 +501,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 151700,
-      "rank": 32
+      "rank": 30
     },
     {
       "code": "489790",
@@ -543,7 +515,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 70000,
-      "rank": 33
+      "rank": 31
     },
     {
       "code": "064760",
@@ -557,7 +529,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 216000,
-      "rank": 34
+      "rank": 32
     },
     {
       "code": "274090",
@@ -571,7 +543,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 25350,
-      "rank": 35
+      "rank": 33
     },
     {
       "code": "034940",
@@ -585,7 +557,7 @@
       "cci_slope": 2,
       "ma20_slope": 1,
       "next_open": 1040,
-      "rank": 36
+      "rank": 34
     },
     {
       "code": "131290",
@@ -599,7 +571,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 94000,
-      "rank": 37
+      "rank": 35
     },
     {
       "code": "043200",
@@ -613,7 +585,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 1211,
-      "rank": 38
+      "rank": 36
     },
     {
       "code": "086390",
@@ -627,7 +599,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 18410,
-      "rank": 39
+      "rank": 37
     },
     {
       "code": "074600",
@@ -641,7 +613,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 30600,
-      "rank": 40
+      "rank": 38
     },
     {
       "code": "295310",
@@ -655,7 +627,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 86800,
-      "rank": 41
+      "rank": 39
     },
     {
       "code": "047040",
@@ -669,7 +641,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 5530,
-      "rank": 42
+      "rank": 40
     },
     {
       "code": "033340",
@@ -683,7 +655,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 1830,
-      "rank": 43
+      "rank": 41
     },
     {
       "code": "100790",
@@ -697,7 +669,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 25500,
-      "rank": 44
+      "rank": 42
     },
     {
       "code": "171090",
@@ -711,7 +683,7 @@
       "cci_slope": 3,
       "ma20_slope": 3,
       "next_open": 98000,
-      "rank": 45
+      "rank": 43
     },
     {
       "code": "042700",
@@ -725,7 +697,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 202500,
-      "rank": 46
+      "rank": 44
     },
     {
       "code": "388210",
@@ -739,7 +711,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 138200,
-      "rank": 47
+      "rank": 45
     },
     {
       "code": "067000",
@@ -753,7 +725,7 @@
       "cci_slope": 2,
       "ma20_slope": 3,
       "next_open": 3100,
-      "rank": 48
+      "rank": 46
     },
     {
       "code": "440110",
@@ -767,7 +739,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 50700,
-      "rank": 49
+      "rank": 47
     },
     {
       "code": "068270",
@@ -781,7 +753,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 225000,
-      "rank": 50
+      "rank": 48
     },
     {
       "code": "322000",
@@ -795,7 +767,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 83000,
-      "rank": 51
+      "rank": 49
     },
     {
       "code": "084370",
@@ -809,7 +781,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 104500,
-      "rank": 52
+      "rank": 50
     },
     {
       "code": "211270",
@@ -823,7 +795,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 21000,
-      "rank": 53
+      "rank": 51
     },
     {
       "code": "489500",
@@ -837,7 +809,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 49200,
-      "rank": 54
+      "rank": 52
     },
     {
       "code": "126340",
@@ -851,7 +823,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 118600,
-      "rank": 55
+      "rank": 53
     },
     {
       "code": "083650",
@@ -865,7 +837,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 78100,
-      "rank": 56
+      "rank": 54
     },
     {
       "code": "092040",
@@ -879,7 +851,7 @@
       "cci_slope": 1,
       "ma20_slope": 1,
       "next_open": 1633,
-      "rank": 57
+      "rank": 55
     },
     {
       "code": "321370",
@@ -893,7 +865,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 3720,
-      "rank": 58
+      "rank": 56
     },
     {
       "code": "263750",
@@ -907,7 +879,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 53600,
-      "rank": 59
+      "rank": 57
     },
     {
       "code": "001430",
@@ -921,7 +893,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 84900,
-      "rank": 60
+      "rank": 58
     },
     {
       "code": "033240",
@@ -935,7 +907,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 39950,
-      "rank": 61
+      "rank": 59
     },
     {
       "code": "095610",
@@ -949,7 +921,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 73100,
-      "rank": 62
+      "rank": 60
     },
     {
       "code": "478340",
@@ -963,7 +935,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 56100,
-      "rank": 63
+      "rank": 61
     },
     {
       "code": "318060",
@@ -977,7 +949,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 66000,
-      "rank": 64
+      "rank": 62
     },
     {
       "code": "095340",
@@ -991,7 +963,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 170000,
-      "rank": 65
+      "rank": 63
     },
     {
       "code": "019210",
@@ -1005,7 +977,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 10400,
-      "rank": 66
+      "rank": 64
     },
     {
       "code": "451760",
@@ -1019,7 +991,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 21400,
-      "rank": 67
+      "rank": 65
     },
     {
       "code": "094940",
@@ -1033,7 +1005,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 11050,
-      "rank": 68
+      "rank": 66
     },
     {
       "code": "010660",
@@ -1047,7 +1019,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 6100,
-      "rank": 69
+      "rank": 67
     },
     {
       "code": "319660",
@@ -1061,7 +1033,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 58100,
-      "rank": 70
+      "rank": 68
     },
     {
       "code": "272110",
@@ -1075,7 +1047,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 35200,
-      "rank": 71
+      "rank": 69
     },
     {
       "code": "036930",
@@ -1089,7 +1061,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 50700,
-      "rank": 72
+      "rank": 70
     },
     {
       "code": "041920",
@@ -1103,7 +1075,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 28700,
-      "rank": 73
+      "rank": 71
     },
     {
       "code": "007110",
@@ -1117,7 +1089,7 @@
       "cci_slope": 1,
       "ma20_slope": 1,
       "next_open": 1791,
-      "rank": 74
+      "rank": 72
     },
     {
       "code": "482630",
@@ -1131,7 +1103,7 @@
       "cci_slope": 3,
       "ma20_slope": 0,
       "next_open": 20300,
-      "rank": 75
+      "rank": 73
     },
     {
       "code": "092870",
@@ -1145,7 +1117,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 29850,
-      "rank": 76
+      "rank": 74
     },
     {
       "code": "036570",
@@ -1159,7 +1131,7 @@
       "cci_slope": 3,
       "ma20_slope": 0,
       "next_open": 216500,
-      "rank": 77
+      "rank": 75
     },
     {
       "code": "189300",
@@ -1173,7 +1145,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 102300,
-      "rank": 78
+      "rank": 76
     },
     {
       "code": "039030",
@@ -1187,7 +1159,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 409500,
-      "rank": 79
+      "rank": 77
     },
     {
       "code": "474170",
@@ -1201,7 +1173,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 19990,
-      "rank": 80
+      "rank": 78
     },
     {
       "code": "009830",
@@ -1215,7 +1187,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 41900,
-      "rank": 81
+      "rank": 79
     },
     {
       "code": "053610",
@@ -1229,7 +1201,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 57500,
-      "rank": 82
+      "rank": 80
     },
     {
       "code": "417010",
@@ -1243,7 +1215,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 12560,
-      "rank": 83
+      "rank": 81
     },
     {
       "code": "403870",
@@ -1257,7 +1229,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 48600,
-      "rank": 84
+      "rank": 82
     },
     {
       "code": "240810",
@@ -1271,7 +1243,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 112000,
-      "rank": 85
+      "rank": 83
     },
     {
       "code": "099320",
@@ -1285,7 +1257,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 193300,
-      "rank": 86
+      "rank": 84
     },
     {
       "code": "272290",
@@ -1299,7 +1271,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 41100,
-      "rank": 87
+      "rank": 85
     },
     {
       "code": "354320",
@@ -1313,7 +1285,7 @@
       "cci_slope": 1,
       "ma20_slope": 3,
       "next_open": 66000,
-      "rank": 88
+      "rank": 86
     },
     {
       "code": "020400",
@@ -1327,7 +1299,7 @@
       "cci_slope": 0,
       "ma20_slope": 2,
       "next_open": 7600,
-      "rank": 89
+      "rank": 87
     },
     {
       "code": "032820",
@@ -1341,7 +1313,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 9650,
-      "rank": 90
+      "rank": 88
     },
     {
       "code": "448900",
@@ -1355,7 +1327,7 @@
       "cci_slope": 1,
       "ma20_slope": 0,
       "next_open": 66800,
-      "rank": 91
+      "rank": 89
     },
     {
       "code": "323280",
@@ -1369,7 +1341,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 76700,
-      "rank": 92
+      "rank": 90
     },
     {
       "code": "462350",
@@ -1383,7 +1355,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 22100,
-      "rank": 93
+      "rank": 91
     },
     {
       "code": "027360",
@@ -1397,7 +1369,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 4790,
-      "rank": 94
+      "rank": 92
     },
     {
       "code": "336260",
@@ -1411,7 +1383,7 @@
       "cci_slope": 0,
       "ma20_slope": 3,
       "next_open": 36200,
-      "rank": 95
+      "rank": 93
     },
     {
       "code": "001550",
@@ -1425,7 +1397,7 @@
       "cci_slope": 3,
       "ma20_slope": 1,
       "next_open": 12770,
-      "rank": 96
+      "rank": 94
     },
     {
       "code": "214450",
@@ -1439,7 +1411,7 @@
       "cci_slope": 1,
       "ma20_slope": 0,
       "next_open": 339000,
-      "rank": 97
+      "rank": 95
     }
   ],
   "sector_summary": [
@@ -1582,14 +1554,14 @@
     },
     {
       "sector": "금융",
-      "count": 9,
-      "avg_change": 4.45,
+      "count": 8,
+      "avg_change": 4.53,
       "stocks": [
         "신한지주",
         "KB금융",
-        "BNK금융지주",
         "iM금융지주",
-        "우리금융지주"
+        "우리금융지주",
+        "GS피앤엘"
       ]
     },
     {
@@ -1605,68 +1577,21 @@
       ]
     },
     {
-      "sector": "건설",
-      "count": 2,
-      "avg_change": 2.81,
-      "stocks": [
-        "금양그린파워",
-        "대우건설"
-      ]
-    },
-    {
       "sector": "보험",
       "count": 1,
       "avg_change": 2.76,
       "stocks": [
         "DB손해보험"
       ]
+    },
+    {
+      "sector": "건설",
+      "count": 1,
+      "avg_change": 1.66,
+      "stocks": [
+        "대우건설"
+      ]
     }
   ],
-  "prev_returns": [
-    {
-      "date": "2026-02-05",
-      "code": "048470",
-      "name": "대동스틸",
-      "rank": 1,
-      "buy_price": 3330,
-      "today_price": 3410,
-      "return_pct": 2.4
-    },
-    {
-      "date": "2026-02-05",
-      "code": "068270",
-      "name": "셀트리온",
-      "rank": 2,
-      "buy_price": 217500,
-      "today_price": 212000,
-      "return_pct": -2.53
-    },
-    {
-      "date": "2026-02-05",
-      "code": "000120",
-      "name": "CJ대한통운",
-      "rank": 3,
-      "buy_price": 109400,
-      "today_price": 113100,
-      "return_pct": 3.38
-    },
-    {
-      "date": "2026-02-05",
-      "code": "271560",
-      "name": "오리온",
-      "rank": 4,
-      "buy_price": 123400,
-      "today_price": 122900,
-      "return_pct": -0.41
-    },
-    {
-      "date": "2026-02-05",
-      "code": "140670",
-      "name": "알에스오토메이션",
-      "rank": 5,
-      "buy_price": 25150,
-      "today_price": 24300,
-      "return_pct": -3.38
-    }
-  ]
+  "prev_returns": []
 }
