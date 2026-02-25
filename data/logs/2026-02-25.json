@@ -1,0 +1,643 @@
+{
+  "date": "2026-02-25",
+  "timestamp": "2026-02-25T15:00:19",
+  "market": {
+    "kospi": 6073.27,
+    "kospi_change": 1.74,
+    "kosdaq": 1161.65,
+    "kosdaq_change": -0.29,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 29,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "417200",
+      "name": "LS머트리얼즈",
+      "sector": "전기·전자",
+      "price": 17990,
+      "change_rate": 3.0946,
+      "score": 79.3,
+      "cci": 131.0,
+      "ma20_gap": 10.3,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "495050",
+      "name": "RISE 코리아밸류업",
+      "sector": "",
+      "price": 26655,
+      "change_rate": 1.7366,
+      "score": 72.8,
+      "cci": 148.9,
+      "ma20_gap": 13.0,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "003490",
+      "name": "대한항공",
+      "sector": "운송·창고",
+      "price": 28800,
+      "change_rate": 8.6792,
+      "score": 72.7,
+      "cci": 135.2,
+      "ma20_gap": 8.9,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "sector": "유통",
+      "price": 4705,
+      "change_rate": 6.9318,
+      "score": 69.5,
+      "cci": 118.7,
+      "ma20_gap": 3.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "034220",
+      "name": "LG디스플레이",
+      "sector": "전기·전자",
+      "price": 14770,
+      "change_rate": 5.0498,
+      "score": 67.5,
+      "cci": 167.3,
+      "ma20_gap": 16.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "417200",
+      "name": "LS머트리얼즈",
+      "sector": "전기·전자",
+      "price": 17990,
+      "change_rate": 3.0946,
+      "score": 79.3,
+      "cci": 131.0,
+      "ma20_gap": 10.3,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "495050",
+      "name": "RISE 코리아밸류업",
+      "sector": "",
+      "price": 26655,
+      "change_rate": 1.7366,
+      "score": 72.8,
+      "cci": 148.9,
+      "ma20_gap": 13.0,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "003490",
+      "name": "대한항공",
+      "sector": "운송·창고",
+      "price": 28800,
+      "change_rate": 8.6792,
+      "score": 72.7,
+      "cci": 135.2,
+      "ma20_gap": 8.9,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "sector": "유통",
+      "price": 4705,
+      "change_rate": 6.9318,
+      "score": 69.5,
+      "cci": 118.7,
+      "ma20_gap": 3.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "034220",
+      "name": "LG디스플레이",
+      "sector": "전기·전자",
+      "price": 14770,
+      "change_rate": 5.0498,
+      "score": 67.5,
+      "cci": 167.3,
+      "ma20_gap": 16.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 6,
+      "code": "452260",
+      "name": "한화갤러리아",
+      "sector": "유통",
+      "price": 3295,
+      "change_rate": 6.8071,
+      "score": 60.0,
+      "cci": 161.4,
+      "ma20_gap": 39.9,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 7,
+      "code": "000540",
+      "name": "흥국화재",
+      "sector": "보험",
+      "price": 5970,
+      "change_rate": 2.5773,
+      "score": 57.8,
+      "cci": 154.1,
+      "ma20_gap": 39.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 8,
+      "code": "003620",
+      "name": "KG모빌리티",
+      "sector": "운송장비·부품",
+      "price": 4420,
+      "change_rate": 9.0012,
+      "score": 53.3,
+      "cci": 24.8,
+      "ma20_gap": 3.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 9,
+      "code": "003460",
+      "name": "유화증권",
+      "sector": "증권",
+      "price": 3795,
+      "change_rate": 9.2086,
+      "score": 46.9,
+      "cci": 43.4,
+      "ma20_gap": 10.9,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 10,
+      "code": "225190",
+      "name": "LK삼양",
+      "sector": "의료·정밀기기",
+      "price": 2475,
+      "change_rate": 7.8431,
+      "score": 46.2,
+      "cci": -6.0,
+      "ma20_gap": 12.2,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 11,
+      "code": "065170",
+      "name": "비엘팜텍",
+      "sector": "유통",
+      "price": 4810,
+      "change_rate": 13.7116,
+      "score": 45.5,
+      "cci": -35.0,
+      "ma20_gap": 5.2,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 12,
+      "code": "000400",
+      "name": "롯데손해보험",
+      "sector": "보험",
+      "price": 2670,
+      "change_rate": 11.9497,
+      "score": 45.2,
+      "cci": 138.0,
+      "ma20_gap": 28.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 13,
+      "code": "476060",
+      "name": "온코닉테라퓨틱스",
+      "sector": "일반서비스",
+      "price": 26350,
+      "change_rate": 3.5363,
+      "score": 41.7,
+      "cci": 344.6,
+      "ma20_gap": 36.1,
+      "cci_slope": 3,
+      "ma20_slope": 2
+    },
+    {
+      "rank": 14,
+      "code": "076610",
+      "name": "해성옵틱스",
+      "sector": "의료·정밀기기",
+      "price": 1467,
+      "change_rate": 1.6632,
+      "score": 40.8,
+      "cci": 78.0,
+      "ma20_gap": 13.2,
+      "cci_slope": 2,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 15,
+      "code": "072470",
+      "name": "우리산업홀딩스",
+      "sector": "운송장비·부품",
+      "price": 4530,
+      "change_rate": 26.1838,
+      "score": 40.4,
+      "cci": 94.5,
+      "ma20_gap": 5.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 16,
+      "code": "0015G0",
+      "name": "그린광학",
+      "sector": "의료·정밀기기",
+      "price": 43000,
+      "change_rate": 18.2944,
+      "score": 40.3,
+      "cci": 112.1,
+      "ma20_gap": 15.8,
+      "cci_slope": 2,
+      "ma20_slope": 2
+    },
+    {
+      "rank": 17,
+      "code": "302550",
+      "name": "리메드",
+      "sector": "의료·정밀기기",
+      "price": 3815,
+      "change_rate": 19.2188,
+      "score": 36.3,
+      "cci": 71.3,
+      "ma20_gap": 7.3,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 18,
+      "code": "047040",
+      "name": "대우건설",
+      "sector": "건설",
+      "price": 8800,
+      "change_rate": 8.508,
+      "score": 35.6,
+      "cci": 83.9,
+      "ma20_gap": 31.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 19,
+      "code": "006800",
+      "name": "미래에셋증권",
+      "sector": "증권",
+      "price": 72600,
+      "change_rate": 8.1967,
+      "score": 31.2,
+      "cci": 84.2,
+      "ma20_gap": 33.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 20,
+      "code": "078020",
+      "name": "LS증권",
+      "sector": "금융",
+      "price": 8150,
+      "change_rate": 5.7069,
+      "score": 30.0,
+      "cci": 69.5,
+      "ma20_gap": 23.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 21,
+      "code": "038500",
+      "name": "삼표시멘트",
+      "sector": "비금속",
+      "price": 16160,
+      "change_rate": 1.6992,
+      "score": 27.0,
+      "cci": 29.7,
+      "ma20_gap": 24.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 22,
+      "code": "092220",
+      "name": "KEC",
+      "sector": "전기·전자",
+      "price": 1227,
+      "change_rate": 19.358,
+      "score": 26.1,
+      "cci": 351.9,
+      "ma20_gap": 32.4,
+      "cci_slope": 3,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 23,
+      "code": "307180",
+      "name": "아이엘",
+      "sector": "전기·전자",
+      "price": 7340,
+      "change_rate": 22.9481,
+      "score": 21.5,
+      "cci": 110.8,
+      "ma20_gap": 29.2,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 24,
+      "code": "049630",
+      "name": "재영솔루텍",
+      "sector": "의료·정밀기기",
+      "price": 4335,
+      "change_rate": 6.25,
+      "score": 20.0,
+      "cci": -99.2,
+      "ma20_gap": -11.9,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 25,
+      "code": "298830",
+      "name": "슈어소프트테크",
+      "sector": "IT 서비스",
+      "price": 8820,
+      "change_rate": 8.6207,
+      "score": 19.0,
+      "cci": -24.9,
+      "ma20_gap": -3.7,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 26,
+      "code": "413630",
+      "name": "씨피시스템",
+      "sector": "화학",
+      "price": 4747,
+      "change_rate": 1.2154,
+      "score": 17.2,
+      "cci": -34.3,
+      "ma20_gap": -0.9,
+      "cci_slope": 1,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 27,
+      "code": "242040",
+      "name": "나무기술",
+      "sector": "IT 서비스",
+      "price": 4790,
+      "change_rate": 26.0526,
+      "score": 10.0,
+      "cci": 76.8,
+      "ma20_gap": 30.1,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 28,
+      "code": "382480",
+      "name": "지아이텍",
+      "sector": "기계·장비",
+      "price": 2790,
+      "change_rate": 20.7792,
+      "score": 5.0,
+      "cci": -86.4,
+      "ma20_gap": -2.6,
+      "cci_slope": 1,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 29,
+      "code": "009900",
+      "name": "명신산업",
+      "sector": "운송장비·부품",
+      "price": 10960,
+      "change_rate": 18.4865,
+      "score": 2.5,
+      "cci": 2.9,
+      "ma20_gap": -0.5,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "기계·장비",
+      "count": 1,
+      "avg_change": 20.78,
+      "stocks": [
+        "지아이텍"
+      ]
+    },
+    {
+      "sector": "운송장비·부품",
+      "count": 3,
+      "avg_change": 17.89,
+      "stocks": [
+        "KG모빌리티",
+        "우리산업홀딩스",
+        "명신산업"
+      ]
+    },
+    {
+      "sector": "IT 서비스",
+      "count": 2,
+      "avg_change": 17.34,
+      "stocks": [
+        "슈어소프트테크",
+        "나무기술"
+      ]
+    },
+    {
+      "sector": "전기·전자",
+      "count": 4,
+      "avg_change": 12.61,
+      "stocks": [
+        "LS머트리얼즈",
+        "LG디스플레이",
+        "KEC",
+        "아이엘"
+      ]
+    },
+    {
+      "sector": "의료·정밀기기",
+      "count": 5,
+      "avg_change": 10.65,
+      "stocks": [
+        "LK삼양",
+        "해성옵틱스",
+        "그린광학",
+        "리메드",
+        "재영솔루텍"
+      ]
+    },
+    {
+      "sector": "유통",
+      "count": 3,
+      "avg_change": 9.15,
+      "stocks": [
+        "제이씨현시스템",
+        "한화갤러리아",
+        "비엘팜텍"
+      ]
+    },
+    {
+      "sector": "증권",
+      "count": 2,
+      "avg_change": 8.7,
+      "stocks": [
+        "유화증권",
+        "미래에셋증권"
+      ]
+    },
+    {
+      "sector": "운송·창고",
+      "count": 1,
+      "avg_change": 8.68,
+      "stocks": [
+        "대한항공"
+      ]
+    },
+    {
+      "sector": "건설",
+      "count": 1,
+      "avg_change": 8.51,
+      "stocks": [
+        "대우건설"
+      ]
+    },
+    {
+      "sector": "보험",
+      "count": 2,
+      "avg_change": 7.26,
+      "stocks": [
+        "흥국화재",
+        "롯데손해보험"
+      ]
+    },
+    {
+      "sector": "금융",
+      "count": 1,
+      "avg_change": 5.71,
+      "stocks": [
+        "LS증권"
+      ]
+    },
+    {
+      "sector": "일반서비스",
+      "count": 1,
+      "avg_change": 3.54,
+      "stocks": [
+        "온코닉테라퓨틱스"
+      ]
+    },
+    {
+      "sector": "기타",
+      "count": 1,
+      "avg_change": 1.74,
+      "stocks": [
+        "RISE 코리아밸류업"
+      ]
+    },
+    {
+      "sector": "비금속",
+      "count": 1,
+      "avg_change": 1.7,
+      "stocks": [
+        "삼표시멘트"
+      ]
+    },
+    {
+      "sector": "화학",
+      "count": 1,
+      "avg_change": 1.22,
+      "stocks": [
+        "씨피시스템"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-02-24",
+      "code": "090710",
+      "name": "휴림로봇",
+      "rank": 1,
+      "buy_price": 15190,
+      "today_price": 15245,
+      "return_pct": 0.36
+    },
+    {
+      "date": "2026-02-24",
+      "code": "417200",
+      "name": "LS머트리얼즈",
+      "rank": 2,
+      "buy_price": 17450,
+      "today_price": 18010,
+      "return_pct": 3.21
+    },
+    {
+      "date": "2026-02-24",
+      "code": "290550",
+      "name": "디케이티",
+      "rank": 3,
+      "buy_price": 12480,
+      "today_price": 12150,
+      "return_pct": -2.64
+    },
+    {
+      "date": "2026-02-24",
+      "code": "012800",
+      "name": "대창",
+      "rank": 4,
+      "buy_price": 1625,
+      "today_price": 1564,
+      "return_pct": -3.75
+    },
+    {
+      "date": "2026-02-24",
+      "code": "103840",
+      "name": "우양",
+      "rank": 5,
+      "buy_price": 3375,
+      "today_price": 3300,
+      "return_pct": -2.22
+    }
+  ]
+}
