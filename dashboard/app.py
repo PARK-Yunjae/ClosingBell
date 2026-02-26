@@ -316,7 +316,7 @@ elif page == "📊 성과 추적":
         st.info("최소 2일 이상의 데이터가 필요합니다.")
         st.stop()
 
-    # 수익률 히스토리 수집
+    # ── 수익률 데이터 수집 ──
     all_returns = []
     for d in dates:
         for ret in logs[d].get("prev_returns", []):
@@ -329,57 +329,242 @@ elif page == "📊 성과 추적":
                 "수익률(%)": ret.get("return_pct", 0),
             })
 
-    if all_returns:
-        df_ret = pd.DataFrame(all_returns)
-
-        # 요약
-        c1, c2, c3, c4 = st.columns(4)
-        total = len(df_ret)
-        wins = (df_ret["수익률(%)"] > 0).sum()
-        c1.metric("총 추천", f"{total}건")
-        c2.metric("승률", f"{wins/total*100:.1f}%")
-        c3.metric("평균 수익률", f"{df_ret['수익률(%)'].mean():+.2f}%")
-        c4.metric("누적", f"{df_ret['수익률(%)'].sum():+.2f}%")
-
-        st.divider()
-
-        # 순위별 성과
-        st.subheader("🎯 순위별 성과")
-        rp = df_ret.groupby("순위")["수익률(%)"].agg(["mean", "count"]).reset_index()
-        rp.columns = ["순위", "평균(%)", "건수"]
-        fig_r = go.Figure(go.Bar(
-            x=[f"{int(r)}위" for r in rp["순위"]], y=rp["평균(%)"],
-            marker_color=["#FF4136" if v > 0 else "#0074D9" for v in rp["평균(%)"]],
-            text=[f"{v:+.2f}%" for v in rp["평균(%)"]],
-            textposition="outside",
-        ))
-        fig_r.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig_r, use_container_width=True)
-
-        # 날짜별 1위 수익률
-        st.divider()
-        st.subheader("📅 1위 종목 일별 수익률")
-        r1 = df_ret[df_ret["순위"] == 1].copy()
-        if len(r1) > 0:
-            fig_d = go.Figure(go.Bar(
-                x=r1["추천일"], y=r1["수익률(%)"],
-                marker_color=["#FF4136" if v > 0 else "#0074D9" for v in r1["수익률(%)"]],
-                text=[f"{n}<br>{v:+.1f}%" for n, v in zip(r1["종목명"], r1["수익률(%)"])],
-                textposition="outside",
-            ))
-            fig_d.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig_d, use_container_width=True)
-
-        # 상세 테이블
-        st.divider()
-        st.subheader("📋 전체 기록")
-        st.dataframe(df_ret.sort_values("추천일", ascending=False),
-                     use_container_width=True, hide_index=True)
-    else:
+    if not all_returns:
         st.info("📅 수익률 데이터가 아직 없습니다.\n\n"
                 "2일 이상 스크리닝하면 전일 추천 수익률이 자동 계산됩니다.")
+        st.stop()
 
-    # 날짜별 TOP5 전체 보기
+    df_ret = pd.DataFrame(all_returns)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 핵심 요약 카드
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    total = len(df_ret)
+    wins = (df_ret["수익률(%)"] > 0).sum()
+    losses = (df_ret["수익률(%)"] < 0).sum()
+    even = (df_ret["수익률(%)"] == 0).sum()
+    avg_ret = df_ret["수익률(%)"].mean()
+    avg_win = df_ret[df_ret["수익률(%)"] > 0]["수익률(%)"].mean() if wins > 0 else 0
+    avg_loss = df_ret[df_ret["수익률(%)"] < 0]["수익률(%)"].mean() if losses > 0 else 0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("총 추천", f"{total}건")
+    c2.metric("승률", f"{wins/total*100:.1f}%", f"{wins}승 {losses}패 {even}무")
+    c3.metric("평균 수익률", f"{avg_ret:+.2f}%")
+    c4.metric("평균 수익 (승)", f"{avg_win:+.2f}%")
+    c5.metric("평균 손실 (패)", f"{avg_loss:+.2f}%")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 순위별 상세 성과
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.divider()
+    st.subheader("🎯 순위별 성과 분석")
+
+    rank_stats = []
+    for rank in sorted(df_ret["순위"].unique()):
+        rdf = df_ret[df_ret["순위"] == rank]
+        r_wins = (rdf["수익률(%)"] > 0).sum()
+        r_total = len(rdf)
+        rank_stats.append({
+            "순위": f"{int(rank)}위",
+            "건수": r_total,
+            "승": r_wins,
+            "패": (rdf["수익률(%)"] < 0).sum(),
+            "승률(%)": round(r_wins / r_total * 100, 1) if r_total > 0 else 0,
+            "평균수익률(%)": round(rdf["수익률(%)"].mean(), 2),
+            "최대수익(%)": round(rdf["수익률(%)"].max(), 2),
+            "최대손실(%)": round(rdf["수익률(%)"].min(), 2),
+        })
+
+    df_rank = pd.DataFrame(rank_stats)
+
+    # 순위별 차트: 승률 + 평균수익률 나란히
+    col_wr, col_ar = st.columns(2)
+
+    with col_wr:
+        fig_wr = go.Figure(go.Bar(
+            x=df_rank["순위"], y=df_rank["승률(%)"],
+            marker_color=["#00B894" if v >= 50 else "#FDCB6E" if v >= 40 else "#E17055"
+                          for v in df_rank["승률(%)"]],
+            text=[f"{v:.0f}%<br>({w}승{l}패)" for v, w, l
+                  in zip(df_rank["승률(%)"], df_rank["승"], df_rank["패"])],
+            textposition="outside",
+        ))
+        fig_wr.add_hline(y=50, line_dash="dash", line_color="gray",
+                         annotation_text="50%", annotation_position="right")
+        fig_wr.update_layout(height=320, margin=dict(l=0, r=0, t=30, b=0),
+                             title=dict(text="순위별 승률", font=dict(size=14)),
+                             yaxis_range=[0, max(df_rank["승률(%)"].max() + 15, 60)])
+        st.plotly_chart(fig_wr, use_container_width=True)
+
+    with col_ar:
+        fig_ar = go.Figure(go.Bar(
+            x=df_rank["순위"], y=df_rank["평균수익률(%)"],
+            marker_color=["#FF4136" if v > 0 else "#0074D9"
+                          for v in df_rank["평균수익률(%)"]],
+            text=[f"{v:+.2f}%" for v in df_rank["평균수익률(%)"]],
+            textposition="outside",
+        ))
+        fig_ar.add_hline(y=0, line_color="gray")
+        fig_ar.update_layout(height=320, margin=dict(l=0, r=0, t=30, b=0),
+                             title=dict(text="순위별 평균 수익률", font=dict(size=14)))
+        st.plotly_chart(fig_ar, use_container_width=True)
+
+    # 순위별 상세 테이블
+    st.dataframe(df_rank, use_container_width=True, hide_index=True)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 일별 수익률 추이
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.divider()
+    st.subheader("📅 일별 수익률 추이")
+
+    # 일별 평균 수익률
+    daily = df_ret.groupby("추천일").agg(
+        평균수익률=("수익률(%)", "mean"),
+        종목수=("수익률(%)", "count"),
+        승수=("수익률(%)", lambda x: (x > 0).sum()),
+    ).reset_index()
+    daily["승률(%)"] = (daily["승수"] / daily["종목수"] * 100).round(1)
+    daily["누적수익률(%)"] = daily["평균수익률"].cumsum().round(2)
+
+    # 누적 수익률 라인 + 일별 바 차트
+    fig_daily = go.Figure()
+    fig_daily.add_trace(go.Bar(
+        x=daily["추천일"], y=daily["평균수익률"],
+        name="일 평균 수익률",
+        marker_color=["#FF4136" if v > 0 else "#0074D9" for v in daily["평균수익률"]],
+        text=[f"{v:+.1f}%" for v in daily["평균수익률"]],
+        textposition="outside",
+        yaxis="y",
+    ))
+    fig_daily.add_trace(go.Scatter(
+        x=daily["추천일"], y=daily["누적수익률(%)"],
+        name="누적 수익률",
+        line=dict(color="#00B894", width=3),
+        mode="lines+markers",
+        yaxis="y2",
+    ))
+    fig_daily.update_layout(
+        height=380, margin=dict(l=0, r=50, t=10, b=0),
+        yaxis=dict(title="일 평균 수익률 (%)"),
+        yaxis2=dict(title="누적 수익률 (%)", overlaying="y", side="right"),
+        legend=dict(orientation="h", y=1.12),
+        barmode="relative",
+    )
+    st.plotly_chart(fig_daily, use_container_width=True)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 점수대별 성과 (점수가 높으면 실제로 잘 맞는가?)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.divider()
+    st.subheader("📐 점수대별 성과")
+    st.caption("점수가 높은 종목이 실제로 수익률이 좋은가?")
+
+    # 날짜별 top5에서 점수 매칭
+    score_returns = []
+    for d in dates:
+        data = logs[d]
+        if data.get("skipped"):
+            continue
+        idx = dates.index(d)
+        if idx + 1 >= len(dates):
+            continue
+        next_date = dates[idx + 1]
+        prev_rets = {r["code"]: r["return_pct"] for r in logs[next_date].get("prev_returns", [])}
+        for s in data.get("top5", []):
+            code = s.get("code", "")
+            if code in prev_rets:
+                score_returns.append({
+                    "점수": s.get("score", 0),
+                    "수익률(%)": prev_rets[code],
+                    "종목명": s.get("name", ""),
+                    "날짜": d,
+                })
+
+    if score_returns:
+        df_score = pd.DataFrame(score_returns)
+
+        # 점수 구간 나누기
+        bins = [0, 40, 55, 70, 85, 100]
+        labels = ["~40", "40~55", "55~70", "70~85", "85~100"]
+        df_score["점수대"] = pd.cut(df_score["점수"], bins=bins, labels=labels, right=True)
+
+        score_stats = df_score.groupby("점수대", observed=True).agg(
+            건수=("수익률(%)", "count"),
+            승률=("수익률(%)", lambda x: round((x > 0).mean() * 100, 1)),
+            평균수익률=("수익률(%)", lambda x: round(x.mean(), 2)),
+        ).reset_index()
+
+        col_sb, col_sc = st.columns(2)
+        with col_sb:
+            fig_sb = go.Figure(go.Bar(
+                x=score_stats["점수대"], y=score_stats["승률"],
+                marker_color=["#00B894" if v >= 50 else "#E17055" for v in score_stats["승률"]],
+                text=[f"{v:.0f}%\n({n}건)" for v, n in zip(score_stats["승률"], score_stats["건수"])],
+                textposition="outside",
+            ))
+            fig_sb.add_hline(y=50, line_dash="dash", line_color="gray")
+            fig_sb.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0),
+                                 title=dict(text="점수대별 승률", font=dict(size=14)),
+                                 xaxis_title="점수 구간")
+            st.plotly_chart(fig_sb, use_container_width=True)
+
+        with col_sc:
+            fig_sc = go.Figure(go.Scatter(
+                x=df_score["점수"], y=df_score["수익률(%)"],
+                mode="markers",
+                marker=dict(size=8, color=df_score["수익률(%)"],
+                            colorscale="RdYlGn", cmin=-5, cmax=5,
+                            showscale=True, colorbar=dict(title="%")),
+                text=[f"{n}<br>{s}점 → {r:+.1f}%"
+                      for n, s, r in zip(df_score["종목명"], df_score["점수"], df_score["수익률(%)"])],
+                hovertemplate="%{text}<extra></extra>",
+            ))
+            fig_sc.add_hline(y=0, line_color="gray")
+            fig_sc.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0),
+                                 title=dict(text="점수 vs 수익률 분포", font=dict(size=14)),
+                                 xaxis_title="점수", yaxis_title="수익률(%)")
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 최고/최저 종목
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.divider()
+    col_best, col_worst = st.columns(2)
+
+    with col_best:
+        st.subheader("🏆 수익률 TOP 5")
+        top = df_ret.nlargest(5, "수익률(%)")
+        for _, r in top.iterrows():
+            st.markdown(
+                f"**{r['종목명']}** ({r['추천일']}) "
+                f"— {int(r['순위'])}위 · :red[**{r['수익률(%)']:+.2f}%**]"
+            )
+
+    with col_worst:
+        st.subheader("💀 수익률 WORST 5")
+        bottom = df_ret.nsmallest(5, "수익률(%)")
+        for _, r in bottom.iterrows():
+            st.markdown(
+                f"**{r['종목명']}** ({r['추천일']}) "
+                f"— {int(r['순위'])}위 · :blue[**{r['수익률(%)']:+.2f}%**]"
+            )
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 전체 기록 테이블
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    st.divider()
+    st.subheader("📋 전체 기록")
+    display_df = df_ret.sort_values(["추천일", "순위"], ascending=[False, True]).copy()
+    display_df["결과"] = display_df["수익률(%)"].apply(
+        lambda x: "✅ 승" if x > 0 else ("❌ 패" if x < 0 else "➖ 무")
+    )
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 날짜별 TOP5 + 익일수익률
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     st.divider()
     st.subheader("📅 날짜별 TOP5 추천")
     top5_rows = []
@@ -396,8 +581,8 @@ elif page == "📊 성과 추적":
                 "업종": s.get("sector", ""),
                 "점수": s.get("score", 0),
                 "현재가": s.get("price", 0),
-                "등락률(%)": s.get("change_rate", 0),
-                "CCI": s.get("cci", 0),
+                "등락률(%)": round(s.get("change_rate", 0), 1),
+                "CCI": round(s.get("cci", 0), 0),
                 "이격도(%)": s.get("ma20_gap", 0),
             }
             # 수익률 매칭
@@ -421,24 +606,6 @@ elif page == "📊 성과 추적":
             df_top5 = df_top5[df_top5["날짜"] == date_filter]
         st.dataframe(df_top5.sort_values(["날짜", "순위"], ascending=[False, True]),
                      use_container_width=True, hide_index=True)
-
-    # 일별 요약
-    st.divider()
-    st.subheader("📋 일별 스크리닝 요약")
-    rows = []
-    for d in dates:
-        data = logs[d]
-        if data.get("skipped"):
-            rows.append({"날짜": d, "상태": "⏸", "유니버스": 0, "1위": "-", "점수": 0})
-            continue
-        t5 = data.get("top5", [])
-        f = t5[0] if t5 else {}
-        rows.append({"날짜": d, "상태": "✅", "유니버스": data.get("universe_count", 0),
-                     "1위": f.get("name", "-"), "점수": f.get("score", 0),
-                     "등락률": f.get("change_rate", 0),
-                     "코스피": data.get("market", {}).get("kospi_change", 0)})
-    st.dataframe(pd.DataFrame(rows).sort_values("날짜", ascending=False),
-                 use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════
@@ -477,5 +644,8 @@ elif page == "⚙️ 시스템":
 
     st.divider()
     st.subheader("🚫 제외 필터")
-    st.markdown("SPAC · ETF · ETN · 우선주 · 리츠 · 인프라 · 나스닥 -2% · 가격 1,000~500,000원")
+    st.markdown(
+        "SPAC · ETF · ETN · 우선주 · 리츠 · 인프라 · "
+        "나스닥 -2% · 가격 3,000~150,000원 · 이격도 ±20% 초과"
+    )
     st.caption(f"ClosingBell v2 | {dates[-1]}")

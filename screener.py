@@ -11,7 +11,7 @@ from config import (
     MA20_GAP_OPTIMAL, MA20_GAP_ZERO,
     CHANGE_OPTIMAL, CHANGE_ZERO,
     SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE, SCORE_CCI_SLOPE, SCORE_MA20_SLOPE,
-    TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE,
+    TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE, MAX_MA20_GAP,
     NASDAQ_DROP_THRESHOLD, OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV,
     TV200_CONDITION_NAME, API_DELAY,
     EXCLUDE_NAMES, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
@@ -84,11 +84,14 @@ class Screener:
         filtered = []
         price_zero = 0
         for s in universe:
-            if s["price"] == 0:
+            if s["price"] == 0 or s.get("volume", 0) == 0:
                 try:
                     cur = self.api.get_current_price(s["code"])
-                    s["price"] = cur["price"]
-                    s["change_rate"] = cur["change_rate"]
+                    if s["price"] == 0:
+                        s["price"] = cur["price"]
+                        s["change_rate"] = cur["change_rate"]
+                    if s.get("volume", 0) == 0:
+                        s["volume"] = cur["volume"]
                 except Exception:
                     pass
 
@@ -130,6 +133,13 @@ class Screener:
 
         if calc_fail > 0:
             logger.warning("지표 계산 실패: %d/%d종목", calc_fail, len(universe))
+
+        # 이격도 과열 필터 (지표 계산 후 적용)
+        before_gap = len(scored)
+        scored = [s for s in scored if abs(s.get("ma20_gap", 0)) <= MAX_MA20_GAP]
+        if before_gap != len(scored):
+            logger.info("이격도 과열 필터: %d → %d종목 (기준: ±%.0f%%)",
+                        before_gap, len(scored), MAX_MA20_GAP)
 
         # 정렬
         scored.sort(key=lambda x: x["score"], reverse=True)
@@ -303,6 +313,29 @@ class Screener:
 
         if df is None or len(df) < 20:
             raise ValueError(f"{code}: OHLCV 부족 ({len(df) if df is not None else 0}일)")
+
+        # ── 당일 임시 캔들 주입 ──
+        # 15:00 스크리닝 시 로컬 CSV에 아직 당일 데이터가 없으면
+        # 현재가 API로 임시 캔들을 만들어 CCI/이격도에 반영
+        today = pd.Timestamp(datetime.now().date())
+        latest_date = df["date"].max()
+
+        if latest_date < today:
+            try:
+                cur = self.api.get_current_price(code)
+                if cur["price"] > 0:
+                    today_candle = pd.DataFrame([{
+                        "date": today,
+                        "open": cur["open"] or cur["price"],
+                        "high": cur["high"] or cur["price"],
+                        "low": cur["low"] or cur["price"],
+                        "close": cur["price"],
+                        "volume": cur["volume"],
+                    }])
+                    df = pd.concat([df, today_candle], ignore_index=True)
+                    logger.debug("임시 캔들 주입 [%s]: %d원", code, cur["price"])
+            except Exception as e:
+                logger.debug("임시 캔들 실패 [%s]: %s", code, e)
 
         # 최근 데이터 사용
         df = df.tail(50).copy()

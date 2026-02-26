@@ -66,6 +66,7 @@ TOP_N = 5                       # 추천 종목 수
 TOP_N_CONSERVATIVE = 3          # 시장 불안 시
 MIN_PRICE = 3_000               # 최소 가격 (동전주 제외)
 MAX_PRICE = 150_000             # 최대 가격 (대형주 제외, 모멘텀 전략 적합 범위)
+MAX_MA20_GAP = 20.0             # 이격도 과열 기준 (초과 시 후보 제외)
 NASDAQ_DROP_THRESHOLD = -2.0    # 나스닥 급락 기준
 
 # 제외 키워드 (종목명에 포함되면 제외)
