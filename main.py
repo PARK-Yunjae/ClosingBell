@@ -11,6 +11,7 @@ ClosingBell v2 — 종가매매 스크리닝 시스템
 """
 import argparse
 import logging
+import signal
 import subprocess
 import sys
 import time
@@ -116,7 +117,7 @@ def job_update_data():
 
 
 def job_git_push():
-    """15:40 — Git push (Streamlit Cloud 대시보드 갱신)"""
+    """Git commit + push (Streamlit Cloud 대시보드 갱신)"""
     logger.info("Git push 시작")
 
     try:
@@ -131,15 +132,23 @@ def job_git_push():
         )
         subprocess.run(["git", "push"], check=True, capture_output=True)
         logger.info("Git push 완료 → Streamlit Cloud 갱신 예정 (~5분)")
+        return True
     except subprocess.CalledProcessError as e:
         logger.warning("Git push 실패 (변경사항 없음?): %s", e)
+        return False
     except FileNotFoundError:
         logger.warning("Git이 설치되어 있지 않습니다")
+        return False
 
 
 def job_shutdown():
-    """15:43 — 자동 종료"""
+    """15:43 — 종료 전 커밋 + 자동 종료"""
     logger.info("=" * 50)
+
+    # 종료 전 최종 커밋 (이전 git_push가 실패했거나 이후 변경사항 대비)
+    logger.info("종료 전 최종 커밋 확인...")
+    job_git_push()
+
     logger.info("ClosingBell v2 일일 작업 완료")
     notifier.send_shutdown()
     sys.exit(0)
@@ -153,6 +162,17 @@ def run_scheduler():
     logger.info("=" * 50)
     logger.info("ClosingBell v2 스케줄러 시작")
     logger.info("스케줄: %s", SCHEDULE)
+
+    # Ctrl+C 시 커밋 후 종료
+    def _graceful_shutdown(signum, frame):
+        logger.info("인터럽트 감지 (Ctrl+C) → 종료 전 커밋 시도...")
+        job_git_push()
+        logger.info("ClosingBell v2 수동 종료")
+        notifier.send_shutdown("(수동 종료)")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     # 토큰 미리 발급
     try:
