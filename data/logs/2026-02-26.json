@@ -1,0 +1,683 @@
+{
+  "date": "2026-02-26",
+  "timestamp": "2026-02-26T15:00:09",
+  "market": {
+    "kospi": 6270.03,
+    "kospi_change": 3.06,
+    "kosdaq": 1187.24,
+    "kosdaq_change": 1.89,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 35,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "034220",
+      "name": "LG디스플레이",
+      "sector": "전기·전자",
+      "price": 15890,
+      "change_rate": 7.22,
+      "score": 65.0,
+      "cci": 167.4,
+      "ma20_gap": 21.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "253590",
+      "name": "네오셈",
+      "sector": "기계·장비",
+      "price": 18410,
+      "change_rate": 3.1951,
+      "score": 62.0,
+      "cci": 86.0,
+      "ma20_gap": 10.5,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "001440",
+      "name": "대한전선",
+      "sector": "전기·전자",
+      "price": 35400,
+      "change_rate": 4.1176,
+      "score": 60.6,
+      "cci": 113.2,
+      "ma20_gap": 11.3,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "067310",
+      "name": "하나마이크론",
+      "sector": "전기·전자",
+      "price": 37300,
+      "change_rate": 7.6479,
+      "score": 60.0,
+      "cci": 17.8,
+      "ma20_gap": 4.0,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "125020",
+      "name": "티씨머티리얼즈",
+      "sector": "전기·전자",
+      "price": 6350,
+      "change_rate": 9.1065,
+      "score": 58.1,
+      "cci": 161.9,
+      "ma20_gap": 33.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "034220",
+      "name": "LG디스플레이",
+      "sector": "전기·전자",
+      "price": 15890,
+      "change_rate": 7.22,
+      "score": 65.0,
+      "cci": 167.4,
+      "ma20_gap": 21.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "253590",
+      "name": "네오셈",
+      "sector": "기계·장비",
+      "price": 18410,
+      "change_rate": 3.1951,
+      "score": 62.0,
+      "cci": 86.0,
+      "ma20_gap": 10.5,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "001440",
+      "name": "대한전선",
+      "sector": "전기·전자",
+      "price": 35400,
+      "change_rate": 4.1176,
+      "score": 60.6,
+      "cci": 113.2,
+      "ma20_gap": 11.3,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "067310",
+      "name": "하나마이크론",
+      "sector": "전기·전자",
+      "price": 37300,
+      "change_rate": 7.6479,
+      "score": 60.0,
+      "cci": 17.8,
+      "ma20_gap": 4.0,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "125020",
+      "name": "티씨머티리얼즈",
+      "sector": "전기·전자",
+      "price": 6350,
+      "change_rate": 9.1065,
+      "score": 58.1,
+      "cci": 161.9,
+      "ma20_gap": 33.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 6,
+      "code": "011930",
+      "name": "신성이엔지",
+      "sector": "전기·전자",
+      "price": 2130,
+      "change_rate": 2.1583,
+      "score": 55.0,
+      "cci": -23.0,
+      "ma20_gap": 4.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 7,
+      "code": "380540",
+      "name": "옵티코어",
+      "sector": "전기·전자",
+      "price": 4235,
+      "change_rate": 6.9444,
+      "score": 55.0,
+      "cci": 40.4,
+      "ma20_gap": 3.6,
+      "cci_slope": 2,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 8,
+      "code": "003460",
+      "name": "유화증권",
+      "sector": "증권",
+      "price": 4110,
+      "change_rate": 8.1579,
+      "score": 49.1,
+      "cci": 115.0,
+      "ma20_gap": 19.4,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 9,
+      "code": "036540",
+      "name": "SFA반도체",
+      "sector": "전기·전자",
+      "price": 8370,
+      "change_rate": 16.7364,
+      "score": 45.4,
+      "cci": 29.0,
+      "ma20_gap": 5.7,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 10,
+      "code": "003470",
+      "name": "유안타증권",
+      "sector": "증권",
+      "price": 5390,
+      "change_rate": 2.8626,
+      "score": 45.0,
+      "cci": 58.5,
+      "ma20_gap": 12.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 11,
+      "code": "307180",
+      "name": "아이엘",
+      "sector": "전기·전자",
+      "price": 9110,
+      "change_rate": 24.1144,
+      "score": 42.2,
+      "cci": 152.5,
+      "ma20_gap": 53.1,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 12,
+      "code": "187660",
+      "name": "현대ADM",
+      "sector": "일반서비스",
+      "price": 19090,
+      "change_rate": 21.8251,
+      "score": 42.0,
+      "cci": 192.1,
+      "ma20_gap": 201.2,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 13,
+      "code": "018880",
+      "name": "한온시스템",
+      "sector": "기계·장비",
+      "price": 4815,
+      "change_rate": 6.2914,
+      "score": 40.4,
+      "cci": 43.7,
+      "ma20_gap": 15.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 14,
+      "code": "221800",
+      "name": "유투바이오",
+      "sector": "일반서비스",
+      "price": 31150,
+      "change_rate": 20.0385,
+      "score": 39.9,
+      "cci": 159.8,
+      "ma20_gap": 119.9,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 15,
+      "code": "066570",
+      "name": "LG전자",
+      "sector": "전기·전자",
+      "price": 146400,
+      "change_rate": 9.8275,
+      "score": 39.9,
+      "cci": 114.6,
+      "ma20_gap": 22.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 16,
+      "code": "242040",
+      "name": "나무기술",
+      "sector": "IT 서비스",
+      "price": 5930,
+      "change_rate": 24.7108,
+      "score": 37.0,
+      "cci": 138.7,
+      "ma20_gap": 55.9,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 17,
+      "code": "047040",
+      "name": "대우건설",
+      "sector": "건설",
+      "price": 10320,
+      "change_rate": 17.9429,
+      "score": 36.4,
+      "cci": 114.6,
+      "ma20_gap": 38.0,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 18,
+      "code": "001200",
+      "name": "유진투자증권",
+      "sector": "증권",
+      "price": 5540,
+      "change_rate": 5.5238,
+      "score": 35.4,
+      "cci": 64.1,
+      "ma20_gap": 17.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 19,
+      "code": "046890",
+      "name": "서울반도체",
+      "sector": "전기·전자",
+      "price": 13250,
+      "change_rate": 7.114,
+      "score": 35.0,
+      "cci": 454.4,
+      "ma20_gap": 29.0,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 20,
+      "code": "489790",
+      "name": "한화비전",
+      "sector": "전기·전자",
+      "price": 86800,
+      "change_rate": 14.5119,
+      "score": 33.0,
+      "cci": 284.7,
+      "ma20_gap": 31.8,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 21,
+      "code": "131030",
+      "name": "옵투스제약",
+      "sector": "제약",
+      "price": 12710,
+      "change_rate": 17.6852,
+      "score": 30.8,
+      "cci": 232.3,
+      "ma20_gap": 31.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 22,
+      "code": "003530",
+      "name": "한화투자증권",
+      "sector": "증권",
+      "price": 8560,
+      "change_rate": 4.3902,
+      "score": 30.0,
+      "cci": 77.6,
+      "ma20_gap": 22.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 23,
+      "code": "092220",
+      "name": "KEC",
+      "sector": "전기·전자",
+      "price": 1234,
+      "change_rate": 3.6975,
+      "score": 30.0,
+      "cci": 347.8,
+      "ma20_gap": 48.8,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 24,
+      "code": "006340",
+      "name": "대원전선",
+      "sector": "전기·전자",
+      "price": 6340,
+      "change_rate": 2.4233,
+      "score": 30.0,
+      "cci": 303.8,
+      "ma20_gap": 64.1,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 25,
+      "code": "064260",
+      "name": "다날",
+      "sector": "IT 서비스",
+      "price": 8620,
+      "change_rate": 2.2539,
+      "score": 30.0,
+      "cci": -58.2,
+      "ma20_gap": -3.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 26,
+      "code": "403870",
+      "name": "HPSP",
+      "sector": "기계·장비",
+      "price": 43350,
+      "change_rate": 5.7317,
+      "score": 30.0,
+      "cci": -151.0,
+      "ma20_gap": -5.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 27,
+      "code": "255220",
+      "name": "SG",
+      "sector": "비금속",
+      "price": 2915,
+      "change_rate": 5.8076,
+      "score": 30.0,
+      "cci": -93.5,
+      "ma20_gap": -2.2,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 28,
+      "code": "001500",
+      "name": "현대차증권",
+      "sector": "증권",
+      "price": 13305,
+      "change_rate": 3.2196,
+      "score": 30.0,
+      "cci": 77.3,
+      "ma20_gap": 22.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 29,
+      "code": "225190",
+      "name": "LK삼양",
+      "sector": "의료·정밀기기",
+      "price": 2500,
+      "change_rate": 1.0101,
+      "score": 29.0,
+      "cci": 31.5,
+      "ma20_gap": 18.1,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 30,
+      "code": "440320",
+      "name": "오픈놀",
+      "sector": "IT 서비스",
+      "price": 4010,
+      "change_rate": 7.3628,
+      "score": 25.0,
+      "cci": -19.5,
+      "ma20_gap": -1.7,
+      "cci_slope": 1,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 31,
+      "code": "001510",
+      "name": "SK증권",
+      "sector": "증권",
+      "price": 2175,
+      "change_rate": 20.3652,
+      "score": 24.9,
+      "cci": 119.8,
+      "ma20_gap": 72.7,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 32,
+      "code": "049630",
+      "name": "재영솔루텍",
+      "sector": "의료·정밀기기",
+      "price": 4415,
+      "change_rate": 1.611,
+      "score": 21.1,
+      "cci": -26.3,
+      "ma20_gap": -4.6,
+      "cci_slope": 1,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 33,
+      "code": "035720",
+      "name": "카카오",
+      "sector": "IT 서비스",
+      "price": 61500,
+      "change_rate": 7.1429,
+      "score": 20.0,
+      "cci": -37.9,
+      "ma20_gap": -2.1,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 34,
+      "code": "092040",
+      "name": "아미코젠",
+      "sector": "음식료·담배",
+      "price": 1375,
+      "change_rate": 10.4418,
+      "score": 15.9,
+      "cci": -276.3,
+      "ma20_gap": -23.7,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 35,
+      "code": "234340",
+      "name": "헥토파이낸셜",
+      "sector": "IT 서비스",
+      "price": 27200,
+      "change_rate": 16.4882,
+      "score": 15.8,
+      "cci": -69.2,
+      "ma20_gap": -2.7,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "일반서비스",
+      "count": 2,
+      "avg_change": 20.93,
+      "stocks": [
+        "현대ADM",
+        "유투바이오"
+      ]
+    },
+    {
+      "sector": "건설",
+      "count": 1,
+      "avg_change": 17.94,
+      "stocks": [
+        "대우건설"
+      ]
+    },
+    {
+      "sector": "제약",
+      "count": 1,
+      "avg_change": 17.69,
+      "stocks": [
+        "옵투스제약"
+      ]
+    },
+    {
+      "sector": "IT 서비스",
+      "count": 5,
+      "avg_change": 11.59,
+      "stocks": [
+        "나무기술",
+        "다날",
+        "오픈놀",
+        "카카오",
+        "헥토파이낸셜"
+      ]
+    },
+    {
+      "sector": "음식료·담배",
+      "count": 1,
+      "avg_change": 10.44,
+      "stocks": [
+        "아미코젠"
+      ]
+    },
+    {
+      "sector": "전기·전자",
+      "count": 13,
+      "avg_change": 8.89,
+      "stocks": [
+        "LG디스플레이",
+        "대한전선",
+        "하나마이크론",
+        "티씨머티리얼즈",
+        "신성이엔지"
+      ]
+    },
+    {
+      "sector": "증권",
+      "count": 6,
+      "avg_change": 7.42,
+      "stocks": [
+        "유화증권",
+        "유안타증권",
+        "유진투자증권",
+        "한화투자증권",
+        "현대차증권"
+      ]
+    },
+    {
+      "sector": "비금속",
+      "count": 1,
+      "avg_change": 5.81,
+      "stocks": [
+        "SG"
+      ]
+    },
+    {
+      "sector": "기계·장비",
+      "count": 3,
+      "avg_change": 5.07,
+      "stocks": [
+        "네오셈",
+        "한온시스템",
+        "HPSP"
+      ]
+    },
+    {
+      "sector": "의료·정밀기기",
+      "count": 2,
+      "avg_change": 1.31,
+      "stocks": [
+        "LK삼양",
+        "재영솔루텍"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-02-25",
+      "code": "417200",
+      "name": "LS머트리얼즈",
+      "rank": 1,
+      "buy_price": 17990,
+      "today_price": 17900,
+      "return_pct": -0.5
+    },
+    {
+      "date": "2026-02-25",
+      "code": "495050",
+      "name": "RISE 코리아밸류업",
+      "rank": 2,
+      "buy_price": 26655,
+      "today_price": 27855,
+      "return_pct": 4.5
+    },
+    {
+      "date": "2026-02-25",
+      "code": "003490",
+      "name": "대한항공",
+      "rank": 3,
+      "buy_price": 28800,
+      "today_price": 28050,
+      "return_pct": -2.6
+    },
+    {
+      "date": "2026-02-25",
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "rank": 4,
+      "buy_price": 4705,
+      "today_price": 4630,
+      "return_pct": -1.59
+    },
+    {
+      "date": "2026-02-25",
+      "code": "034220",
+      "name": "LG디스플레이",
+      "rank": 5,
+      "buy_price": 14770,
+      "today_price": 15900,
+      "return_pct": 7.65
+    }
+  ]
+}
