@@ -1,0 +1,356 @@
+{
+  "date": "2026-02-27",
+  "timestamp": "2026-02-27T15:04:47",
+  "market": {
+    "kospi": 6265.49,
+    "kospi_change": -0.66,
+    "kosdaq": 1192.74,
+    "kosdaq_change": 0.39,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 29,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "sector": "기계·장비",
+      "price": 106300,
+      "change_rate": 2.4085,
+      "score": 82.5,
+      "cci": 167.2,
+      "ma20_gap": 11.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "035720",
+      "name": "카카오",
+      "sector": "IT 서비스",
+      "price": 62400,
+      "change_rate": 1.6287,
+      "score": 74.2,
+      "cci": 235.0,
+      "ma20_gap": 5.4,
+      "cci_slope": 2,
+      "ma20_slope": 2
+    },
+    {
+      "rank": 3,
+      "code": "012200",
+      "name": "계양전기",
+      "sector": "기계·장비",
+      "price": 9080,
+      "change_rate": 10.0606,
+      "score": 73.8,
+      "cci": 196.7,
+      "ma20_gap": 13.7,
+      "cci_slope": 3,
+      "ma20_slope": 1
+    },
+    {
+      "rank": 4,
+      "code": "002720",
+      "name": "국제약품",
+      "sector": "제약",
+      "price": 4815,
+      "change_rate": 2.8846,
+      "score": 73.3,
+      "cci": 226.7,
+      "ma20_gap": 4.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "001440",
+      "name": "대한전선",
+      "sector": "전기·전자",
+      "price": 36150,
+      "change_rate": 2.2631,
+      "score": 69.6,
+      "cci": 171.8,
+      "ma20_gap": 15.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "sector": "기계·장비",
+      "price": 106300,
+      "change_rate": 2.4085,
+      "score": 82.5,
+      "cci": 167.2,
+      "ma20_gap": 11.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "035720",
+      "name": "카카오",
+      "sector": "IT 서비스",
+      "price": 62400,
+      "change_rate": 1.6287,
+      "score": 74.2,
+      "cci": 235.0,
+      "ma20_gap": 5.4,
+      "cci_slope": 2,
+      "ma20_slope": 2
+    },
+    {
+      "rank": 3,
+      "code": "012200",
+      "name": "계양전기",
+      "sector": "기계·장비",
+      "price": 9080,
+      "change_rate": 10.0606,
+      "score": 73.8,
+      "cci": 196.7,
+      "ma20_gap": 13.7,
+      "cci_slope": 3,
+      "ma20_slope": 1
+    },
+    {
+      "rank": 4,
+      "code": "002720",
+      "name": "국제약품",
+      "sector": "제약",
+      "price": 4815,
+      "change_rate": 2.8846,
+      "score": 73.3,
+      "cci": 226.7,
+      "ma20_gap": 4.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "001440",
+      "name": "대한전선",
+      "sector": "전기·전자",
+      "price": 36150,
+      "change_rate": 2.2631,
+      "score": 69.6,
+      "cci": 171.8,
+      "ma20_gap": 15.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 6,
+      "code": "222080",
+      "name": "씨아이에스",
+      "sector": "기계·장비",
+      "price": 14840,
+      "change_rate": 7.4584,
+      "score": 61.8,
+      "cci": 139.9,
+      "ma20_gap": 15.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 7,
+      "code": "100790",
+      "name": "미래에셋벤처투자",
+      "sector": "금융",
+      "price": 22050,
+      "change_rate": 3.2787,
+      "score": 55.0,
+      "cci": -69.5,
+      "ma20_gap": 3.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 8,
+      "code": "403870",
+      "name": "HPSP",
+      "sector": "기계·장비",
+      "price": 44800,
+      "change_rate": 3.4642,
+      "score": 55.0,
+      "cci": -11.3,
+      "ma20_gap": 1.2,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 9,
+      "code": "025980",
+      "name": "아난티",
+      "sector": "일반서비스",
+      "price": 8550,
+      "change_rate": 4.2683,
+      "score": 42.5,
+      "cci": 3.0,
+      "ma20_gap": 1.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 10,
+      "code": "003310",
+      "name": "대주산업",
+      "sector": "음식료·담배",
+      "price": 4130,
+      "change_rate": 4.6895,
+      "score": 38.3,
+      "cci": -56.3,
+      "ma20_gap": -8.6,
+      "cci_slope": 3,
+      "ma20_slope": 1
+    },
+    {
+      "rank": 11,
+      "code": "460860",
+      "name": "동국제강",
+      "sector": "금속",
+      "price": 10270,
+      "change_rate": 11.1472,
+      "score": 30.8,
+      "cci": 333.7,
+      "ma20_gap": 19.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 12,
+      "code": "0009K0",
+      "name": "에임드바이오",
+      "sector": "일반서비스",
+      "price": 61000,
+      "change_rate": 17.5337,
+      "score": 25.1,
+      "cci": 311.9,
+      "ma20_gap": 13.9,
+      "cci_slope": 1,
+      "ma20_slope": 1
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "금속",
+      "count": 1,
+      "avg_change": 11.15,
+      "stocks": [
+        "동국제강"
+      ]
+    },
+    {
+      "sector": "일반서비스",
+      "count": 2,
+      "avg_change": 10.9,
+      "stocks": [
+        "아난티",
+        "에임드바이오"
+      ]
+    },
+    {
+      "sector": "기계·장비",
+      "count": 4,
+      "avg_change": 5.85,
+      "stocks": [
+        "두산에너빌리티",
+        "계양전기",
+        "씨아이에스",
+        "HPSP"
+      ]
+    },
+    {
+      "sector": "음식료·담배",
+      "count": 1,
+      "avg_change": 4.69,
+      "stocks": [
+        "대주산업"
+      ]
+    },
+    {
+      "sector": "금융",
+      "count": 1,
+      "avg_change": 3.28,
+      "stocks": [
+        "미래에셋벤처투자"
+      ]
+    },
+    {
+      "sector": "제약",
+      "count": 1,
+      "avg_change": 2.88,
+      "stocks": [
+        "국제약품"
+      ]
+    },
+    {
+      "sector": "전기·전자",
+      "count": 1,
+      "avg_change": 2.26,
+      "stocks": [
+        "대한전선"
+      ]
+    },
+    {
+      "sector": "IT 서비스",
+      "count": 1,
+      "avg_change": 1.63,
+      "stocks": [
+        "카카오"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-02-26",
+      "code": "067310",
+      "name": "하나마이크론",
+      "rank": 1,
+      "buy_price": 37150,
+      "today_price": 36200,
+      "return_pct": -2.56
+    },
+    {
+      "date": "2026-02-26",
+      "code": "253590",
+      "name": "네오셈",
+      "rank": 2,
+      "buy_price": 18480,
+      "today_price": 17800,
+      "return_pct": -3.68
+    },
+    {
+      "date": "2026-02-26",
+      "code": "035720",
+      "name": "카카오",
+      "rank": 3,
+      "buy_price": 61400,
+      "today_price": 62500,
+      "return_pct": 1.79
+    },
+    {
+      "date": "2026-02-26",
+      "code": "001440",
+      "name": "대한전선",
+      "rank": 4,
+      "buy_price": 35350,
+      "today_price": 36150,
+      "return_pct": 2.26
+    },
+    {
+      "date": "2026-02-26",
+      "code": "380540",
+      "name": "옵티코어",
+      "rank": 5,
+      "buy_price": 4190,
+      "today_price": 4500,
+      "return_pct": 7.4
+    }
+  ]
+}
