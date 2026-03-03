@@ -1,0 +1,258 @@
+{
+  "date": "2026-03-03",
+  "timestamp": "2026-03-03T15:00:22",
+  "market": {
+    "kospi": 5828.85,
+    "kospi_change": -6.65,
+    "kosdaq": 1151.26,
+    "kosdaq_change": -3.48,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 18,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "218150",
+      "name": "미래생명자원",
+      "sector": "음식료·담배",
+      "price": 3225,
+      "change_rate": 9.8807,
+      "score": 85.9,
+      "cci": 183.8,
+      "ma20_gap": 4.8,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "009180",
+      "name": "한솔로지스틱스",
+      "sector": "운송·창고",
+      "price": 3100,
+      "change_rate": 7.4523,
+      "score": 84.7,
+      "cci": 201.3,
+      "ma20_gap": 6.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "124560",
+      "name": "태웅로직스",
+      "sector": "운송·창고",
+      "price": 3015,
+      "change_rate": 8.8448,
+      "score": 83.9,
+      "cci": 186.3,
+      "ma20_gap": 9.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "011200",
+      "name": "HMM",
+      "sector": "운송·창고",
+      "price": 24300,
+      "change_rate": 13.8173,
+      "score": 63.9,
+      "cci": 156.3,
+      "ma20_gap": 15.2,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "sector": "유통",
+      "price": 4980,
+      "change_rate": 10.4213,
+      "score": 55.1,
+      "cci": 220.0,
+      "ma20_gap": 15.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "218150",
+      "name": "미래생명자원",
+      "sector": "음식료·담배",
+      "price": 3225,
+      "change_rate": 9.8807,
+      "score": 85.9,
+      "cci": 183.8,
+      "ma20_gap": 4.8,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "009180",
+      "name": "한솔로지스틱스",
+      "sector": "운송·창고",
+      "price": 3100,
+      "change_rate": 7.4523,
+      "score": 84.7,
+      "cci": 201.3,
+      "ma20_gap": 6.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "124560",
+      "name": "태웅로직스",
+      "sector": "운송·창고",
+      "price": 3015,
+      "change_rate": 8.8448,
+      "score": 83.9,
+      "cci": 186.3,
+      "ma20_gap": 9.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "011200",
+      "name": "HMM",
+      "sector": "운송·창고",
+      "price": 24300,
+      "change_rate": 13.8173,
+      "score": 63.9,
+      "cci": 156.3,
+      "ma20_gap": 15.2,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "sector": "유통",
+      "price": 4980,
+      "change_rate": 10.4213,
+      "score": 55.1,
+      "cci": 220.0,
+      "ma20_gap": 15.6,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 6,
+      "code": "089030",
+      "name": "테크윙",
+      "sector": "기계·장비",
+      "price": 53400,
+      "change_rate": 14.5923,
+      "score": 43.8,
+      "cci": 265.0,
+      "ma20_gap": 17.1,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 7,
+      "code": "005860",
+      "name": "한일사료",
+      "sector": "음식료·담배",
+      "price": 3620,
+      "change_rate": 18.1077,
+      "score": 37.6,
+      "cci": 252.0,
+      "ma20_gap": 16.4,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "기계·장비",
+      "count": 1,
+      "avg_change": 14.59,
+      "stocks": [
+        "테크윙"
+      ]
+    },
+    {
+      "sector": "음식료·담배",
+      "count": 2,
+      "avg_change": 13.99,
+      "stocks": [
+        "미래생명자원",
+        "한일사료"
+      ]
+    },
+    {
+      "sector": "유통",
+      "count": 1,
+      "avg_change": 10.42,
+      "stocks": [
+        "제이씨현시스템"
+      ]
+    },
+    {
+      "sector": "운송·창고",
+      "count": 3,
+      "avg_change": 10.04,
+      "stocks": [
+        "한솔로지스틱스",
+        "태웅로직스",
+        "HMM"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-03-02",
+      "code": "002720",
+      "name": "국제약품",
+      "rank": 1,
+      "buy_price": 4775,
+      "today_price": 4805,
+      "return_pct": 0.63
+    },
+    {
+      "date": "2026-03-02",
+      "code": "035720",
+      "name": "카카오",
+      "rank": 2,
+      "buy_price": 62300,
+      "today_price": 56700,
+      "return_pct": -8.99
+    },
+    {
+      "date": "2026-03-02",
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "rank": 3,
+      "buy_price": 106300,
+      "today_price": 97700,
+      "return_pct": -8.09
+    },
+    {
+      "date": "2026-03-02",
+      "code": "001440",
+      "name": "대한전선",
+      "rank": 4,
+      "buy_price": 36000,
+      "today_price": 32200,
+      "return_pct": -10.56
+    },
+    {
+      "date": "2026-03-02",
+      "code": "222080",
+      "name": "씨아이에스",
+      "rank": 5,
+      "buy_price": 14690,
+      "today_price": 14020,
+      "return_pct": -4.56
+    }
+  ]
+}
