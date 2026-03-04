@@ -1,0 +1,169 @@
+{
+  "date": "2026-03-04",
+  "timestamp": "2026-03-04T15:00:14",
+  "market": {
+    "kospi": 5188.98,
+    "kospi_change": -10.41,
+    "kosdaq": 1003.24,
+    "kosdaq_change": -11.82,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 8,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "218150",
+      "name": "미래생명자원",
+      "sector": "음식료·담배",
+      "price": 3340,
+      "change_rate": 2.454,
+      "score": 75.2,
+      "cci": 258.3,
+      "ma20_gap": 8.1,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "402490",
+      "name": "그린리소스",
+      "sector": "전기·전자",
+      "price": 10670,
+      "change_rate": 9.6608,
+      "score": 73.7,
+      "cci": 171.0,
+      "ma20_gap": 16.9,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "089030",
+      "name": "테크윙",
+      "sector": "기계·장비",
+      "price": 53000,
+      "change_rate": 3.3138,
+      "score": 56.8,
+      "cci": 234.4,
+      "ma20_gap": 15.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "218150",
+      "name": "미래생명자원",
+      "sector": "음식료·담배",
+      "price": 3340,
+      "change_rate": 2.454,
+      "score": 75.2,
+      "cci": 258.3,
+      "ma20_gap": 8.1,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "402490",
+      "name": "그린리소스",
+      "sector": "전기·전자",
+      "price": 10670,
+      "change_rate": 9.6608,
+      "score": 73.7,
+      "cci": 171.0,
+      "ma20_gap": 16.9,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "089030",
+      "name": "테크윙",
+      "sector": "기계·장비",
+      "price": 53000,
+      "change_rate": 3.3138,
+      "score": 56.8,
+      "cci": 234.4,
+      "ma20_gap": 15.0,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "전기·전자",
+      "count": 1,
+      "avg_change": 9.66,
+      "stocks": [
+        "그린리소스"
+      ]
+    },
+    {
+      "sector": "기계·장비",
+      "count": 1,
+      "avg_change": 3.31,
+      "stocks": [
+        "테크윙"
+      ]
+    },
+    {
+      "sector": "음식료·담배",
+      "count": 1,
+      "avg_change": 2.45,
+      "stocks": [
+        "미래생명자원"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-03-03",
+      "code": "218150",
+      "name": "미래생명자원",
+      "rank": 1,
+      "buy_price": 3225,
+      "today_price": 3340,
+      "return_pct": 3.57
+    },
+    {
+      "date": "2026-03-03",
+      "code": "009180",
+      "name": "한솔로지스틱스",
+      "rank": 2,
+      "buy_price": 3100,
+      "today_price": 2905,
+      "return_pct": -6.29
+    },
+    {
+      "date": "2026-03-03",
+      "code": "124560",
+      "name": "태웅로직스",
+      "rank": 3,
+      "buy_price": 3015,
+      "today_price": 2675,
+      "return_pct": -11.28
+    },
+    {
+      "date": "2026-03-03",
+      "code": "011200",
+      "name": "HMM",
+      "rank": 4,
+      "buy_price": 24300,
+      "today_price": 20750,
+      "return_pct": -14.61
+    },
+    {
+      "date": "2026-03-03",
+      "code": "033320",
+      "name": "제이씨현시스템",
+      "rank": 5,
+      "buy_price": 4980,
+      "today_price": 4165,
+      "return_pct": -16.37
+    }
+  ]
+}
