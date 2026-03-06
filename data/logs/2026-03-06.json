@@ -1,0 +1,474 @@
+{
+  "date": "2026-03-06",
+  "timestamp": "2026-03-06T15:00:42",
+  "market": {
+    "kospi": 5586.5,
+    "kospi_change": 0.05,
+    "kosdaq": 1151.07,
+    "kosdaq_change": 3.1,
+    "nasdaq": 22627.27,
+    "nasdaq_change": -1.13,
+    "kospi_ma20": 5288.52
+  },
+  "universe_count": 35,
+  "top5": [
+    {
+      "rank": 1,
+      "code": "403870",
+      "name": "HPSP",
+      "sector": "기계·장비",
+      "price": 47350,
+      "change_rate": 5.3393,
+      "score": 86.2,
+      "cci": 123.1,
+      "ma20_gap": 5.9,
+      "cci_slope": 3,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "261200",
+      "name": "덴티스",
+      "sector": "의료·정밀기기",
+      "price": 4230,
+      "change_rate": 8.6008,
+      "score": 65.5,
+      "cci": 123.9,
+      "ma20_gap": 0.4,
+      "cci_slope": 3,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "038500",
+      "name": "삼표시멘트",
+      "sector": "비금속",
+      "price": 14680,
+      "change_rate": 2.4424,
+      "score": 60.0,
+      "cci": -14.2,
+      "ma20_gap": 3.2,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "036540",
+      "name": "SFA반도체",
+      "sector": "전기·전자",
+      "price": 7530,
+      "change_rate": 6.6572,
+      "score": 60.0,
+      "cci": 27.4,
+      "ma20_gap": 3.9,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "462900",
+      "name": "KoAct 바이오헬스케어",
+      "sector": "",
+      "price": 23930,
+      "change_rate": 4.4978,
+      "score": 58.3,
+      "cci": 20.7,
+      "ma20_gap": 3.1,
+      "cci_slope": 2,
+      "ma20_slope": 1
+    }
+  ],
+  "all_scored": [
+    {
+      "rank": 1,
+      "code": "403870",
+      "name": "HPSP",
+      "sector": "기계·장비",
+      "price": 47350,
+      "change_rate": 5.3393,
+      "score": 86.2,
+      "cci": 123.1,
+      "ma20_gap": 5.9,
+      "cci_slope": 3,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 2,
+      "code": "261200",
+      "name": "덴티스",
+      "sector": "의료·정밀기기",
+      "price": 4230,
+      "change_rate": 8.6008,
+      "score": 65.5,
+      "cci": 123.9,
+      "ma20_gap": 0.4,
+      "cci_slope": 3,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 3,
+      "code": "038500",
+      "name": "삼표시멘트",
+      "sector": "비금속",
+      "price": 14680,
+      "change_rate": 2.4424,
+      "score": 60.0,
+      "cci": -14.2,
+      "ma20_gap": 3.2,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 4,
+      "code": "036540",
+      "name": "SFA반도체",
+      "sector": "전기·전자",
+      "price": 7530,
+      "change_rate": 6.6572,
+      "score": 60.0,
+      "cci": 27.4,
+      "ma20_gap": 3.9,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 5,
+      "code": "462900",
+      "name": "KoAct 바이오헬스케어",
+      "sector": "",
+      "price": 23930,
+      "change_rate": 4.4978,
+      "score": 58.3,
+      "cci": 20.7,
+      "ma20_gap": 3.1,
+      "cci_slope": 2,
+      "ma20_slope": 1
+    },
+    {
+      "rank": 6,
+      "code": "003530",
+      "name": "한화투자증권",
+      "sector": "증권",
+      "price": 7530,
+      "change_rate": 1.6194,
+      "score": 56.2,
+      "cci": -3.5,
+      "ma20_gap": 5.4,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 7,
+      "code": "027360",
+      "name": "아주IB투자",
+      "sector": "금융",
+      "price": 5585,
+      "change_rate": 5.3774,
+      "score": 56.1,
+      "cci": 259.9,
+      "ma20_gap": 17.1,
+      "cci_slope": 2,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 8,
+      "code": "003380",
+      "name": "하림지주",
+      "sector": "금융",
+      "price": 16040,
+      "change_rate": 6.7199,
+      "score": 55.0,
+      "cci": -52.3,
+      "ma20_gap": 4.4,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 9,
+      "code": "098460",
+      "name": "고영",
+      "sector": "기계·장비",
+      "price": 33000,
+      "change_rate": 7.8431,
+      "score": 53.7,
+      "cci": -15.6,
+      "ma20_gap": 1.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 10,
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "sector": "기계·장비",
+      "price": 97800,
+      "change_rate": 8.0663,
+      "score": 52.0,
+      "cci": -41.8,
+      "ma20_gap": 1.9,
+      "cci_slope": 1,
+      "ma20_slope": 1
+    },
+    {
+      "rank": 11,
+      "code": "006890",
+      "name": "태경케미컬",
+      "sector": "화학",
+      "price": 9020,
+      "change_rate": 10.0,
+      "score": 48.9,
+      "cci": 260.1,
+      "ma20_gap": 16.5,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 12,
+      "code": "088350",
+      "name": "한화생명",
+      "sector": "보험",
+      "price": 4990,
+      "change_rate": 6.6239,
+      "score": 43.1,
+      "cci": 19.4,
+      "ma20_gap": 16.1,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 13,
+      "code": "253590",
+      "name": "네오셈",
+      "sector": "기계·장비",
+      "price": 18300,
+      "change_rate": 15.6764,
+      "score": 37.8,
+      "cci": 58.4,
+      "ma20_gap": 10.1,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 14,
+      "code": "222080",
+      "name": "씨아이에스",
+      "sector": "기계·장비",
+      "price": 14950,
+      "change_rate": 15.8017,
+      "score": 37.2,
+      "cci": 77.6,
+      "ma20_gap": 12.7,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 15,
+      "code": "018880",
+      "name": "한온시스템",
+      "sector": "기계·장비",
+      "price": 4142,
+      "change_rate": 4.596,
+      "score": 36.2,
+      "cci": -75.5,
+      "ma20_gap": 0.5,
+      "cci_slope": 0,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 16,
+      "code": "001440",
+      "name": "대한전선",
+      "sector": "전기·전자",
+      "price": 30250,
+      "change_rate": 3.7736,
+      "score": 35.0,
+      "cci": -89.4,
+      "ma20_gap": -5.6,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 17,
+      "code": "474610",
+      "name": "RF시스템즈",
+      "sector": "금속",
+      "price": 7390,
+      "change_rate": 16.9304,
+      "score": 33.9,
+      "cci": -33.0,
+      "ma20_gap": 1.1,
+      "cci_slope": 1,
+      "ma20_slope": 3
+    },
+    {
+      "rank": 18,
+      "code": "010140",
+      "name": "삼성중공업",
+      "sector": "운송장비·부품",
+      "price": 27650,
+      "change_rate": 1.6544,
+      "score": 21.5,
+      "cci": -97.2,
+      "ma20_gap": -3.1,
+      "cci_slope": 1,
+      "ma20_slope": 0
+    },
+    {
+      "rank": 19,
+      "code": "034220",
+      "name": "LG디스플레이",
+      "sector": "전기·전자",
+      "price": 11810,
+      "change_rate": 1.5477,
+      "score": 15.5,
+      "cci": -56.6,
+      "ma20_gap": -4.1,
+      "cci_slope": 0,
+      "ma20_slope": 0
+    }
+  ],
+  "sector_summary": [
+    {
+      "sector": "금속",
+      "count": 1,
+      "avg_change": 16.93,
+      "stocks": [
+        "RF시스템즈"
+      ]
+    },
+    {
+      "sector": "화학",
+      "count": 1,
+      "avg_change": 10.0,
+      "stocks": [
+        "태경케미컬"
+      ]
+    },
+    {
+      "sector": "기계·장비",
+      "count": 6,
+      "avg_change": 9.55,
+      "stocks": [
+        "HPSP",
+        "고영",
+        "두산에너빌리티",
+        "네오셈",
+        "씨아이에스"
+      ]
+    },
+    {
+      "sector": "의료·정밀기기",
+      "count": 1,
+      "avg_change": 8.6,
+      "stocks": [
+        "덴티스"
+      ]
+    },
+    {
+      "sector": "보험",
+      "count": 1,
+      "avg_change": 6.62,
+      "stocks": [
+        "한화생명"
+      ]
+    },
+    {
+      "sector": "금융",
+      "count": 2,
+      "avg_change": 6.05,
+      "stocks": [
+        "아주IB투자",
+        "하림지주"
+      ]
+    },
+    {
+      "sector": "기타",
+      "count": 1,
+      "avg_change": 4.5,
+      "stocks": [
+        "KoAct 바이오헬스케어"
+      ]
+    },
+    {
+      "sector": "전기·전자",
+      "count": 3,
+      "avg_change": 3.99,
+      "stocks": [
+        "SFA반도체",
+        "대한전선",
+        "LG디스플레이"
+      ]
+    },
+    {
+      "sector": "비금속",
+      "count": 1,
+      "avg_change": 2.44,
+      "stocks": [
+        "삼표시멘트"
+      ]
+    },
+    {
+      "sector": "운송장비·부품",
+      "count": 1,
+      "avg_change": 1.65,
+      "stocks": [
+        "삼성중공업"
+      ]
+    },
+    {
+      "sector": "증권",
+      "count": 1,
+      "avg_change": 1.62,
+      "stocks": [
+        "한화투자증권"
+      ]
+    }
+  ],
+  "prev_returns": [
+    {
+      "date": "2026-03-05",
+      "code": "028670",
+      "name": "팬오션",
+      "rank": 1,
+      "buy_price": 5720,
+      "today_price": 5200,
+      "return_pct": -9.09
+    },
+    {
+      "date": "2026-03-05",
+      "code": "038500",
+      "name": "삼표시멘트",
+      "rank": 2,
+      "buy_price": 14470,
+      "today_price": 14760,
+      "return_pct": 2.0
+    },
+    {
+      "date": "2026-03-05",
+      "code": "403870",
+      "name": "HPSP",
+      "rank": 3,
+      "buy_price": 46300,
+      "today_price": 47400,
+      "return_pct": 2.38
+    },
+    {
+      "date": "2026-03-05",
+      "code": "088350",
+      "name": "한화생명",
+      "rank": 4,
+      "buy_price": 4685,
+      "today_price": 4987,
+      "return_pct": 6.45
+    },
+    {
+      "date": "2026-03-05",
+      "code": "027360",
+      "name": "아주IB투자",
+      "rank": 5,
+      "buy_price": 5390,
+      "today_price": 5580,
+      "return_pct": 3.53
+    }
+  ]
+}
