@@ -41,26 +41,47 @@ def load_logs() -> dict[str, dict]:
     return logs
 
 
+def _clean_code(code: str) -> str:
+    """종목코드에서 _AL, _NX 접미사 제거"""
+    for suffix in ("_AL", "_NX", "_SOR"):
+        if code.endswith(suffix):
+            code = code[:-len(suffix)]
+    return code.strip().zfill(6)
+
+
 def draw_mini_chart(code: str, name: str, rec_date: str = ""):
     """60일 캔들차트 + MA20 + 추천일 마커"""
-    try:
-        import FinanceDataReader as fdr
-        end = datetime.now()
-        start = end - timedelta(days=90)
-        df = fdr.DataReader(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-        if df is None or len(df) < 5:
-            return None
-    except Exception:
-        # Streamlit Cloud에서 FDR 없으면 로컬 CSV
-        csv_path = OHLCV_DIR / f"{code.zfill(6)}.csv"
-        if not csv_path.exists():
-            return None
-        df = pd.read_csv(csv_path)
-        df["Date"] = pd.to_datetime(df["date"])
-        df = df.set_index("Date").rename(columns={"open": "Open", "high": "High",
-                                                     "low": "Low", "close": "Close",
-                                                     "volume": "Volume"})
-        df = df.tail(60)
+    code = _clean_code(code)
+    df = None
+
+    # 1) 로컬 CSV 먼저 (빠르고 안정적)
+    csv_path = OHLCV_DIR / f"{code}.csv"
+    if csv_path.exists():
+        try:
+            raw = pd.read_csv(csv_path)
+            raw.columns = [c.lower() for c in raw.columns]
+            raw["Date"] = pd.to_datetime(raw["date"])
+            df = raw.set_index("Date").rename(columns={
+                "open": "Open", "high": "High", "low": "Low",
+                "close": "Close", "volume": "Volume"
+            }).tail(60)
+        except Exception:
+            df = None
+
+    # 2) 로컬 CSV 없거나 데이터 부족하면 FDR
+    if df is None or len(df) < 10:
+        try:
+            import FinanceDataReader as fdr
+            end = datetime.now()
+            start = end - timedelta(days=90)
+            fdr_df = fdr.DataReader(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+            if fdr_df is not None and len(fdr_df) >= 5:
+                df = fdr_df
+        except Exception:
+            pass
+
+    if df is None or len(df) < 5:
+        return None
 
     df["MA20"] = df["Close"].rolling(20).mean()
 
@@ -139,7 +160,8 @@ def main():
         for stock in top:
             with st.container():
                 medal = ["🥇", "🥈", "🥉"][stock["rank"] - 1] if stock["rank"] <= 3 else ""
-                st.subheader(f"{medal} {stock['name']} ({stock['code']}) — {stock['score']}점")
+                clean = _clean_code(stock["code"])
+                st.subheader(f"{medal} {stock['name']} ({clean}) — {stock['score']}점")
 
                 c1, c2 = st.columns([2, 3])
 

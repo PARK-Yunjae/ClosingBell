@@ -51,26 +51,33 @@ def check_status():
             print(f"  {code}: 파일 없음")
             continue
         df = pd.read_csv(path)
-        # 컬럼명 확인 (대문자/소문자)
-        date_col = "Date" if "Date" in df.columns else "date"
-        if date_col not in df.columns:
+        df.columns = [c.lower() for c in df.columns]
+        if "date" not in df.columns:
             print(f"  {code}: date 컬럼 없음 ({list(df.columns)})")
             continue
-        df[date_col] = pd.to_datetime(df[date_col])
-        last_date = df[date_col].max().strftime("%Y-%m-%d")
-        first_date = df[date_col].min().strftime("%Y-%m-%d")
-        cols = "대문자" if "Date" in df.columns else "소문자"
-        print(f"  {code}: {first_date} ~ {last_date} ({len(df)}일, {cols} 컬럼)")
+        df["date"] = pd.to_datetime(df["date"])
+        last_date = df["date"].max().strftime("%Y-%m-%d")
+        first_date = df["date"].min().strftime("%Y-%m-%d")
+        print(f"  {code}: {first_date} ~ {last_date} ({len(df)}일)")
 
     # 글로벌 지수
     global_csv = GLOBAL_DIR / "global_merged.csv"
     if global_csv.exists():
         gdf = pd.read_csv(global_csv)
-        date_col = "Date" if "Date" in gdf.columns else "date"
+        gdf.columns = [c.strip().lower() for c in gdf.columns]
+        date_col = "date"
         if date_col in gdf.columns:
             gdf[date_col] = pd.to_datetime(gdf[date_col])
             print(f"\n글로벌 지수: {gdf[date_col].min().strftime('%Y-%m-%d')} ~ "
                   f"{gdf[date_col].max().strftime('%Y-%m-%d')} ({len(gdf)}일)")
+            # 각 지수별 마지막 유효 날짜
+            for col in ["kospi_close", "nasdaq_close", "sp500_close", "usdkrw_close"]:
+                if col in gdf.columns:
+                    valid = gdf.dropna(subset=[col])
+                    last = valid[date_col].max().strftime("%Y-%m-%d") if len(valid) > 0 else "없음"
+                    empty_count = len(gdf) - len(valid)
+                    status = f"⚠️ {empty_count}일 빈값" if empty_count > 0 else "✅"
+                    print(f"  {col}: ~{last} {status}")
     else:
         print("\n글로벌 지수: 파일 없음")
 
@@ -80,7 +87,7 @@ def check_status():
 
 
 def update_global():
-    """글로벌 지수 갱신 (코스피, 코스닥, 나스닥)"""
+    """글로벌 지수 갱신 (코스피, 코스닥, 나스닥, S&P500, 다우, 환율)"""
     import FinanceDataReader as fdr
 
     logger.info("글로벌 지수 갱신 시작...")
@@ -90,59 +97,100 @@ def update_global():
     # 기존 데이터 로드
     if global_csv.exists():
         existing = pd.read_csv(global_csv)
-        # 컬럼명 통일 (소문자)
-        existing.columns = [c.lower() for c in existing.columns]
+        existing.columns = [c.strip().lower() for c in existing.columns]
         existing["date"] = pd.to_datetime(existing["date"])
-        last_date = existing["date"].max()
-        start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        logger.info("기존 글로벌: ~%s (%d일)", last_date.strftime("%Y-%m-%d"), len(existing))
+        logger.info("기존 글로벌: %d일, 컬럼: %s", len(existing), list(existing.columns))
+
+        # 나스닥이 비어있는 마지막 유효 날짜 확인
+        nasdaq_valid = existing.dropna(subset=["nasdaq_close"])
+        if len(nasdaq_valid) > 0:
+            nasdaq_last = nasdaq_valid["date"].max()
+            logger.info("나스닥 마지막 유효: %s", nasdaq_last.strftime("%Y-%m-%d"))
+        else:
+            nasdaq_last = existing["date"].min()
+
+        kospi_last = existing["date"].max()
+        logger.info("코스피 마지막: %s", kospi_last.strftime("%Y-%m-%d"))
     else:
         existing = None
-        start = "2016-01-01"
+        nasdaq_last = pd.Timestamp("2016-01-01")
+        kospi_last = pd.Timestamp("2016-01-01")
 
     end = datetime.now().strftime("%Y-%m-%d")
 
-    try:
-        # 코스피
-        kospi = fdr.DataReader("KS11", start, end)
-        # 코스닥
-        kosdaq = fdr.DataReader("KQ11", start, end)
-        # 나스닥
-        nasdaq = fdr.DataReader("IXIC", start, end)
+    # 각 지수별로 빈 구간 채우기
+    symbols = {
+        "kospi": ("KS11", "kospi_close", "kospi_change_pct"),
+        "kosdaq": ("KQ11", "kosdaq_close", "kosdaq_change_pct"),
+        "nasdaq": ("IXIC", "nasdaq_close", "nasdaq_change_pct"),
+        "sp500": ("US500", "sp500_close", "sp500_change_pct"),
+        "dow": ("DJI", "dow_close", "dow_change_pct"),
+        "usdkrw": ("USD/KRW", "usdkrw_close", "usdkrw_change_pct"),
+    }
 
-        if len(kospi) == 0:
-            logger.info("글로벌: 새 데이터 없음 (이미 최신)")
-            return
-
-        # 병합
-        merged = pd.DataFrame({"date": kospi.index})
-        merged["kospi_close"] = kospi["Close"].values
-        merged["kospi_change_pct"] = kospi["Close"].pct_change().values * 100
-        merged["kosdaq_close"] = kosdaq.reindex(kospi.index, method="ffill")["Close"].values
-        merged["nasdaq_close"] = nasdaq.reindex(kospi.index, method="ffill")["Close"].values
-        merged["nasdaq_change_pct"] = nasdaq.reindex(kospi.index, method="ffill")["Close"].pct_change().values * 100
-
-        merged["date"] = merged["date"].dt.strftime("%Y-%m-%d")
-
-        if existing is not None:
-            existing["date"] = existing["date"].dt.strftime("%Y-%m-%d")
-            existing_dates = set(existing["date"])
-            new_rows = merged[~merged["date"].isin(existing_dates)]
-            if len(new_rows) > 0:
-                combined = pd.concat([existing, new_rows], ignore_index=True)
+    updates = {}
+    for name, (symbol, close_col, chg_col) in symbols.items():
+        try:
+            # 해당 지수의 빈 데이터 시작점 찾기
+            if existing is not None and close_col in existing.columns:
+                valid = existing.dropna(subset=[close_col])
+                start_from = (valid["date"].max() + timedelta(days=1)).strftime("%Y-%m-%d") if len(valid) > 0 else "2016-01-01"
             else:
-                combined = existing
-                logger.info("글로벌: 새 데이터 없음")
-                return
-        else:
-            combined = merged
+                start_from = "2016-01-01"
 
-        combined.to_csv(global_csv, index=False)
-        logger.info("글로벌 갱신 완료: %d일 (신규 %d일)",
-                     len(combined), len(new_rows) if existing is not None else len(combined))
+            data = fdr.DataReader(symbol, start_from, end)
+            if data is not None and len(data) > 0:
+                updates[name] = {
+                    "dates": data.index,
+                    "close": data["Close"].values,
+                    "change": data["Close"].pct_change().values * 100,
+                }
+                logger.info("%s: %d일 신규 (%s~)", name, len(data), start_from)
+            else:
+                logger.info("%s: 새 데이터 없음", name)
+        except Exception as e:
+            logger.warning("%s 조회 실패: %s", name, e)
 
-    except Exception as e:
-        logger.error("글로벌 갱신 실패: %s", e)
+    if not updates:
+        logger.info("갱신할 데이터 없음")
+        return
+
+    # 기존 데이터에 업데이트 머지
+    if existing is not None:
+        result = existing.copy()
+    else:
+        result = pd.DataFrame(columns=["date"])
+
+    for name, (symbol, close_col, chg_col) in symbols.items():
+        if name not in updates:
+            continue
+        upd = updates[name]
+        for i, dt in enumerate(upd["dates"]):
+            dt_str = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)[:10]
+            mask = result["date"] == pd.Timestamp(dt_str)
+
+            if mask.any():
+                # 기존 행 업데이트 (빈 값만)
+                idx = result.index[mask][0]
+                if pd.isna(result.at[idx, close_col]) if close_col in result.columns else True:
+                    if close_col not in result.columns:
+                        result[close_col] = np.nan
+                    result.at[idx, close_col] = upd["close"][i]
+                if pd.isna(result.at[idx, chg_col]) if chg_col in result.columns else True:
+                    if chg_col not in result.columns:
+                        result[chg_col] = np.nan
+                    result.at[idx, chg_col] = round(upd["change"][i], 2) if not np.isnan(upd["change"][i]) else np.nan
+            else:
+                # 새 행 추가
+                new_row = {"date": pd.Timestamp(dt_str)}
+                new_row[close_col] = upd["close"][i]
+                new_row[chg_col] = round(upd["change"][i], 2) if not np.isnan(upd["change"][i]) else np.nan
+                result = pd.concat([result, pd.DataFrame([new_row])], ignore_index=True)
+
+    result = result.sort_values("date").reset_index(drop=True)
+    result["date"] = result["date"].dt.strftime("%Y-%m-%d") if hasattr(result["date"].iloc[0], "strftime") else result["date"]
+    result.to_csv(global_csv, index=False)
+    logger.info("글로벌 갱신 완료: %d일", len(result))
 
 
 def update_ohlcv_single(code: str, force_days: int = 30):

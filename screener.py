@@ -20,9 +20,9 @@ from config import (
     SCORE_CCI_SLOPE, SCORE_MA20_SLOPE, SCORE_RSI,
     SCORE_VOLUME_PROFILE, SCORE_BROKER_FLOW,
     TOP_N, TOP_N_CONSERVATIVE,
-    MIN_PRICE, MAX_PRICE, MAX_MA20_GAP,
+    MIN_PRICE, MAX_PRICE,
     MIN_CHANGE_RATE, MAX_CHANGE_RATE,
-    NASDAQ_DROP_THRESHOLD,
+    NASDAQ_DROP_THRESHOLD, NASDAQ_PENALTY,
     OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, LOG_DIR,
     EXCLUDE_NAMES, ETF_KEYWORDS, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
     API_DELAY,
@@ -61,16 +61,9 @@ class Screener:
         today = datetime.now().strftime("%Y-%m-%d")
         market = self.get_market_status()
 
-        # 나스닥 필터
+        # 나스닥 경고 (스킵하지 않고 진행, 웹훅에서 경고 표시)
         nasdaq_chg = market.get("nasdaq_change", 0)
-        if nasdaq_chg <= NASDAQ_DROP_THRESHOLD:
-            logger.warning("나스닥 급락 (%.1f%%) → 스크리닝 스킵", nasdaq_chg)
-            return {
-                "date": today, "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "market": market, "skipped": True,
-                "reason": f"나스닥 전일 {nasdaq_chg:+.1f}%",
-                "universe_count": 0, "top": [], "all_scored": [],
-            }
+        market["nasdaq_warning"] = nasdaq_chg <= NASDAQ_DROP_THRESHOLD
 
         # ── 1) 유니버스 확보 (ka10030 + ka10032 합집합) ──
         universe = self._get_universe()
@@ -109,8 +102,6 @@ class Screener:
             except Exception as e:
                 logger.debug("지표 계산 실패 [%s]: %s", stock.get("code"), e)
 
-        # 이격도 과열 필터
-        scored = [s for s in scored if abs(s.get("ma20_gap", 0)) <= MAX_MA20_GAP]
         logger.info("점수 계산 완료: %d종목", len(scored))
 
         # ── 3) 유니버스 전체 enricher 실행 ──
@@ -122,13 +113,22 @@ class Screener:
                 s["score"] = self._calc_score(s)
             logger.info("enrich 완료, 점수 재계산 완료")
 
+        # ── 4) 나스닥 급락 감점 (전종목 -5점) ──
+        if market.get("nasdaq_warning"):
+            logger.info("나스닥 급락 → 전종목 %.1f점 감점", NASDAQ_PENALTY)
+            for s in scored:
+                s["score"] = round(max(0, s["score"] - NASDAQ_PENALTY), 1)
+
         # 정렬
         scored.sort(key=lambda x: x["score"], reverse=True)
 
-        # TOP_N 결정
+        # TOP_N 결정 (나스닥 급락 또는 코스피<MA20 → 보수 모드)
         top_n = TOP_N
         kospi_ma20 = market.get("kospi_ma20")
-        if kospi_ma20 and market.get("kospi", 0) < kospi_ma20:
+        if market.get("nasdaq_warning"):
+            top_n = TOP_N_CONSERVATIVE
+            logger.info("나스닥 급락 → 보수 모드 (TOP%d)", top_n)
+        elif kospi_ma20 and market.get("kospi", 0) < kospi_ma20:
             top_n = TOP_N_CONSERVATIVE
             logger.info("코스피 < MA20 → 보수 모드 (TOP%d)", top_n)
 
@@ -406,13 +406,17 @@ class Screener:
         result["kospi_ma20"] = None
         try:
             df = pd.read_csv(GLOBAL_CSV)
-            df = df.dropna(subset=["nasdaq_close"])
+            df.columns = [c.strip().lower() for c in df.columns]
+            df = df.dropna(subset=["kospi_close"])
             if len(df) > 0:
-                result["nasdaq"] = round(float(df.iloc[-1]["nasdaq_close"]), 2)
-                result["nasdaq_change"] = round(float(df.iloc[-1]["nasdaq_change_pct"]), 2)
-            kospi_col = df.dropna(subset=["kospi_close"])
-            if len(kospi_col) >= 20:
-                result["kospi_ma20"] = round(kospi_col["kospi_close"].tail(20).mean(), 2)
+                # 나스닥: 비어있을 수 있으므로 마지막 유효값 사용
+                nasdaq_valid = df.dropna(subset=["nasdaq_close"])
+                if len(nasdaq_valid) > 0:
+                    result["nasdaq"] = round(float(nasdaq_valid.iloc[-1]["nasdaq_close"]), 2)
+                    result["nasdaq_change"] = round(float(nasdaq_valid.iloc[-1]["nasdaq_change_pct"]), 2)
+            # 코스피 MA20
+            if len(df) >= 20:
+                result["kospi_ma20"] = round(df["kospi_close"].tail(20).mean(), 2)
         except Exception:
             pass
 

@@ -60,11 +60,15 @@ class Notifier:
         lines = []
 
         # ── 시장 현황 (간결) ──
+        nasdaq_warn = market.get("nasdaq_warning", False)
         lines.append(
             f"📊 코스피 {market.get('kospi', 0):,.0f} "
             f"({market.get('kospi_change', 0):+.1f}%) | "
             f"나스닥 {market.get('nasdaq_change', 0):+.1f}%"
+            + (" 🔴" if nasdaq_warn else "")
         )
+        if nasdaq_warn:
+            lines.append("⚠️ **나스닥 급락 — 전종목 5점 감점, 보수 모드(TOP2)**")
         lines.append("")
 
         # ── TOP3 종목 카드 ──
