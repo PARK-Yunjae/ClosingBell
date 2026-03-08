@@ -49,12 +49,16 @@ def _clean_code(code: str) -> str:
     return code.strip().zfill(6)
 
 
-def draw_mini_chart(code: str, name: str, rec_date: str = ""):
-    """60일 캔들차트 + MA20 + 추천일 마커"""
+def draw_stock_chart(code: str, name: str, rec_date: str = "",
+                     stock_data: dict = None):
+    """
+    캔들차트 + MA20 + 매물대(반투명 가로막대) + 추천일 마커
+    stock_data: screener에서 계산된 지표 (없으면 차트만)
+    """
     code = _clean_code(code)
     df = None
 
-    # 1) 로컬 CSV 먼저 (빠르고 안정적)
+    # 1) 로컬 CSV 먼저
     csv_path = OHLCV_DIR / f"{code}.csv"
     if csv_path.exists():
         try:
@@ -68,7 +72,7 @@ def draw_mini_chart(code: str, name: str, rec_date: str = ""):
         except Exception:
             df = None
 
-    # 2) 로컬 CSV 없거나 데이터 부족하면 FDR
+    # 2) FDR fallback
     if df is None or len(df) < 10:
         try:
             import FinanceDataReader as fdr
@@ -84,37 +88,157 @@ def draw_mini_chart(code: str, name: str, rec_date: str = ""):
         return None
 
     df["MA20"] = df["Close"].rolling(20).mean()
+    df["MA5"] = df["Close"].rolling(5).mean()
 
-    fig = go.Figure()
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.75, 0.25],
+    )
+
+    # ── 캔들차트 ──
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
         low=df["Low"], close=df["Close"], name="캔들",
         increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
-    ))
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA20"], name="MA20",
-        line=dict(color="#FFB74D", width=1.5),
-    ))
+        increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
+    ), row=1, col=1)
 
-    # 추천일 마커
+    # MA5 (분홍)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["MA5"], name="5일선",
+        line=dict(color="#FF69B4", width=1), opacity=0.7,
+    ), row=1, col=1)
+
+    # MA20 (주황)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["MA20"], name="20일선",
+        line=dict(color="#FFB74D", width=1.5),
+    ), row=1, col=1)
+
+    # ── 매물대 (반투명 가로 막대) ──
+    _draw_volume_profile(fig, df)
+
+    # ── 추천일 마커 ──
     if rec_date:
         try:
             rd = pd.Timestamp(rec_date)
             if rd in df.index:
-                fig.add_vline(x=rd, line_dash="dash", line_color="gold", line_width=2)
-                fig.add_annotation(x=rd, y=df.loc[rd, "High"] * 1.02,
-                                    text="⭐", showarrow=False, font_size=16)
+                fig.add_vline(x=rd, line_dash="dash", line_color="gold",
+                              line_width=2, row=1, col=1)
+                fig.add_annotation(
+                    x=rd, y=df.loc[rd, "High"] * 1.02,
+                    text="⭐", showarrow=False, font_size=16,
+                    row=1, col=1,
+                )
         except Exception:
             pass
 
+    # ── 거래량 바 차트 ──
+    colors = ["#26a69a" if c >= o else "#ef5350"
+              for c, o in zip(df["Close"], df["Open"])]
+    fig.add_trace(go.Bar(
+        x=df.index, y=df["Volume"], name="거래량",
+        marker_color=colors, opacity=0.6,
+    ), row=2, col=1)
+
+    # ── 한글 날짜 + 레이아웃 ──
     fig.update_layout(
-        height=280, margin=dict(l=0, r=0, t=10, b=0),
-        xaxis_rangeslider_visible=False, showlegend=False,
-        plot_bgcolor="#1a1a2e", paper_bgcolor="#1a1a2e",
+        height=420,
+        margin=dict(l=0, r=0, t=10, b=0),
+        xaxis_rangeslider_visible=False,
+        showlegend=False,
+        plot_bgcolor="#1a1a2e",
+        paper_bgcolor="#1a1a2e",
         font_color="#e0e0e0",
-        xaxis=dict(gridcolor="#333"), yaxis=dict(gridcolor="#333"),
+        xaxis=dict(gridcolor="#333"),
+        xaxis2=dict(gridcolor="#333"),
+        yaxis=dict(gridcolor="#333", side="right"),
+        yaxis2=dict(gridcolor="#333", side="right"),
     )
+
+    # X축 한글 날짜
+    fig.update_xaxes(
+        dtick="M1",
+        tickformat="%m/%d",
+        tickfont=dict(size=10),
+    )
+
     return fig
+
+
+def _draw_volume_profile(fig, df: pd.DataFrame, bands: int = 12):
+    """매물대를 반투명 가로 막대로 차트에 겹치기"""
+    if len(df) < 10:
+        return
+
+    price_min = df["Low"].min()
+    price_max = df["High"].max()
+    if price_max <= price_min:
+        return
+
+    band_size = (price_max - price_min) / bands
+    band_volumes = [0.0] * bands
+
+    for _, row in df.iterrows():
+        candle_low = row["Low"]
+        candle_high = row["High"]
+        vol = row["Volume"]
+        for b in range(bands):
+            b_low = price_min + b * band_size
+            b_high = b_low + band_size
+            overlap = max(0, min(candle_high, b_high) - max(candle_low, b_low))
+            candle_range = candle_high - candle_low
+            if candle_range > 0 and overlap > 0:
+                band_volumes[b] += vol * (overlap / candle_range)
+
+    max_vol = max(band_volumes) if max(band_volumes) > 0 else 1
+    current_price = float(df["Close"].iloc[-1])
+
+    # 차트 X축 범위의 왼쪽에 그리기 (날짜 기반)
+    x_start = df.index[0]
+    x_range = (df.index[-1] - df.index[0]).days
+    bar_max_days = x_range * 0.25  # 차트 폭의 25%까지
+
+    for b in range(bands):
+        b_low = price_min + b * band_size
+        b_high = b_low + band_size
+        b_mid = (b_low + b_high) / 2
+        width = band_volumes[b] / max_vol * bar_max_days
+
+        if width < 0.5:
+            continue
+
+        # 현재가 위/아래로 색상 구분
+        is_above = b_mid > current_price
+        color = "rgba(239, 83, 80, 0.2)" if is_above else "rgba(38, 166, 154, 0.2)"  # 빨강/초록 반투명
+
+        x_end = x_start + timedelta(days=width)
+
+        fig.add_shape(
+            type="rect",
+            x0=x_start, x1=x_end,
+            y0=b_low, y1=b_high,
+            fillcolor=color,
+            line=dict(width=0),
+            layer="below",
+            row=1, col=1,
+        )
+
+        # 매물량 텍스트 (큰 것만)
+        ratio = band_volumes[b] / max_vol
+        if ratio > 0.4:
+            pct = band_volumes[b] / sum(band_volumes) * 100
+            fig.add_annotation(
+                x=x_start + timedelta(days=width / 2),
+                y=b_mid,
+                text=f"{pct:.0f}%",
+                showarrow=False,
+                font=dict(size=8, color="rgba(255,255,255,0.5)"),
+                row=1, col=1,
+            )
 
 
 def main():
@@ -170,22 +294,33 @@ def main():
 
                     # 매물대
                     vp_tag = stock.get("vp_tag", "")
+                    vp_pct = stock.get("vp_above_pct", 50)
                     vp_emoji = {"위 매물 적음": "✅", "매물대 중립": "➖", "위 저항 강함": "❌"}.get(vp_tag, "❓")
-                    st.markdown(f"📍 **매물대**: {vp_tag} {vp_emoji}")
+                    st.markdown(f"📍 **매물대**: {vp_tag} {vp_emoji} (위 {vp_pct:.0f}%)")
 
                     # 거래원
                     broker_sig = stock.get("broker_signal", "중립")
                     br_emoji = "✅" if "매수" in broker_sig or "매집" in broker_sig else "➖"
                     broker_top = stock.get("broker_top_buy", "")
-                    st.markdown(f"🏦 **거래원**: {broker_sig} {br_emoji}"
-                                + (f" (매수1위: {broker_top})" if broker_top else ""))
+                    frgn = stock.get("foreign_net", 0)
+                    broker_text = f"🏦 **거래원**: {broker_sig} {br_emoji}"
+                    if broker_top:
+                        broker_text += f" (매수1위: {broker_top})"
+                    if frgn:
+                        broker_text += f" | 외국계 {'+' if frgn > 0 else ''}{frgn:,}"
+                    st.markdown(broker_text)
 
                     # DART
                     dart_risk = stock.get("dart_risk", "확인불가")
                     dart_emoji = {"정상": "✅", "주의": "⚠️", "위험": "❌"}.get(dart_risk, "❓")
                     dart_note = stock.get("dart_note", "")
-                    st.markdown(f"📋 **공시**: {dart_risk} {dart_emoji}"
-                                + (f" ({dart_note})" if dart_note else ""))
+                    pl = stock.get("profit_loss", "")
+                    dart_text = f"📋 **공시**: {dart_risk} {dart_emoji}"
+                    if pl:
+                        dart_text += f" ({pl})"
+                    if dart_note:
+                        dart_text += f" ({dart_note})"
+                    st.markdown(dart_text)
 
                     # AI 판단
                     action = stock.get("ai_action", "관망")
@@ -198,8 +333,27 @@ def main():
                     if summary:
                         st.caption(f'💡 "{summary}"')
 
+                    # 상세 지표 (접기)
+                    with st.expander("📊 상세 지표"):
+                        cci = stock.get("cci", 0)
+                        rsi = stock.get("rsi", 0)
+                        gap = stock.get("ma20_gap", 0)
+                        cci_s = stock.get("cci_slope", 0)
+                        ma_s = stock.get("ma20_slope", 0)
+                        br_sc = stock.get("broker_score", 0)
+
+                        st.markdown(
+                            f"- 추세강도(CCI): **{cci:.0f}** {'🔥' if 160<=cci<=200 else '⚠️' if cci>250 else ''}\n"
+                            f"- 과매수/과매도(RSI): **{rsi:.0f}** {'⚠️과매수' if rsi>70 else '✅적정' if rsi>45 else '⚠️과매도'}\n"
+                            f"- 20일선 거리: **{gap:+.1f}%** {'✅' if 2<=gap<=8 else ''}\n"
+                            f"- 추세 기울기: CCI {'↑'*cci_s or '→'} / MA20 {'↑'*ma_s or '→'}\n"
+                            f"- 거래원 점수: **{br_sc:.1f}**/5\n"
+                            f"- 매물대 위/아래: **{vp_pct:.0f}%** / {100-vp_pct:.0f}%"
+                        )
+
                 with c2:
-                    fig = draw_mini_chart(stock["code"], stock["name"], selected_date)
+                    fig = draw_stock_chart(stock["code"], stock["name"],
+                                           selected_date, stock)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
