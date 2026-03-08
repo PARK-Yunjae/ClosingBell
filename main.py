@@ -105,11 +105,12 @@ def run_screening(once: bool = False):
 
 
 def run_data_update():
-    """OHLCV 데이터 갱신"""
+    """OHLCV + 글로벌 데이터 갱신"""
     logger.info("데이터 갱신 시작...")
     try:
-        from data_updater import update_ohlcv
+        from data_updater import update_ohlcv, update_global_data
         update_ohlcv()
+        update_global_data()
         logger.info("데이터 갱신 완료")
     except Exception as e:
         logger.warning("데이터 갱신 실패: %s", e)

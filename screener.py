@@ -24,6 +24,7 @@ from config import (
     MIN_CHANGE_RATE, MAX_CHANGE_RATE,
     NASDAQ_DROP_THRESHOLD, NASDAQ_PENALTY,
     OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, LOG_DIR,
+    MIN_TRADING_VALUE,
     EXCLUDE_NAMES, ETF_KEYWORDS, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
     API_DELAY,
 )
@@ -164,7 +165,7 @@ class Screener:
 
         # ka10030: 거래량상위
         try:
-            vol_rank = self.api.get_volume_rank()
+            vol_rank = self.api.get_volume_rank(min_trading_value=MIN_TRADING_VALUE)
             for s in vol_rank:
                 code = s["code"]
                 if code not in seen:
@@ -287,9 +288,9 @@ class Screener:
         band_volumes = [0.0] * bands
 
         for _, row in recent.iterrows():
-            # 각 캔들의 거래량을 시가~종가 범위에 분배
-            candle_low = min(row["open"], row["close"])
-            candle_high = max(row["open"], row["close"])
+            # 각 캔들의 거래량을 고가~저가 전체 범위에 분배 (꼬리 포함)
+            candle_low = row["low"]
+            candle_high = row["high"]
             vol = row["volume"]
 
             for b in range(bands):
