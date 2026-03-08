@@ -1,35 +1,47 @@
 """
-ClosingBell v2 — 스크리닝 + 점수 계산
+ClosingBell v3 — 스크리닝 + 8지표 점수 계산
+=============================================
+키움 REST API 기반 / 유니버스 전체 분석 / 매물대+거래원+AI 통합
 """
 import logging
+import json
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
+from collections import defaultdict
 from config import (
-    CCI_PERIOD, CCI_OPTIMAL, CCI_ZERO_LOW, CCI_ZERO_HIGH,
+    CCI_PERIOD, RSI_PERIOD,
+    CCI_OPTIMAL, CCI_ZERO_LOW, CCI_ZERO_HIGH,
     MA20_GAP_OPTIMAL, MA20_GAP_ZERO,
     CHANGE_OPTIMAL, CHANGE_ZERO,
-    SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE, SCORE_CCI_SLOPE, SCORE_MA20_SLOPE,
-    TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE, MAX_MA20_GAP,
-    NASDAQ_DROP_THRESHOLD, OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV,
-    TV200_CONDITION_NAME, API_DELAY,
-    EXCLUDE_NAMES, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
+    RSI_OPTIMAL, RSI_ZERO_LOW, RSI_ZERO_HIGH,
+    SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE,
+    SCORE_CCI_SLOPE, SCORE_MA20_SLOPE, SCORE_RSI,
+    SCORE_VOLUME_PROFILE, SCORE_BROKER_FLOW,
+    TOP_N, TOP_N_CONSERVATIVE,
+    MIN_PRICE, MAX_PRICE, MAX_MA20_GAP,
+    MIN_CHANGE_RATE, MAX_CHANGE_RATE,
+    NASDAQ_DROP_THRESHOLD,
+    OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, LOG_DIR,
+    EXCLUDE_NAMES, ETF_KEYWORDS, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
+    API_DELAY,
 )
-from kis_api import KisAPI
+from kiwoom_api import KiwoomAPI
 
 logger = logging.getLogger("closingbell")
 
 
 class Screener:
-    """종가매매 스크리닝 엔진"""
+    """종가매매 스크리닝 엔진 v3"""
 
-    def __init__(self, api: KisAPI):
+    def __init__(self, api: KiwoomAPI):
         self.api = api
         self.stock_map = self._load_stock_map()
+        # 종목별 OHLCV DataFrame 캐시 (enricher에서도 사용)
+        self._ohlcv_cache: dict[str, pd.DataFrame] = {}
 
     def _load_stock_map(self) -> dict:
-        """stock_mapping.csv → {code: {name, market, sector}}"""
         try:
             df = pd.read_csv(MAPPING_CSV, dtype={"code": str}, encoding="utf-8-sig")
             df["code"] = df["code"].str.zfill(6)
@@ -41,10 +53,10 @@ class Screener:
     # ──────────────────────────────────────────────
     # 메인 스크리닝
     # ──────────────────────────────────────────────
-    def run(self) -> dict:
+    def run(self, enricher=None) -> dict:
         """
-        전체 스크리닝 실행
-        반환: {"date", "market", "universe_count", "top5", "all_scored", "skipped"?}
+        전체 스크리닝 + 유니버스 전체 enrich + TOP3 선정
+        enricher: Enricher 인스턴스 (매물대+거래원+DART+AI)
         """
         today = datetime.now().strftime("%Y-%m-%d")
         market = self.get_market_status()
@@ -54,273 +66,153 @@ class Screener:
         if nasdaq_chg <= NASDAQ_DROP_THRESHOLD:
             logger.warning("나스닥 급락 (%.1f%%) → 스크리닝 스킵", nasdaq_chg)
             return {
-                "date": today,
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "market": market,
-                "skipped": True,
-                "reason": f"나스닥 전일 {nasdaq_chg:+.1f}% (기준: {NASDAQ_DROP_THRESHOLD}%)",
-                "universe_count": 0,
-                "top5": [],
-                "all_scored": [],
+                "date": today, "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "market": market, "skipped": True,
+                "reason": f"나스닥 전일 {nasdaq_chg:+.1f}%",
+                "universe_count": 0, "top": [], "all_scored": [],
             }
 
-        # 유니버스 확보
-        universe = self.get_universe()
-        if not universe:
-            logger.warning("유니버스 0건 → 거래량순위 fallback")
-            universe = self.get_universe_fallback()
+        # ── 1) 유니버스 확보 (ka10030 + ka10032 합집합) ──
+        universe = self._get_universe()
+        logger.info("유니버스 (필터 전): %d종목", len(universe))
 
-        logger.info("유니버스: %d종목", len(universe))
-
-        # 종목 유형 필터 (SPAC, ETF, 우선주 등 제외)
-        before_filter = len(universe)
+        # 종목유형 필터
         universe = [s for s in universe if not self._is_excluded(s)]
-        excluded = before_filter - len(universe)
-        if excluded > 0:
-            logger.info("종목 필터: %d개 제외 (SPAC/ETF/우선주 등) → %d종목",
-                        excluded, len(universe))
-
-        # 가격 필터 (가격=0이면 현재가 API로 보완)
-        filtered = []
-        price_zero = 0
-        for s in universe:
-            if s["price"] == 0 or s.get("volume", 0) == 0:
-                try:
-                    cur = self.api.get_current_price(s["code"])
-                    if s["price"] == 0:
-                        s["price"] = cur["price"]
-                        s["change_rate"] = cur["change_rate"]
-                    if s.get("volume", 0) == 0:
-                        s["volume"] = cur["volume"]
-                except Exception:
-                    pass
-
-            if s["price"] == 0:
-                price_zero += 1
-                continue
-            if s["price"] < MIN_PRICE or s["price"] > MAX_PRICE:
-                continue
-            filtered.append(s)
-
-        if price_zero > 0:
-            logger.warning("가격 0원 종목: %d개 (API 필드명 불일치 가능)", price_zero)
-        logger.info("가격 필터 후: %d종목 (원본 %d, 범위 %d~%d원)",
-                     len(filtered), len(universe), MIN_PRICE, MAX_PRICE)
-        universe = filtered
-
-        # ETF 제외
-        ETF_KEYWORDS = ["KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
-                        "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
-                        "파워", "레버리지", "인버스"]
-        before_etf = len(universe)
+        # 등락률 필터
+        universe = [s for s in universe
+                    if MIN_CHANGE_RATE <= s.get("change_rate", 0) <= MAX_CHANGE_RATE]
+        # 가격 필터
+        universe = [s for s in universe
+                    if s.get("price", 0) > 0
+                    and MIN_PRICE <= s["price"] <= MAX_PRICE]
+        # ETF 키워드 필터
         universe = [s for s in universe
                     if not any(kw in s.get("name", "") for kw in ETF_KEYWORDS)]
-        logger.info("ETF 필터: %d → %d종목", before_etf, len(universe))
 
-        # 각 종목 지표 계산
+        logger.info("유니버스 (필터 후): %d종목", len(universe))
+
+        if not universe:
+            return {
+                "date": today, "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "market": market, "skipped": True,
+                "reason": "유니버스 0건", "universe_count": 0,
+                "top": [], "all_scored": [],
+            }
+
+        # ── 2) 기본 지표 계산 (CCI, RSI, MA20, 기울기, 매물대) ──
         scored = []
-        calc_fail = 0
         for stock in universe:
             try:
                 self._calc_indicators(stock)
                 stock["score"] = self._calc_score(stock)
                 scored.append(stock)
             except Exception as e:
-                calc_fail += 1
-                if calc_fail <= 3:  # 처음 3건만 상세 로그
-                    logger.warning("지표 계산 실패 [%s %s]: %s",
-                                   stock.get("code"), stock.get("name"), e)
+                logger.debug("지표 계산 실패 [%s]: %s", stock.get("code"), e)
 
-        if calc_fail > 0:
-            logger.warning("지표 계산 실패: %d/%d종목", calc_fail, len(universe))
-
-        # 이격도 과열 필터 (지표 계산 후 적용)
-        before_gap = len(scored)
+        # 이격도 과열 필터
         scored = [s for s in scored if abs(s.get("ma20_gap", 0)) <= MAX_MA20_GAP]
-        if before_gap != len(scored):
-            logger.info("이격도 과열 필터: %d → %d종목 (기준: ±%.0f%%)",
-                        before_gap, len(scored), MAX_MA20_GAP)
+        logger.info("점수 계산 완료: %d종목", len(scored))
+
+        # ── 3) 유니버스 전체 enricher 실행 ──
+        if enricher:
+            logger.info("유니버스 전체 enrich 시작 (%d종목)...", len(scored))
+            scored = enricher.enrich_all(scored, self.api)
+            # enrich 결과로 점수 재계산 (매물대+거래원 점수 반영)
+            for s in scored:
+                s["score"] = self._calc_score(s)
+            logger.info("enrich 완료, 점수 재계산 완료")
 
         # 정렬
         scored.sort(key=lambda x: x["score"], reverse=True)
 
-        # TOP_N 결정 (시장 보수 모드)
+        # TOP_N 결정
         top_n = TOP_N
         kospi_ma20 = market.get("kospi_ma20")
         if kospi_ma20 and market.get("kospi", 0) < kospi_ma20:
             top_n = TOP_N_CONSERVATIVE
             logger.info("코스피 < MA20 → 보수 모드 (TOP%d)", top_n)
 
-        top5 = scored[:top_n]
+        top = scored[:top_n]
 
-        # 섹터 분석 (전체 유니버스 기준)
+        # 섹터 분석
         sector_stats = self._analyze_sectors(scored)
 
-        # 전일 추천 수익률 계산
+        # 주도테마 조회
+        theme_stats = self._get_themes()
+
+        # 전일 추천 수익률
         prev_returns = self._calc_prev_returns()
 
         return {
             "date": today,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "market": market,
-            "universe_count": len(universe),
-            "top5": [self._stock_summary(s, i + 1) for i, s in enumerate(top5)],
+            "universe_count": len(scored),
+            "top": [self._stock_summary(s, i + 1) for i, s in enumerate(top)],
             "all_scored": [self._stock_summary(s, i + 1) for i, s in enumerate(scored)],
             "sector_summary": sector_stats,
+            "theme_summary": theme_stats,
             "prev_returns": prev_returns,
         }
 
     # ──────────────────────────────────────────────
-    # 섹터 분석 + 전일 수익률
+    # 유니버스 확보 (ka10030 + ka10032 합집합)
     # ──────────────────────────────────────────────
-    def _analyze_sectors(self, scored: list) -> list[dict]:
-        """유니버스 섹터별 종목 수 + 평균 등락률"""
-        from collections import defaultdict
-        sector_data = defaultdict(lambda: {"count": 0, "total_change": 0.0, "stocks": []})
+    def _get_universe(self) -> list[dict]:
+        """거래량상위 + 거래대금상위 합집합"""
+        seen = {}
 
-        for s in scored:
-            sector = s.get("sector") or "기타"
-            # stock_map에서 sector 보완
-            if sector == "기타":
-                info = self.stock_map.get(s.get("code", ""), {})
-                sector = info.get("sector", "기타")
-            sector_data[sector]["count"] += 1
-            sector_data[sector]["total_change"] += s.get("change_rate", 0)
-            sector_data[sector]["stocks"].append(s.get("name", ""))
+        # ka10030: 거래량상위
+        try:
+            vol_rank = self.api.get_volume_rank()
+            for s in vol_rank:
+                code = s["code"]
+                if code not in seen:
+                    seen[code] = s
+        except Exception as e:
+            logger.warning("ka10030 실패: %s", e)
 
-        result = []
-        for sector, data in sector_data.items():
-            avg_change = data["total_change"] / data["count"] if data["count"] > 0 else 0
-            result.append({
-                "sector": sector,
-                "count": data["count"],
-                "avg_change": round(avg_change, 2),
-                "stocks": data["stocks"][:5],  # 상위 5개만
-            })
+        vol_count = len(seen)
 
-        result.sort(key=lambda x: x["avg_change"], reverse=True)
+        # ka10032: 거래대금상위
+        try:
+            val_rank = self.api.get_trading_value_rank()
+            for s in val_rank:
+                code = s["code"]
+                if code not in seen:
+                    seen[code] = s
+        except Exception as e:
+            logger.warning("ka10032 실패: %s", e)
+
+        result = list(seen.values())
+
+        # stock_map에서 이름/섹터 보완
+        for s in result:
+            info = self.stock_map.get(s["code"], {})
+            if not s.get("name"):
+                s["name"] = info.get("name", s["code"])
+            s["sector"] = info.get("sector", "")
+
+        logger.info("유니버스 합집합: %d종목 (거래량 %d + 거래대금 %d 추가)",
+                     len(result), vol_count, len(result) - vol_count)
         return result
 
-    def _calc_prev_returns(self) -> list[dict]:
-        """전일 추천 종목의 오늘 수익률 계산"""
-        import json
-        from config import LOG_DIR
-
-        # 가장 최근 로그 찾기 (오늘 제외)
-        today = datetime.now().strftime("%Y-%m-%d")
-        log_files = sorted(LOG_DIR.glob("*.json"))
-        prev_log = None
-        for lf in reversed(log_files):
-            if lf.stem != today:
-                prev_log = lf
-                break
-
-        if not prev_log:
-            return []
-
-        try:
-            prev_data = json.loads(prev_log.read_text(encoding="utf-8"))
-            if prev_data.get("skipped"):
-                return []
-
-            results = []
-            for stock in prev_data.get("top5", []):
-                code = stock["code"]
-                buy_price = stock["price"]  # 추천일 종가
-
-                # 오늘 현재가 조회 (API)
-                try:
-                    cur = self.api.get_current_price(code)
-                    today_price = cur["price"]
-                    if buy_price > 0 and today_price > 0:
-                        ret = (today_price / buy_price - 1) * 100
-                        results.append({
-                            "date": prev_log.stem,
-                            "code": code,
-                            "name": stock.get("name", ""),
-                            "rank": stock.get("rank", 0),
-                            "buy_price": buy_price,
-                            "today_price": today_price,
-                            "return_pct": round(ret, 2),
-                        })
-                except Exception:
-                    pass
-
-            return results
-        except Exception:
-            return []
-
     # ──────────────────────────────────────────────
-    # 유니버스
-    # ──────────────────────────────────────────────
-    def get_universe(self) -> list[dict]:
-        """TV200 조건검색으로 유니버스 확보"""
-        seq = self.api.find_tv200_seq(TV200_CONDITION_NAME)
-        if not seq:
-            return []
-        stocks = self.api.get_condition_stocks(seq)
-        logger.info("TV200 조건검색: %d종목", len(stocks))
-        return stocks
-
-    def get_universe_fallback(self) -> list[dict]:
-        """거래량순위 API fallback (30건 한계)"""
-        stocks = self.api.get_volume_rank()
-        # 등락률 1~29% 필터
-        stocks = [s for s in stocks if 1.0 <= s.get("change_rate", 0) <= 29.0]
-        logger.info("거래량순위 fallback: %d종목", len(stocks))
-        return stocks
-
-    def _is_excluded(self, stock: dict) -> bool:
-        """SPAC, ETF, 우선주, 리츠 등 제외 대상 판별"""
-        name = stock.get("name", "")
-        code = stock.get("code", "").strip().zfill(6)
-
-        # 1. 이름 키워드 필터
-        for keyword in EXCLUDE_NAMES:
-            if keyword in name:
-                return True
-
-        # 2. 우선주 필터 (코드 끝자리: 보통주=0, 우선주=5,7,8,9)
-        if EXCLUDE_PREF_STOCK and code[-1] in ("5", "7", "8", "9"):
-            return True
-        # 이름에 "우", "우B" 포함
-        if EXCLUDE_PREF_STOCK and (name.endswith("우") or name.endswith("우B")):
-            return True
-
-        # 3. ETF 필터 (stock_mapping에서 market 확인)
-        if EXCLUDE_ETF:
-            info = self.stock_map.get(code, {})
-            market = info.get("market", "")
-            if "ETF" in market.upper():
-                return True
-            # 이름에 ETF 포함
-            if "ETF" in name.upper():
-                return True
-
-        return False
-
-    # ──────────────────────────────────────────────
-    # 지표 계산
+    # 지표 계산 (CCI, RSI, MA20, 기울기, 매물대)
     # ──────────────────────────────────────────────
     def _calc_indicators(self, stock: dict):
-        """종목에 CCI, MA20, 이격도, 기울기 추가"""
+        """종목에 CCI, RSI, MA20, 이격도, 기울기, 매물대 추가"""
         code = stock["code"]
 
-        # OHLCV: 로컬 CSV 우선 → 없으면 API
         df = self._load_ohlcv(code)
         if df is None or len(df) < 20:
             df = self._fetch_ohlcv_api(code)
-
         if df is None or len(df) < 20:
-            raise ValueError(f"{code}: OHLCV 부족 ({len(df) if df is not None else 0}일)")
+            raise ValueError(f"{code}: OHLCV 부족")
 
-        # ── 당일 임시 캔들 주입 ──
-        # 15:00 스크리닝 시 로컬 CSV에 아직 당일 데이터가 없으면
-        # 현재가 API로 임시 캔들을 만들어 CCI/이격도에 반영
+        # 당일 임시 캔들 주입
         today = pd.Timestamp(datetime.now().date())
-        latest_date = df["date"].max()
-
-        if latest_date < today:
+        if df["date"].max() < today:
             try:
                 cur = self.api.get_current_price(code)
                 if cur["price"] > 0:
@@ -333,12 +225,11 @@ class Screener:
                         "volume": cur["volume"],
                     }])
                     df = pd.concat([df, today_candle], ignore_index=True)
-                    logger.debug("임시 캔들 주입 [%s]: %d원", code, cur["price"])
-            except Exception as e:
-                logger.debug("임시 캔들 실패 [%s]: %s", code, e)
+            except Exception:
+                pass
 
-        # 최근 데이터 사용
-        df = df.tail(50).copy()
+        df = df.tail(60).copy()
+        self._ohlcv_cache[code] = df  # enricher용 캐시
 
         # MA20
         df["ma20"] = df["close"].rolling(20).mean()
@@ -349,118 +240,167 @@ class Screener:
         mad = tp.rolling(CCI_PERIOD).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
         df["cci"] = (tp - sma_tp) / (0.015 * mad)
 
+        # RSI(14)
+        delta = df["close"].diff()
+        gain = delta.clip(lower=0).rolling(RSI_PERIOD).mean()
+        loss = (-delta.clip(upper=0)).rolling(RSI_PERIOD).mean()
+        rs = gain / loss.replace(0, np.nan)
+        df["rsi"] = 100 - (100 / (1 + rs))
+
         latest = df.iloc[-1]
-        prev_3 = df.tail(4)  # 최근 4일 (현재 + 3일전)
+        prev_4 = df.tail(4)
 
         stock["cci"] = round(float(latest["cci"]), 1) if pd.notna(latest["cci"]) else 0
+        stock["rsi"] = round(float(latest["rsi"]), 1) if pd.notna(latest["rsi"]) else 50
         stock["ma20"] = round(float(latest["ma20"]), 0) if pd.notna(latest["ma20"]) else 0
         stock["ma20_gap"] = round(
             (float(latest["close"]) / float(latest["ma20"]) - 1) * 100, 1
         ) if latest["ma20"] > 0 else 0
 
-        # CCI 기울기: 최근 3일간 연속 상승일 수
-        cci_vals = prev_3["cci"].dropna().tolist()
-        stock["cci_slope"] = _count_rising(cci_vals)
+        # CCI/MA20 기울기
+        stock["cci_slope"] = _count_rising(prev_4["cci"].dropna().tolist())
+        stock["ma20_slope"] = _count_rising(prev_4["ma20"].dropna().tolist())
 
-        # MA20 기울기: 최근 3일간 연속 상승일 수
-        ma20_vals = prev_3["ma20"].dropna().tolist()
-        stock["ma20_slope"] = _count_rising(ma20_vals)
+        # 매물대 자체 계산 (OHLCV 기반 가격대별 거래량)
+        vp = self._calc_volume_profile(df, float(latest["close"]))
+        stock["vp_above_pct"] = vp["above_pct"]
+        stock["vp_below_pct"] = vp["below_pct"]
+        stock["vp_tag"] = vp["tag"]
 
-    def _load_ohlcv(self, code: str) -> pd.DataFrame | None:
-        """로컬 CSV에서 OHLCV 로드"""
-        code = code.strip().zfill(6)
-        path = OHLCV_DIR / f"{code}.csv"
-        if not path.exists():
-            return None
-        try:
-            df = pd.read_csv(path)
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.sort_values("date").reset_index(drop=True)
-            return df
-        except Exception:
-            return None
+    def _calc_volume_profile(self, df: pd.DataFrame, current_price: float,
+                              lookback: int = 50, bands: int = 10) -> dict:
+        """
+        OHLCV 기반 매물대 계산
+        가격대를 bands개로 나누고, 각 구간의 거래량 집계
+        현재가 위/아래 매물 비율 계산
+        """
+        recent = df.tail(lookback)
+        if len(recent) < 10 or current_price <= 0:
+            return {"above_pct": 50.0, "below_pct": 50.0, "tag": "데이터부족"}
 
-    def _fetch_ohlcv_api(self, code: str) -> pd.DataFrame | None:
-        """API에서 최근 30일 OHLCV 가져오기"""
-        try:
-            end = datetime.now().strftime("%Y%m%d")
-            start = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
-            rows = self.api.get_daily_prices(code, start, end)
-            if not rows:
-                return None
-            df = pd.DataFrame(rows)
-            df["date"] = pd.to_datetime(df["date"])
-            return df.sort_values("date").reset_index(drop=True)
-        except Exception as e:
-            logger.debug("API OHLCV 실패 [%s]: %s", code, e)
-            return None
+        price_min = recent["low"].min()
+        price_max = recent["high"].max()
+        if price_max <= price_min:
+            return {"above_pct": 50.0, "below_pct": 50.0, "tag": "횡보"}
+
+        band_size = (price_max - price_min) / bands
+        band_volumes = [0.0] * bands
+
+        for _, row in recent.iterrows():
+            # 각 캔들의 거래량을 시가~종가 범위에 분배
+            candle_low = min(row["open"], row["close"])
+            candle_high = max(row["open"], row["close"])
+            vol = row["volume"]
+
+            for b in range(bands):
+                band_low = price_min + b * band_size
+                band_high = band_low + band_size
+                # 캔들이 이 밴드와 겹치는 비율
+                overlap = max(0, min(candle_high, band_high) - max(candle_low, band_low))
+                candle_range = candle_high - candle_low
+                if candle_range > 0 and overlap > 0:
+                    ratio = overlap / candle_range
+                    band_volumes[b] += vol * ratio
+
+        total = sum(band_volumes)
+        if total == 0:
+            return {"above_pct": 50.0, "below_pct": 50.0, "tag": "거래없음"}
+
+        # 현재가 기준 위/아래 매물 비율
+        above_vol = 0.0
+        below_vol = 0.0
+        for b in range(bands):
+            band_mid = price_min + (b + 0.5) * band_size
+            if band_mid > current_price:
+                above_vol += band_volumes[b]
+            else:
+                below_vol += band_volumes[b]
+
+        above_pct = round(above_vol / total * 100, 1)
+        below_pct = round(below_vol / total * 100, 1)
+
+        # 태그 결정
+        if above_pct <= 30:
+            tag = "위 매물 적음"   # 돌파 여유
+        elif above_pct >= 60:
+            tag = "위 저항 강함"   # 돌파 어려움
+        else:
+            tag = "매물대 중립"
+
+        return {"above_pct": above_pct, "below_pct": below_pct, "tag": tag}
 
     # ──────────────────────────────────────────────
-    # 점수 계산 (100점, 종형분포)
+    # 점수 계산 (100점, 8지표 종형분포)
     # ──────────────────────────────────────────────
     def _calc_score(self, stock: dict) -> float:
-        """5개 지표 종형분포 점수"""
+        """8개 지표 종형분포 점수"""
         score = 0.0
 
-        # CCI (30점): 160~180 만점
-        score += bell_score(
-            stock.get("cci", 0),
-            CCI_OPTIMAL[0], CCI_OPTIMAL[1],
-            CCI_ZERO_LOW, CCI_ZERO_HIGH,
-            SCORE_CCI,
-        )
+        # 1. CCI (25점)
+        score += bell_score(stock.get("cci", 0),
+                            CCI_OPTIMAL[0], CCI_OPTIMAL[1],
+                            CCI_ZERO_LOW, CCI_ZERO_HIGH, SCORE_CCI)
 
-        # MA20 이격도 (25점): 2~8% 만점
-        gap = stock.get("ma20_gap", 0)
-        score += bell_score(
-            gap,
-            MA20_GAP_OPTIMAL[0], MA20_GAP_OPTIMAL[1],
-            0, MA20_GAP_ZERO,
-            SCORE_MA20_GAP,
-        )
+        # 2. MA20 이격도 (20점)
+        score += bell_score(stock.get("ma20_gap", 0),
+                            MA20_GAP_OPTIMAL[0], MA20_GAP_OPTIMAL[1],
+                            0, MA20_GAP_ZERO, SCORE_MA20_GAP)
 
-        # 등락률 (20점): 2~8% 만점
-        chg = stock.get("change_rate", 0)
-        score += bell_score(
-            chg,
-            CHANGE_OPTIMAL[0], CHANGE_OPTIMAL[1],
-            0, CHANGE_ZERO,
-            SCORE_CHANGE,
-        )
+        # 3. 등락률 (15점)
+        score += bell_score(stock.get("change_rate", 0),
+                            CHANGE_OPTIMAL[0], CHANGE_OPTIMAL[1],
+                            0, CHANGE_ZERO, SCORE_CHANGE)
 
-        # CCI 기울기 (15점): 연속 상승일 × 5
-        score += min(SCORE_CCI_SLOPE, max(0, stock.get("cci_slope", 0)) * 5)
+        # 4. CCI 기울기 (10점)
+        score += min(SCORE_CCI_SLOPE, max(0, stock.get("cci_slope", 0)) * 3.33)
 
-        # MA20 기울기 (10점): 연속 상승일 × 3.33
+        # 5. MA20 기울기 (10점)
         score += min(SCORE_MA20_SLOPE, max(0, stock.get("ma20_slope", 0)) * 3.33)
+
+        # 6. RSI (5점)
+        score += bell_score(stock.get("rsi", 50),
+                            RSI_OPTIMAL[0], RSI_OPTIMAL[1],
+                            RSI_ZERO_LOW, RSI_ZERO_HIGH, SCORE_RSI)
+
+        # 7. 매물대 저항도 (10점): 위 매물이 적을수록 고점
+        above = stock.get("vp_above_pct", 50)
+        if above <= 20:
+            score += SCORE_VOLUME_PROFILE
+        elif above <= 35:
+            score += SCORE_VOLUME_PROFILE * 0.7
+        elif above <= 50:
+            score += SCORE_VOLUME_PROFILE * 0.4
+        elif above <= 65:
+            score += SCORE_VOLUME_PROFILE * 0.2
+        # 65% 이상: 0점
+
+        # 8. 거래원 이상도 (5점): enricher에서 설정
+        broker_score = stock.get("broker_score", 0)
+        score += min(SCORE_BROKER_FLOW, broker_score)
 
         return round(score, 1)
 
     # ──────────────────────────────────────────────
-    # 시장 현황
+    # 시장 현황 + 테마 + 전일수익률
     # ──────────────────────────────────────────────
     def get_market_status(self) -> dict:
-        """코스피/코스닥/나스닥(전일) 상태"""
         result = {}
-
-        # API로 코스피/코스닥
         try:
-            kospi = self.api.get_index_price("0001")
+            kospi = self.api.get_index_price("001")
             result["kospi"] = kospi["price"]
             result["kospi_change"] = kospi["change_rate"]
         except Exception:
             result["kospi"] = 0
             result["kospi_change"] = 0
-
         try:
-            kosdaq = self.api.get_index_price("1001")
+            kosdaq = self.api.get_index_price("101")
             result["kosdaq"] = kosdaq["price"]
             result["kosdaq_change"] = kosdaq["change_rate"]
         except Exception:
             result["kosdaq"] = 0
             result["kosdaq_change"] = 0
 
-        # 나스닥(전일) - global_merged.csv에서
+        # 나스닥(전일) — global_merged.csv
         result["nasdaq"] = 0
         result["nasdaq_change"] = 0
         result["kospi_ma20"] = None
@@ -468,152 +408,169 @@ class Screener:
             df = pd.read_csv(GLOBAL_CSV)
             df = df.dropna(subset=["nasdaq_close"])
             if len(df) > 0:
-                latest = df.iloc[-1]
-                result["nasdaq"] = round(float(latest["nasdaq_close"]), 2)
-                result["nasdaq_change"] = round(float(latest["nasdaq_change_pct"]), 2)
-
-            # 코스피 MA20
+                result["nasdaq"] = round(float(df.iloc[-1]["nasdaq_close"]), 2)
+                result["nasdaq_change"] = round(float(df.iloc[-1]["nasdaq_change_pct"]), 2)
             kospi_col = df.dropna(subset=["kospi_close"])
             if len(kospi_col) >= 20:
                 result["kospi_ma20"] = round(kospi_col["kospi_close"].tail(20).mean(), 2)
-        except Exception as e:
-            logger.debug("global_merged 로드 실패: %s", e)
+        except Exception:
+            pass
 
         return result
 
-    # ──────────────────────────────────────────────
-    # 백테스트 (심플)
-    # ──────────────────────────────────────────────
-    def run_backtest(self, days: int = 30) -> dict:
-        """로컬 data/ohlcv 기반 간단 백테스트 (시가 매도 기준)"""
-        from config import LOG_DIR
-        import json
+    def _get_themes(self) -> list[dict]:
+        """주도테마 TOP5"""
+        try:
+            themes = self.api.get_theme_groups(sort="3", period="1")
+            return themes[:5]
+        except Exception as e:
+            logger.debug("테마 조회 실패: %s", e)
+            return []
 
+    def _analyze_sectors(self, scored: list) -> list[dict]:
+        sector_data = defaultdict(lambda: {"count": 0, "total_change": 0.0, "stocks": []})
+        for s in scored:
+            sector = s.get("sector") or self.stock_map.get(s.get("code", ""), {}).get("sector", "기타")
+            sector_data[sector]["count"] += 1
+            sector_data[sector]["total_change"] += s.get("change_rate", 0)
+            sector_data[sector]["stocks"].append(s.get("name", ""))
+
+        result = []
+        for sector, data in sector_data.items():
+            avg_chg = data["total_change"] / data["count"] if data["count"] > 0 else 0
+            result.append({"sector": sector, "count": data["count"],
+                           "avg_change": round(avg_chg, 2), "stocks": data["stocks"][:5]})
+        result.sort(key=lambda x: x["avg_change"], reverse=True)
+        return result
+
+    def _calc_prev_returns(self) -> list[dict]:
+        today = datetime.now().strftime("%Y-%m-%d")
         log_files = sorted(LOG_DIR.glob("*.json"))
-        if not log_files:
-            logger.warning("로그 파일 없음 → 백테스트 불가")
-            return {"error": "로그 파일 없음"}
-
-        results = []
-        for lf in log_files[-days:]:
-            try:
-                data = json.loads(lf.read_text(encoding="utf-8"))
-                if data.get("skipped"):
-                    continue
-                rec_date = data["date"]
-                for stock in data.get("top5", []):
-                    code = stock["code"]
+        prev_log = None
+        for lf in reversed(log_files):
+            if lf.stem != today:
+                prev_log = lf
+                break
+        if not prev_log:
+            return []
+        try:
+            prev_data = json.loads(prev_log.read_text(encoding="utf-8"))
+            if prev_data.get("skipped"):
+                return []
+            results = []
+            for stock in prev_data.get("top", []):
+                try:
+                    cur = self.api.get_current_price(stock["code"])
                     buy_price = stock["price"]
-                    # 다음날 시가 조회
-                    next_open = self._get_next_open(code, rec_date)
-                    if next_open and buy_price > 0:
-                        ret = (next_open / buy_price - 1) * 100
+                    if buy_price > 0 and cur["price"] > 0:
+                        ret = (cur["price"] / buy_price - 1) * 100
                         results.append({
-                            "date": rec_date,
-                            "code": code,
-                            "name": stock.get("name", ""),
-                            "rank": stock.get("rank", 0),
-                            "score": stock.get("score", 0),
-                            "buy_price": buy_price,
-                            "next_open": next_open,
+                            "date": prev_log.stem, "code": stock["code"],
+                            "name": stock.get("name", ""), "rank": stock.get("rank", 0),
+                            "buy_price": buy_price, "today_price": cur["price"],
                             "return_pct": round(ret, 2),
                         })
-            except Exception as e:
-                logger.debug("백테스트 로그 처리 실패 [%s]: %s", lf.name, e)
-
-        if not results:
-            return {"total": 0, "message": "결과 없음"}
-
-        df = pd.DataFrame(results)
-        win_rate = (df["return_pct"] > 0).mean() * 100
-        avg_ret = df["return_pct"].mean()
-
-        return {
-            "total": len(results),
-            "win_rate": round(win_rate, 1),
-            "avg_return": round(avg_ret, 2),
-            "details": results,
-        }
-
-    def _get_next_open(self, code: str, date_str: str) -> int | None:
-        """다음 거래일 시가 조회 (로컬 CSV)"""
-        df = self._load_ohlcv(code)
-        if df is None:
-            return None
-        df["date_str"] = df["date"].dt.strftime("%Y-%m-%d")
-        mask = df["date_str"] > date_str
-        next_rows = df[mask]
-        if len(next_rows) == 0:
-            return None
-        return int(next_rows.iloc[0]["open"])
+                except Exception:
+                    pass
+            return results
+        except Exception:
+            return []
 
     # ──────────────────────────────────────────────
-    # 유틸
+    # OHLCV 로드
     # ──────────────────────────────────────────────
+    def _load_ohlcv(self, code: str) -> pd.DataFrame | None:
+        code = code.strip().zfill(6)
+        path = OHLCV_DIR / f"{code}.csv"
+        if not path.exists():
+            return None
+        try:
+            df = pd.read_csv(path)
+            df.columns = [c.lower() for c in df.columns]  # 대문자→소문자 통일
+            df["date"] = pd.to_datetime(df["date"])
+            return df.sort_values("date").reset_index(drop=True)
+        except Exception:
+            return None
+
+    def _fetch_ohlcv_api(self, code: str) -> pd.DataFrame | None:
+        try:
+            rows = self.api.get_daily_ohlcv(code)
+            if not rows:
+                return None
+            df = pd.DataFrame(rows)
+            df["date"] = pd.to_datetime(df["date"])
+            return df.sort_values("date").reset_index(drop=True)
+        except Exception:
+            return None
+
+    def _is_excluded(self, stock: dict) -> bool:
+        name = stock.get("name", "")
+        code = stock.get("code", "").strip().zfill(6)
+        for keyword in EXCLUDE_NAMES:
+            if keyword in name:
+                return True
+        if EXCLUDE_PREF_STOCK and code[-1] in ("5", "7", "8", "9"):
+            return True
+        if EXCLUDE_PREF_STOCK and (name.endswith("우") or name.endswith("우B")):
+            return True
+        if EXCLUDE_ETF:
+            info = self.stock_map.get(code, {})
+            if "ETF" in info.get("market", "").upper() or "ETF" in name.upper():
+                return True
+        return False
+
     def _stock_summary(self, stock: dict, rank: int) -> dict:
-        """종목 요약 (JSON 저장/디스코드용)"""
         code = stock.get("code", "").strip().zfill(6)
         name = stock.get("name", "")
-        sector = ""
-        if not name or not sector:
-            info = self.stock_map.get(code, {})
-            name = name or info.get("name", code)
-            sector = info.get("sector", "")
-
+        info = self.stock_map.get(code, {})
         return {
             "rank": rank,
             "code": code,
-            "name": name,
-            "sector": sector,
+            "name": name or info.get("name", code),
+            "sector": stock.get("sector") or info.get("sector", ""),
             "price": stock.get("price", 0),
             "change_rate": stock.get("change_rate", 0),
             "score": stock.get("score", 0),
+            # 8지표
             "cci": stock.get("cci", 0),
+            "rsi": stock.get("rsi", 0),
             "ma20_gap": stock.get("ma20_gap", 0),
             "cci_slope": stock.get("cci_slope", 0),
             "ma20_slope": stock.get("ma20_slope", 0),
+            "vp_above_pct": stock.get("vp_above_pct", 50),
+            "vp_tag": stock.get("vp_tag", ""),
+            "broker_score": stock.get("broker_score", 0),
+            "broker_signal": stock.get("broker_signal", ""),
+            # enricher 결과
+            "broker_top_buy": stock.get("broker_top_buy", ""),
+            "foreign_net": stock.get("foreign_net", 0),
+            "dart_risk": stock.get("dart_risk", ""),
+            "dart_note": stock.get("dart_note", ""),
+            "profit_loss": stock.get("profit_loss", ""),
+            "ai_action": stock.get("ai_action", ""),
+            "ai_risk": stock.get("ai_risk", ""),
+            "ai_summary": stock.get("ai_summary", ""),
         }
 
 
 # ──────────────────────────────────────────────
 # 유틸 함수
 # ──────────────────────────────────────────────
-def bell_score(
-    value: float,
-    opt_low: float,
-    opt_high: float,
-    zero_low: float,
-    zero_high: float,
-    max_points: float,
-) -> float:
-    """
-    종형분포 점수 계산
-
-    opt_low~opt_high: 만점 구간
-    zero_low 이하 또는 zero_high 이상: 0점
-    그 사이: 선형 보간
-    """
+def bell_score(value, opt_low, opt_high, zero_low, zero_high, max_points):
+    """종형분포 점수 계산"""
     if value < zero_low or value > zero_high:
         return 0.0
     if opt_low <= value <= opt_high:
         return max_points
-
     if value < opt_low:
-        # zero_low ~ opt_low 사이 선형
         span = opt_low - zero_low
-        if span <= 0:
-            return 0.0
-        return max_points * (value - zero_low) / span
+        return max_points * (value - zero_low) / span if span > 0 else 0.0
     else:
-        # opt_high ~ zero_high 사이 선형
         span = zero_high - opt_high
-        if span <= 0:
-            return 0.0
-        return max_points * (zero_high - value) / span
+        return max_points * (zero_high - value) / span if span > 0 else 0.0
 
 
 def _count_rising(values: list) -> int:
-    """리스트 끝에서부터 연속 상승 일수 (최대 3)"""
     if len(values) < 2:
         return 0
     count = 0

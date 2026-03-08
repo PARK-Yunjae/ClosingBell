@@ -1,7 +1,16 @@
 @echo off
-chcp 65001 > nul
-title ClosingBell
-cd /d "C:\Coding\ClosingBell"
-call venv\Scripts\activate.bat
+chcp 65001 >nul
+
+echo ============================================
+echo ClosingBell v3 Scheduler
+echo ============================================
+
+cd /d %~dp0
+call venv\Scripts\activate
+
 python main.py
-deactivate
+
+echo ============================================
+echo Done
+echo ============================================
+pause

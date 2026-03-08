@@ -1,5 +1,7 @@
 """
-ClosingBell v2 — 설정 및 상수
+ClosingBell v3 — 설정 및 상수
+==============================
+키움 REST API 기반 / 8지표 점수제 / 유니버스 전체 분석
 """
 import os
 from pathlib import Path
@@ -19,68 +21,22 @@ LOG_DIR = PROJECT_DIR / "data" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================
-# 한국투자증권 API
+# 키움 REST API
 # ============================================================
-KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
-KIS_APP_KEY = os.getenv("KIS_APP_KEY", "")
-KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "")
-KIS_ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO", "")
-KIS_HTS_ID = os.getenv("KIS_HTS_ID", "")
-
-# 계좌 분리 (XXXXXXXX-XX)
-CANO = KIS_ACCOUNT_NO.split("-")[0] if "-" in KIS_ACCOUNT_NO else KIS_ACCOUNT_NO[:8]
-ACNT_PRDT_CD = KIS_ACCOUNT_NO.split("-")[1] if "-" in KIS_ACCOUNT_NO else KIS_ACCOUNT_NO[8:]
+KIWOOM_BASE_URL = os.getenv("KIWOOM_BASE_URL", "https://api.kiwoom.com")
+KIWOOM_APPKEY = os.getenv("KIWOOM_APPKEY", "")
+KIWOOM_SECRETKEY = os.getenv("KIWOOM_SECRETKEY", "")
 
 # ============================================================
-# TV200 조건검색
+# Gemini AI
 # ============================================================
-TV200_CONDITION_NAME = "TV200"
-
-# ============================================================
-# 점수 파라미터 (9.5년 백테스트 기반)
-# ============================================================
-CCI_PERIOD = 14
-
-# 종형분포 최적 구간
-CCI_OPTIMAL = (160, 180)        # 만점 구간 (50.4% 승률)
-CCI_ZERO_LOW = 80               # 이하 0점
-CCI_ZERO_HIGH = 300             # 이상 0점
-
-MA20_GAP_OPTIMAL = (2.0, 8.0)   # 이격도 만점 구간
-MA20_GAP_ZERO = 20.0            # 이상 0점
-
-CHANGE_OPTIMAL = (2.0, 8.0)     # 등락률 만점 구간
-CHANGE_ZERO = 20.0              # 이상 0점
-
-# 배점
-SCORE_CCI = 30
-SCORE_MA20_GAP = 25
-SCORE_CHANGE = 20
-SCORE_CCI_SLOPE = 15
-SCORE_MA20_SLOPE = 10
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ============================================================
-# 필터
+# DART 공시
 # ============================================================
-TOP_N = 5                       # 추천 종목 수
-TOP_N_CONSERVATIVE = 3          # 시장 불안 시
-MIN_PRICE = 3_000               # 최소 가격 (동전주 제외)
-MAX_PRICE = 150_000             # 최대 가격 (대형주 제외, 모멘텀 전략 적합 범위)
-MAX_MA20_GAP = 20.0             # 이격도 과열 기준 (초과 시 후보 제외)
-NASDAQ_DROP_THRESHOLD = -2.0    # 나스닥 급락 기준
-
-# 제외 키워드 (종목명에 포함되면 제외)
-EXCLUDE_NAMES = [
-    "스팩", "SPAC",           # SPAC
-    "ETN",                     # ETN
-    "인버스", "레버리지",       # 파생
-    "리츠", "REIT",            # 리츠
-    "인프라",                  # 인프라펀드
-]
-# 우선주: 코드 끝자리 5,7,8,9 (보통주는 0)
-EXCLUDE_PREF_STOCK = True
-# ETF: 시장이 ETF이거나 코드 6자리 중 앞 3자리가 특정 패턴
-EXCLUDE_ETF = True
+DART_API_KEY = os.getenv("DART_API_KEY", "")
 
 # ============================================================
 # 디스코드
@@ -88,16 +44,70 @@ EXCLUDE_ETF = True
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # ============================================================
+# 점수 파라미터 (9.5년 백테스트 기반, 8지표)
+# ============================================================
+CCI_PERIOD = 14
+RSI_PERIOD = 14
+
+# 종형분포 최적 구간 (optimal_low, optimal_high, zero_low, zero_high)
+CCI_OPTIMAL = (160, 180)
+CCI_ZERO_LOW = 80
+CCI_ZERO_HIGH = 300
+
+MA20_GAP_OPTIMAL = (2.0, 8.0)
+MA20_GAP_ZERO = 20.0
+
+CHANGE_OPTIMAL = (2.0, 8.0)
+CHANGE_ZERO = 20.0
+
+RSI_OPTIMAL = (50, 70)
+RSI_ZERO_LOW = 25
+RSI_ZERO_HIGH = 85
+
+# 배점 (합계 100점)
+SCORE_CCI = 25
+SCORE_MA20_GAP = 20
+SCORE_CHANGE = 15
+SCORE_CCI_SLOPE = 10
+SCORE_MA20_SLOPE = 10
+SCORE_RSI = 5
+SCORE_VOLUME_PROFILE = 10   # 매물대 저항도
+SCORE_BROKER_FLOW = 5       # 거래원 이상도
+
+# ============================================================
+# 필터
+# ============================================================
+TOP_N = 3                       # 추천 종목 수 (5→3)
+TOP_N_CONSERVATIVE = 2          # 시장 불안 시
+MIN_PRICE = 3_000
+MAX_PRICE = 150_000
+MAX_MA20_GAP = 20.0
+NASDAQ_DROP_THRESHOLD = -2.0
+MIN_CHANGE_RATE = 1.0
+MAX_CHANGE_RATE = 29.0
+MIN_TRADING_VALUE = "1000"      # 키움 API용: 100억=1000 (백만원 단위)
+
+# 제외 키워드
+EXCLUDE_NAMES = [
+    "스팩", "SPAC", "ETN", "인버스", "레버리지", "리츠", "REIT", "인프라",
+]
+ETF_KEYWORDS = [
+    "KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
+    "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
+    "파워", "레버리지", "인버스",
+]
+EXCLUDE_PREF_STOCK = True
+EXCLUDE_ETF = True
+
+# ============================================================
 # 스케줄
 # ============================================================
 SCHEDULE = {
-    "screen": "15:00",
+    "screen": "14:55",
     "update_data": "15:35",
     "git_push": "15:40",
     "shutdown": "15:43",
 }
 
-# ============================================================
 # API 속도 제한
-# ============================================================
-API_DELAY = 0.06  # 초당 ~16건 (20건 제한 여유)
+API_DELAY = 0.12  # 초당 ~8건

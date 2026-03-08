@@ -1,544 +1,335 @@
 """
-ClosingBell v2 — 백필 (과거 N일 스크리닝 시뮬레이션)
+ClosingBell v3 — 백필 (과거 데이터 시뮬레이션)
+===============================================
+로컬 OHLCV CSV 기반으로 과거 N일의 스크리닝 결과를 생성.
+키움 API 없이 동작 (로컬 데이터만 사용).
 
 사용법:
-    python backfill.py 10          # 최근 10거래일
-    python backfill.py 10 --dry    # 저장 없이 미리보기
-    python backfill.py 20 --force  # 기존 로그 덮어쓰기
-
-로컬 OHLCV 데이터 기반으로 과거 스크리닝을 시뮬레이션하고
-data/logs/{date}.json 로그를 생성합니다.
+    python backfill.py --days 20
+    python backfill.py --start 2026-02-01 --end 2026-03-07
+    python backfill.py --days 20 --force  (기존 로그 덮어쓰기)
 """
 import argparse
 import json
 import logging
-import sys
+import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 
-import pandas as pd
-import numpy as np
-
 from config import (
-    OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, LOG_DIR,
-    CCI_PERIOD, CCI_OPTIMAL, CCI_ZERO_LOW, CCI_ZERO_HIGH,
+    OHLCV_DIR, MAPPING_CSV, GLOBAL_CSV, LOG_DIR,
+    CCI_PERIOD, RSI_PERIOD,
+    CCI_OPTIMAL, CCI_ZERO_LOW, CCI_ZERO_HIGH,
     MA20_GAP_OPTIMAL, MA20_GAP_ZERO,
     CHANGE_OPTIMAL, CHANGE_ZERO,
-    SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE, SCORE_CCI_SLOPE, SCORE_MA20_SLOPE,
-    TOP_N, TOP_N_CONSERVATIVE, MIN_PRICE, MAX_PRICE,
+    RSI_OPTIMAL, RSI_ZERO_LOW, RSI_ZERO_HIGH,
+    SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE,
+    SCORE_CCI_SLOPE, SCORE_MA20_SLOPE, SCORE_RSI,
+    SCORE_VOLUME_PROFILE,
+    TOP_N, MIN_PRICE, MAX_PRICE, MAX_MA20_GAP,
+    MIN_CHANGE_RATE, MAX_CHANGE_RATE,
     NASDAQ_DROP_THRESHOLD,
-    EXCLUDE_NAMES, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
+    EXCLUDE_NAMES, ETF_KEYWORDS,
 )
 from screener import bell_score, _count_rising
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("backfill")
 
 
-# ──────────────────────────────────────────────
-# 데이터 로드
-# ──────────────────────────────────────────────
-def load_stock_map() -> dict:
-    """stock_mapping.csv → {code: {name, market, sector}}"""
-    df = pd.read_csv(MAPPING_CSV, dtype={"code": str}, encoding="utf-8-sig")
-    df["code"] = df["code"].str.zfill(6)
-    return df.set_index("code").to_dict("index")
-
-
 def load_all_ohlcv() -> dict[str, pd.DataFrame]:
-    """전체 OHLCV CSV 로드 → {code: DataFrame}"""
-    logger.info("OHLCV 로딩 중... (%s)", OHLCV_DIR)
+    """모든 OHLCV CSV 로드"""
+    logger.info("OHLCV 로드 중...")
     data = {}
-    csv_files = list(OHLCV_DIR.glob("*.csv"))
-
-    for i, path in enumerate(csv_files):
-        code = path.stem.zfill(6)
-
-        # INDEX 파일 스킵
-        if code.startswith("INDEX") or not code.isdigit():
+    files = list(OHLCV_DIR.glob("*.csv"))
+    for f in files:
+        code = f.stem
+        if code.startswith("INDEX_"):
             continue
-
         try:
-            df = pd.read_csv(path)
+            df = pd.read_csv(f)
+            df.columns = [c.lower() for c in df.columns]  # 대문자→소문자 통일
             df["date"] = pd.to_datetime(df["date"])
             df = df.sort_values("date").reset_index(drop=True)
-
-            if len(df) >= 20:  # 최소 20일 필요 (MA20)
+            if len(df) >= 30:
                 data[code] = df
         except Exception:
-            continue
-
-        if (i + 1) % 500 == 0:
-            logger.info("  %d/%d 파일 로드됨...", i + 1, len(csv_files))
-
-    logger.info("OHLCV 로드 완료: %d종목", len(data))
+            pass
+    logger.info("로드 완료: %d종목", len(data))
     return data
 
 
+def load_stock_map() -> dict:
+    try:
+        df = pd.read_csv(MAPPING_CSV, dtype={"code": str}, encoding="utf-8-sig")
+        df["code"] = df["code"].str.zfill(6)
+        return df.set_index("code").to_dict("index")
+    except Exception:
+        return {}
+
+
 def load_global() -> pd.DataFrame:
-    """global_merged.csv 로드"""
-    df = pd.read_csv(GLOBAL_CSV)
-    df["date"] = pd.to_datetime(df["date"])
-    return df.sort_values("date").reset_index(drop=True)
+    try:
+        df = pd.read_csv(GLOBAL_CSV)
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
-# ──────────────────────────────────────────────
-# 거래일 계산
-# ──────────────────────────────────────────────
-def get_trading_days(global_df: pd.DataFrame, n_days: int) -> list[str]:
-    """최근 N거래일 리스트 (코스피 데이터 기준)"""
-    valid = global_df.dropna(subset=["kospi_close"])
-    dates = valid["date"].dt.strftime("%Y-%m-%d").tolist()
-
-    # 오늘 날짜 제외 (오늘은 이미 실행했을 수 있음)
-    today = datetime.now().strftime("%Y-%m-%d")
-    dates = [d for d in dates if d < today]
-
-    return dates[-n_days:]
-
-
-# ──────────────────────────────────────────────
-# 종목 필터
-# ──────────────────────────────────────────────
-def is_excluded(code: str, name: str, stock_map: dict) -> bool:
-    """SPAC, ETF, 우선주 등 제외"""
-    for keyword in EXCLUDE_NAMES:
-        if keyword in name:
+def is_excluded(code: str, name: str) -> bool:
+    for kw in EXCLUDE_NAMES:
+        if kw in name:
             return True
-
-    if EXCLUDE_PREF_STOCK and code[-1] in ("5", "7", "8", "9"):
+    for kw in ETF_KEYWORDS:
+        if kw in name:
+            return True
+    if code[-1] in ("5", "7", "8", "9"):
         return True
-    if EXCLUDE_PREF_STOCK and (name.endswith("우") or name.endswith("우B")):
+    if name.endswith("우") or name.endswith("우B"):
         return True
-
-    if EXCLUDE_ETF:
-        info = stock_map.get(code, {})
-        if "ETF" in info.get("market", "").upper():
-            return True
-        if "ETF" in name.upper():
-            return True
-
     return False
 
 
-# ──────────────────────────────────────────────
-# 유니버스 시뮬레이션
-# ──────────────────────────────────────────────
-def simulate_universe(
-    target_date: str,
-    all_ohlcv: dict[str, pd.DataFrame],
-    stock_map: dict,
-) -> list[dict]:
-    """
-    특정 날짜의 TV200 유사 유니버스 생성
-    조건: 거래량 상위 150 + 거래대금 150억+ + 등락률 1~29%
-    """
-    target_dt = pd.Timestamp(target_date)
-    candidates = []
-
-    for code, df in all_ohlcv.items():
-        # 해당 날짜 데이터 있는지
-        mask = df["date"] == target_dt
-        if mask.sum() == 0:
-            continue
-
-        row = df[mask].iloc[0]
-        close = int(row["close"])
-        volume = int(row["volume"])
-        open_price = int(row["open"])
-
-        if close <= 0 or open_price <= 0:
-            continue
-
-        # 등락률 (전일 대비)
-        idx = df.index[mask].tolist()[0]
-        if idx == 0:
-            continue
-        prev_close = int(df.iloc[idx - 1]["close"])
-        if prev_close <= 0:
-            continue
-
-        change_rate = (close / prev_close - 1) * 100
-
-        # 거래대금 (근사값: 종가 × 거래량)
-        trade_amt = close * volume
-
-        # 이름
-        info = stock_map.get(code, {})
-        name = info.get("name", code)
-
-        candidates.append({
-            "code": code,
-            "name": name,
-            "sector": info.get("sector", ""),
-            "price": close,
-            "open": open_price,
-            "change_rate": round(change_rate, 2),
-            "volume": volume,
-            "trade_amt": trade_amt,
-            "df_idx": idx,
-        })
-
-    # 필터: 등락률 1~29%, 거래대금 150억+
-    filtered = [
-        s for s in candidates
-        if 1.0 <= s["change_rate"] <= 29.0
-        and s["trade_amt"] >= 15_000_000_000  # 150억
-    ]
-
-    # 거래량 상위 150
-    filtered.sort(key=lambda x: x["volume"], reverse=True)
-    filtered = filtered[:150]
-
-    # 종목 유형 필터
-    filtered = [s for s in filtered if not is_excluded(s["code"], s["name"], stock_map)]
-
-    # 가격 필터
-    filtered = [s for s in filtered if MIN_PRICE <= s["price"] <= MAX_PRICE]
-
-    return filtered
-
-
-# ──────────────────────────────────────────────
-# 지표 계산 + 점수
-# ──────────────────────────────────────────────
-def calc_indicators_and_score(
-    stock: dict,
-    all_ohlcv: dict[str, pd.DataFrame],
-    target_date: str,
-) -> dict | None:
-    """OHLCV 기반 지표 계산 + 점수"""
-    code = stock["code"]
-    df = all_ohlcv.get(code)
-    if df is None:
+def calc_indicators(df: pd.DataFrame, idx: int) -> dict | None:
+    """특정 인덱스(날짜)에서의 지표 계산"""
+    if idx < 30:
         return None
 
-    target_dt = pd.Timestamp(target_date)
-    mask = df["date"] <= target_dt
-    df_slice = df[mask].tail(50).copy()
+    window = df.iloc[max(0, idx - 59):idx + 1].copy()
+    if len(window) < 20:
+        return None
 
-    if len(df_slice) < 20:
+    latest = window.iloc[-1]
+    price = int(latest["close"])
+    if price < MIN_PRICE or price > MAX_PRICE:
+        return None
+
+    # 등락률
+    if idx > 0:
+        prev_close = df.iloc[idx - 1]["close"]
+        change_rate = (price / prev_close - 1) * 100 if prev_close > 0 else 0
+    else:
+        change_rate = 0
+
+    if not (MIN_CHANGE_RATE <= change_rate <= MAX_CHANGE_RATE):
         return None
 
     # MA20
-    df_slice["ma20"] = df_slice["close"].rolling(20).mean()
-
-    # CCI
-    tp = (df_slice["high"] + df_slice["low"] + df_slice["close"]) / 3
-    sma_tp = tp.rolling(CCI_PERIOD).mean()
-    mad = tp.rolling(CCI_PERIOD).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    df_slice["cci"] = (tp - sma_tp) / (0.015 * mad)
-
-    latest = df_slice.iloc[-1]
-    if pd.isna(latest["cci"]) or pd.isna(latest["ma20"]):
+    window["ma20"] = window["close"].rolling(20).mean()
+    ma20 = window.iloc[-1]["ma20"]
+    if pd.isna(ma20) or ma20 <= 0:
         return None
 
-    cci = round(float(latest["cci"]), 1)
-    ma20 = float(latest["ma20"])
-    close = float(latest["close"])
-    ma20_gap = round((close / ma20 - 1) * 100, 1) if ma20 > 0 else 0
+    ma20_gap = (price / ma20 - 1) * 100
+    if abs(ma20_gap) > MAX_MA20_GAP:
+        return None
+
+    # CCI
+    tp = (window["high"] + window["low"] + window["close"]) / 3
+    sma_tp = tp.rolling(CCI_PERIOD).mean()
+    mad = tp.rolling(CCI_PERIOD).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    window["cci"] = (tp - sma_tp) / (0.015 * mad)
+
+    # RSI
+    delta = window["close"].diff()
+    gain = delta.clip(lower=0).rolling(RSI_PERIOD).mean()
+    loss = (-delta.clip(upper=0)).rolling(RSI_PERIOD).mean()
+    rs = gain / loss.replace(0, np.nan)
+    window["rsi"] = 100 - (100 / (1 + rs))
+
+    cci = float(window.iloc[-1]["cci"]) if pd.notna(window.iloc[-1]["cci"]) else 0
+    rsi = float(window.iloc[-1]["rsi"]) if pd.notna(window.iloc[-1]["rsi"]) else 50
 
     # 기울기
-    prev_4 = df_slice.tail(4)
+    prev_4 = window.tail(4)
     cci_slope = _count_rising(prev_4["cci"].dropna().tolist())
     ma20_slope = _count_rising(prev_4["ma20"].dropna().tolist())
 
-    # 점수
+    # 매물대 (간이 — 50일 가격대별 거래량)
+    vp_window = window.tail(50)
+    current_price = float(latest["close"])
+    if len(vp_window) >= 10 and current_price > 0:
+        total_vol = vp_window["volume"].sum()
+        above_vol = vp_window[
+            ((vp_window["open"] + vp_window["close"]) / 2) > current_price
+        ]["volume"].sum()
+        vp_above_pct = (above_vol / total_vol * 100) if total_vol > 0 else 50
+    else:
+        vp_above_pct = 50
+
+    # 거래대금 (백만원 기준 추정)
+    trading_value = int(latest.get("volume", 0) * price / 1_000_000)
+
+    # 점수 계산
     score = 0.0
     score += bell_score(cci, CCI_OPTIMAL[0], CCI_OPTIMAL[1], CCI_ZERO_LOW, CCI_ZERO_HIGH, SCORE_CCI)
     score += bell_score(ma20_gap, MA20_GAP_OPTIMAL[0], MA20_GAP_OPTIMAL[1], 0, MA20_GAP_ZERO, SCORE_MA20_GAP)
-    score += bell_score(stock["change_rate"], CHANGE_OPTIMAL[0], CHANGE_OPTIMAL[1], 0, CHANGE_ZERO, SCORE_CHANGE)
-    score += min(SCORE_CCI_SLOPE, max(0, cci_slope) * 5)
+    score += bell_score(change_rate, CHANGE_OPTIMAL[0], CHANGE_OPTIMAL[1], 0, CHANGE_ZERO, SCORE_CHANGE)
+    score += min(SCORE_CCI_SLOPE, max(0, cci_slope) * 3.33)
     score += min(SCORE_MA20_SLOPE, max(0, ma20_slope) * 3.33)
+    score += bell_score(rsi, RSI_OPTIMAL[0], RSI_OPTIMAL[1], RSI_ZERO_LOW, RSI_ZERO_HIGH, SCORE_RSI)
 
-    # 다음날 시가 (수익률 계산용)
-    target_idx = df_slice.index[-1]
-    full_idx = df.index.tolist()
-    pos = full_idx.index(target_idx)
-    next_open = None
-    if pos + 1 < len(df):
-        next_open = int(df.iloc[pos + 1]["open"])
+    # 매물대 점수
+    if vp_above_pct <= 20:
+        score += SCORE_VOLUME_PROFILE
+    elif vp_above_pct <= 35:
+        score += SCORE_VOLUME_PROFILE * 0.7
+    elif vp_above_pct <= 50:
+        score += SCORE_VOLUME_PROFILE * 0.4
+    elif vp_above_pct <= 65:
+        score += SCORE_VOLUME_PROFILE * 0.2
 
     return {
-        "code": code,
-        "name": stock["name"],
-        "sector": stock["sector"],
-        "price": stock["price"],
-        "change_rate": stock["change_rate"],
+        "price": price, "change_rate": round(change_rate, 1),
         "score": round(score, 1),
-        "cci": cci,
-        "ma20_gap": ma20_gap,
-        "cci_slope": cci_slope,
-        "ma20_slope": ma20_slope,
-        "next_open": next_open,
+        "cci": round(cci, 1), "rsi": round(rsi, 1),
+        "ma20_gap": round(ma20_gap, 1),
+        "cci_slope": cci_slope, "ma20_slope": ma20_slope,
+        "vp_above_pct": round(vp_above_pct, 1),
+        "vp_tag": "위 매물 적음" if vp_above_pct <= 30 else (
+            "위 저항 강함" if vp_above_pct >= 60 else "매물대 중립"),
+        "trading_value": trading_value,
+        "volume": int(latest["volume"]),
     }
 
 
-# ──────────────────────────────────────────────
-# 시장 현황
-# ──────────────────────────────────────────────
-def get_market_for_date(global_df: pd.DataFrame, target_date: str) -> dict:
-    """특정 날짜의 시장 현황"""
-    target_dt = pd.Timestamp(target_date)
-    mask = global_df["date"] == target_dt
-    result = {"kospi": 0, "kospi_change": 0, "kosdaq": 0, "kosdaq_change": 0,
-              "nasdaq": 0, "nasdaq_change": 0}
-
-    if mask.sum() > 0:
-        row = global_df[mask].iloc[0]
-        for col, key in [
-            ("kospi_close", "kospi"), ("kospi_change_pct", "kospi_change"),
-            ("kosdaq_close", "kosdaq"), ("kosdaq_change_pct", "kosdaq_change"),
-        ]:
-            if col in row and pd.notna(row[col]):
-                result[key] = round(float(row[col]), 2)
-
-    # 나스닥은 전일 기준
-    prev = global_df[global_df["date"] < target_dt].dropna(subset=["nasdaq_close"])
-    if len(prev) > 0:
-        last = prev.iloc[-1]
-        result["nasdaq"] = round(float(last["nasdaq_close"]), 2)
-        if pd.notna(last.get("nasdaq_change_pct")):
-            result["nasdaq_change"] = round(float(last["nasdaq_change_pct"]), 2)
-
-    return result
-
-
-# ──────────────────────────────────────────────
-# 전일 추천 수익률 계산
-# ──────────────────────────────────────────────
-def calc_prev_returns(
-    current_date: str,
-    prev_log: dict | None,
-    all_ohlcv: dict[str, pd.DataFrame],
-) -> list[dict]:
-    """전일 추천 TOP5의 오늘 수익률"""
-    if not prev_log or prev_log.get("skipped"):
-        return []
-
-    target_dt = pd.Timestamp(current_date)
-    results = []
-
-    for stock in prev_log.get("top5", []):
-        code = stock["code"]
-        buy_price = stock["price"]
-        df = all_ohlcv.get(code)
-        if df is None or buy_price <= 0:
-            continue
-
-        # 오늘 시가
-        mask = df["date"] == target_dt
-        if mask.sum() == 0:
-            continue
-        today_open = int(df[mask].iloc[0]["open"])
-        if today_open <= 0:
-            continue
-
-        ret = (today_open / buy_price - 1) * 100
-        results.append({
-            "date": prev_log["date"],
-            "code": code,
-            "name": stock.get("name", ""),
-            "rank": stock.get("rank", 0),
-            "buy_price": buy_price,
-            "today_price": today_open,
-            "return_pct": round(ret, 2),
-        })
-
-    return results
-
-
-# ──────────────────────────────────────────────
-# 메인
-# ──────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(description="ClosingBell 백필")
-    parser.add_argument("days", type=int, help="백필할 거래일 수")
-    parser.add_argument("--dry", action="store_true", help="저장하지 않고 미리보기")
-    parser.add_argument("--force", action="store_true", help="기존 로그 덮어쓰기")
-    args = parser.parse_args()
-
-    # 데이터 로드
-    stock_map = load_stock_map()
+def run_backfill(start_date: str, end_date: str, force: bool = False):
+    """백필 실행"""
     all_ohlcv = load_all_ohlcv()
+    stock_map = load_stock_map()
     global_df = load_global()
 
-    # 거래일 목록
-    trading_days = get_trading_days(global_df, args.days)
-    logger.info("백필 대상: %d거래일 (%s ~ %s)", len(trading_days),
-                trading_days[0] if trading_days else "?",
-                trading_days[-1] if trading_days else "?")
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
 
-    prev_log = None  # 전일 로그 (수익률 계산용)
-    total_stats = {"days": 0, "skipped": 0, "total_stocks": 0}
+    # 거래일 목록 (아무 종목의 날짜로 추출)
+    sample_code = next(iter(all_ohlcv))
+    sample_df = all_ohlcv[sample_code]
+    trading_days = sample_df[(sample_df["date"] >= start) & (sample_df["date"] <= end)]["date"].tolist()
 
-    for i, date in enumerate(trading_days):
-        log_path = LOG_DIR / f"{date}.json"
+    logger.info("백필 기간: %s ~ %s (%d거래일)", start_date, end_date, len(trading_days))
 
-        # 기존 로그 있으면 스킵 (--force 아닐 때)
-        if log_path.exists() and not args.force:
-            logger.info("[%d/%d] %s — 기존 로그 있음 (스킵)", i+1, len(trading_days), date)
-            prev_log = json.loads(log_path.read_text(encoding="utf-8"))
+    for day in trading_days:
+        day_str = day.strftime("%Y-%m-%d")
+        log_file = LOG_DIR / f"{day_str}.json"
+
+        if log_file.exists() and not force:
+            logger.debug("스킵 (이미 존재): %s", day_str)
             continue
 
-        logger.info("[%d/%d] %s 시뮬레이션...", i+1, len(trading_days), date)
+        # 나스닥 체크
+        nasdaq_change = 0
+        if len(global_df) > 0:
+            prev_day = global_df[global_df["date"] < day]
+            if len(prev_day) > 0:
+                nasdaq_change = float(prev_day.iloc[-1].get("nasdaq_change_pct", 0) or 0)
 
-        # 시장 현황
-        market = get_market_for_date(global_df, date)
-
-        # 나스닥 급락 스킵 (스케줄러와 동일)
-        nasdaq_chg = market.get("nasdaq_change", 0)
-        if nasdaq_chg <= NASDAQ_DROP_THRESHOLD:
-            logger.info("  나스닥 급락 (%.1f%%) → 스킵", nasdaq_chg)
+        if nasdaq_change <= NASDAQ_DROP_THRESHOLD:
             result = {
-                "date": date, "timestamp": f"{date}T15:06:00",
-                "market": market, "skipped": True,
-                "reason": f"나스닥 전일 {nasdaq_chg:+.1f}% (기준: {NASDAQ_DROP_THRESHOLD}%)",
-                "universe_count": 0,
-                "top5": [], "all_scored": [], "sector_summary": [], "prev_returns": [],
+                "date": day_str, "skipped": True,
+                "reason": f"나스닥 {nasdaq_change:+.1f}%",
+                "universe_count": 0, "top": [], "all_scored": [],
             }
-            if not args.dry:
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                log_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-            prev_log = result
-            total_stats["skipped"] += 1
-            total_stats["days"] += 1
+            log_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             continue
 
-        # 유니버스
-        universe = simulate_universe(date, all_ohlcv, stock_map)
+        # ── 유니버스 시뮬레이션 (실시간과 동일) ──
+        # 1) 해당 날짜에 거래된 모든 종목의 거래량/거래대금 수집
+        day_candidates = []
+        for code, df in all_ohlcv.items():
+            day_mask = df["date"] == day
+            if not day_mask.any():
+                continue
+            idx = df.index[day_mask][0]
+            row = df.iloc[idx]
+            name = stock_map.get(code, {}).get("name", code)
+            if is_excluded(code, name):
+                continue
+            vol = int(row.get("volume", 0))
+            price = int(row["close"])
+            tv = vol * price / 1_000_000  # 백만원 단위 거래대금
+            if vol > 0 and price > 0:
+                day_candidates.append({
+                    "code": code, "name": name, "idx": idx,
+                    "volume": vol, "trading_value": tv, "price": price,
+                    "sector": stock_map.get(code, {}).get("sector", ""),
+                })
 
-        if not universe:
-            logger.info("  유니버스 0종목 → 스킵")
-            result = {
-                "date": date, "timestamp": f"{date}T15:06:00",
-                "market": market, "skipped": True,
-                "reason": "유니버스 0종목", "universe_count": 0,
-                "top5": [], "all_scored": [], "sector_summary": [], "prev_returns": [],
-            }
-            if not args.dry:
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                log_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-            prev_log = result
-            total_stats["skipped"] += 1
-            total_stats["days"] += 1
-            continue
+        # 2) 거래량 TOP100 + 거래대금 TOP100 합집합 (= 실시간 ka10030+ka10032)
+        by_volume = sorted(day_candidates, key=lambda x: x["volume"], reverse=True)[:100]
+        by_value = sorted(day_candidates, key=lambda x: x["trading_value"], reverse=True)[:100]
+        universe_codes = set()
+        universe = {}
+        for s in by_volume + by_value:
+            if s["code"] not in universe_codes:
+                universe_codes.add(s["code"])
+                universe[s["code"]] = s
 
-        # ETF 2차 필터 (스케줄러와 동일)
-        ETF_KEYWORDS = ["KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
-                        "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
-                        "파워", "레버리지", "인버스"]
-        before_etf = len(universe)
-        universe = [s for s in universe
-                    if not any(kw in s.get("name", "") for kw in ETF_KEYWORDS)]
-        if before_etf != len(universe):
-            logger.info("  ETF 2차 필터: %d → %d종목", before_etf, len(universe))
-
-        # 지표 + 점수
+        # 3) 필터 (실시간과 동일): 등락률 1~29%, 가격 3,000~150,000, 거래대금 100억+
         scored = []
-        for stock in universe:
-            result = calc_indicators_and_score(stock, all_ohlcv, date)
-            if result:
-                scored.append(result)
+        for code, cand in universe.items():
+            df = all_ohlcv[code]
+            idx = cand["idx"]
+
+            indicators = calc_indicators(df, idx)
+            if indicators is None:
+                continue
+
+            # 거래대금 100억 이상 (실시간 ka10030의 trde_prica_tp=1000과 동일)
+            if indicators["trading_value"] < 10000:
+                continue
+
+            scored.append({
+                "code": code, "name": cand["name"], "sector": cand["sector"],
+                **indicators,
+            })
 
         scored.sort(key=lambda x: x["score"], reverse=True)
 
-        # TOP_N 결정 — 보수 모드 (스케줄러와 동일)
-        top_n = TOP_N
-        # 코스피 MA20 계산
-        kospi_col = global_df[global_df["date"] <= pd.Timestamp(date)].dropna(subset=["kospi_close"])
-        if len(kospi_col) >= 20:
-            kospi_ma20 = kospi_col["kospi_close"].tail(20).mean()
-            kospi_now = market.get("kospi", 0)
-            if kospi_now > 0 and kospi_now < kospi_ma20:
-                top_n = TOP_N_CONSERVATIVE
-                logger.info("  코스피 %.0f < MA20 %.0f → 보수 모드 (TOP%d)", kospi_now, kospi_ma20, top_n)
-
-        # TOP5
-        top5 = []
-        for j, s in enumerate(scored[:top_n]):
-            top5.append({**s, "rank": j + 1})
-
-        # 전체
-        all_scored = []
-        for j, s in enumerate(scored):
-            all_scored.append({**s, "rank": j + 1})
-
-        # 섹터 분석
-        sector_data = defaultdict(lambda: {"count": 0, "total_change": 0.0, "stocks": []})
-        for s in scored:
-            sec = s.get("sector") or "기타"
-            sector_data[sec]["count"] += 1
-            sector_data[sec]["total_change"] += s.get("change_rate", 0)
-            sector_data[sec]["stocks"].append(s["name"])
-
-        sector_summary = sorted([
-            {"sector": k, "count": v["count"],
-             "avg_change": round(v["total_change"] / v["count"], 2),
-             "stocks": v["stocks"][:5]}
-            for k, v in sector_data.items()
-        ], key=lambda x: x["avg_change"], reverse=True)
-
-        # 전일 수익률
-        prev_returns = calc_prev_returns(date, prev_log, all_ohlcv)
-
-        log_entry = {
-            "date": date,
-            "timestamp": f"{date}T15:06:00",
-            "market": market,
-            "universe_count": len(universe),
-            "top5": top5,
-            "all_scored": all_scored,
-            "sector_summary": sector_summary,
-            "prev_returns": prev_returns,
+        top = scored[:TOP_N]
+        result = {
+            "date": day_str,
+            "timestamp": day.isoformat(),
+            "market": {"nasdaq_change": nasdaq_change},
+            "universe_count": len(scored),
+            "top": [
+                {**s, "rank": i + 1,
+                 "broker_signal": "", "dart_risk": "", "ai_action": "", "ai_summary": ""}
+                for i, s in enumerate(top)
+            ],
+            "all_scored": [
+                {**s, "rank": i + 1}
+                for i, s in enumerate(scored)
+            ],
         }
 
-        # 출력
-        logger.info("  유니버스: %d → 점수계산: %d종목", len(universe), len(scored))
-        for s in top5:
-            ret_str = ""
-            if s.get("next_open") and s["price"] > 0:
-                ret = (s["next_open"] / s["price"] - 1) * 100
-                ret_str = f" → 익일시가 {ret:+.1f}%"
-            logger.info("  %d위: %s (%s) %.1f점 | CCI %.0f | 이격도 %.1f%%%s",
-                        s["rank"], s["name"], s["code"], s["score"],
-                        s["cci"], s["ma20_gap"], ret_str)
+        log_file.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        logger.info(
+            "%s: %d종목 → TOP%d [%s]",
+            day_str, len(scored), len(top),
+            ", ".join(f"{s['name']}({s['score']})" for s in top),
+        )
 
-        if prev_returns:
-            avg_ret = sum(r["return_pct"] for r in prev_returns) / len(prev_returns)
-            logger.info("  전일 추천 수익률: 평균 %+.2f%%", avg_ret)
-
-        # 저장
-        if not args.dry:
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_path.write_text(
-                json.dumps(log_entry, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
-        prev_log = log_entry
-        total_stats["days"] += 1
-        total_stats["total_stocks"] += len(scored)
-
-    # 최종 요약
-    logger.info("")
-    logger.info("=" * 50)
     logger.info("백필 완료!")
-    logger.info("  처리: %d일 (스킵: %d일)", total_stats["days"], total_stats["skipped"])
-    logger.info("  총 점수계산 종목: %d", total_stats["total_stocks"])
-    if not args.dry:
-        logger.info("  저장: data/logs/*.json")
-        logger.info("")
-        logger.info("git push하면 Streamlit 대시보드에 반영됩니다:")
-        logger.info("  git add . && git commit -m \"backfill: %d days\" && git push", args.days)
-    else:
-        logger.info("  (--dry 모드: 저장하지 않음)")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="ClosingBell v3 백필")
+    parser.add_argument("--days", type=int, default=20, help="최근 N일")
+    parser.add_argument("--start", type=str, default="", help="시작일 (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, default="", help="종료일 (YYYY-MM-DD)")
+    parser.add_argument("--force", action="store_true", help="기존 로그 덮어쓰기")
+    args = parser.parse_args()
+
+    if args.start and args.end:
+        run_backfill(args.start, args.end, args.force)
+    else:
+        end = datetime.now() - timedelta(days=1)
+        start = end - timedelta(days=args.days + 10)  # 여유분
+        run_backfill(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), args.force)

@@ -1,7 +1,8 @@
-venv/
 .env
+venv/
 __pycache__/
 *.pyc
-*.pyo
 data/closingbell.log
-.vscode/
+
+# Streamlit Cloud용 로그 허용
+!data/logs/

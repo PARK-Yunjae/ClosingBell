@@ -1,134 +1,136 @@
 """
-ClosingBell v2 — 데이터 갱신 (장 종료 후)
+ClosingBell v3 — OHLCV 데이터 갱신
+====================================
+장 마감 후 당일 데이터를 로컬 CSV에 추가.
+기존 v2 로직 유지 + 키움 API 대응.
 """
-import json
 import logging
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
-from config import OHLCV_DIR, GLOBAL_CSV, LOG_DIR, API_DELAY
-from kis_api import KisAPI
+from config import (
+    OHLCV_DIR, GLOBAL_CSV, LOG_DIR,
+    KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
+)
 
 logger = logging.getLogger("closingbell")
 
 
-class DataUpdater:
-    """장 종료 후 OHLCV + 글로벌 갱신"""
+def update_ohlcv():
+    """오늘 추천된 종목 + 전일 추천 종목의 OHLCV 갱신"""
+    import json
 
-    def __init__(self, api: KisAPI):
-        self.api = api
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = LOG_DIR / f"{today}.json"
+    if not log_file.exists():
+        logger.info("오늘 로그 없음 → 갱신 스킵")
+        return
 
-    def update_ohlcv(self, codes: list[str]):
-        """유니버스 종목 당일 OHLCV → CSV append"""
-        today = datetime.now().strftime("%Y%m%d")
-        today_dash = datetime.now().strftime("%Y-%m-%d")
-        updated = 0
+    data = json.loads(log_file.read_text(encoding="utf-8"))
+    if data.get("skipped"):
+        return
 
-        for code in codes:
+    from kiwoom_api import KiwoomAPI
+    api = KiwoomAPI(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_BASE_URL, API_DELAY)
+    api.ensure_token()
+
+    # 갱신 대상: 오늘 TOP + 전일 TOP
+    codes = set()
+    for stock in data.get("top", []):
+        codes.add(stock["code"])
+    for stock in data.get("all_scored", [])[:20]:  # 상위 20종목까지
+        codes.add(stock["code"])
+
+    # 전일 로그
+    log_files = sorted(LOG_DIR.glob("*.json"))
+    for lf in reversed(log_files):
+        if lf.stem != today:
             try:
-                csv_path = OHLCV_DIR / f"{code}.csv"
-
-                # 이미 오늘 데이터 있는지 확인
-                if csv_path.exists():
-                    existing = pd.read_csv(csv_path, dtype=str)
-                    if today_dash in existing["date"].values:
-                        continue
-
-                # API에서 당일 데이터
-                rows = self.api.get_daily_prices(code, today, today)
-                if not rows:
-                    continue
-
-                row = rows[-1]  # 가장 최근 1건
-
-                # CSV에 append
-                if csv_path.exists():
-                    with open(csv_path, "a", encoding="utf-8") as f:
-                        f.write(
-                            f"\n{row['date']},{row['open']},{row['high']},"
-                            f"{row['low']},{row['close']},{row['volume']}"
-                        )
-                else:
-                    # 새 파일
-                    with open(csv_path, "w", encoding="utf-8") as f:
-                        f.write("date,open,high,low,close,volume\n")
-                        f.write(
-                            f"{row['date']},{row['open']},{row['high']},"
-                            f"{row['low']},{row['close']},{row['volume']}"
-                        )
-
-                updated += 1
-            except Exception as e:
-                logger.debug("OHLCV 갱신 실패 [%s]: %s", code, e)
-
-        logger.info("OHLCV 갱신: %d/%d 종목", updated, len(codes))
-        return updated
-
-    def update_global(self):
-        """코스피/코스닥 → global_merged.csv append"""
-        today_dash = datetime.now().strftime("%Y-%m-%d")
-
-        try:
-            # 이미 오늘 데이터 있는지 확인
-            if GLOBAL_CSV.exists():
-                df = pd.read_csv(GLOBAL_CSV, dtype=str)
-                if today_dash in df["date"].values:
-                    logger.info("글로벌 데이터 이미 존재: %s", today_dash)
-                    return
-
-            # API에서 코스피/코스닥
-            kospi = self.api.get_index_price("0001")
-            kosdaq = self.api.get_index_price("1001")
-
-            # global_merged.csv에 append (나스닥/SP500/다우/환율은 빈칸)
-            row = (
-                f"\n{today_dash},"
-                f"{kospi['price']},{kospi['change_rate']},"
-                f"{kosdaq['price']},{kosdaq['change_rate']},"
-                f",,,,,,"  # nasdaq ~ usdkrw (미국장 마감 후 별도 갱신)
-            )
-
-            with open(GLOBAL_CSV, "a", encoding="utf-8") as f:
-                f.write(row)
-
-            logger.info(
-                "글로벌 갱신: 코스피 %.0f (%+.2f%%) | 코스닥 %.0f (%+.2f%%)",
-                kospi["price"], kospi["change_rate"],
-                kosdaq["price"], kosdaq["change_rate"],
-            )
-        except Exception as e:
-            logger.warning("글로벌 갱신 실패: %s", e)
-
-    # ──────────────────────────────────────────────
-    # 로그 저장
-    # ──────────────────────────────────────────────
-    @staticmethod
-    def save_log(result: dict):
-        """스크리닝 결과 → data/logs/{date}.json"""
-        date_str = result.get("date", datetime.now().strftime("%Y-%m-%d"))
-        path = LOG_DIR / f"{date_str}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-        logger.info("로그 저장: %s", path.name)
-
-    @staticmethod
-    def load_log(date_str: str) -> dict | None:
-        """특정 날짜 로그 로드"""
-        path = LOG_DIR / f"{date_str}.json"
-        if not path.exists():
-            return None
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    @staticmethod
-    def load_all_logs() -> dict:
-        """전체 로그 로드 → {date: data}"""
-        logs = {}
-        for f in sorted(LOG_DIR.glob("*.json")):
-            try:
-                logs[f.stem] = json.loads(f.read_text(encoding="utf-8"))
+                prev = json.loads(lf.read_text(encoding="utf-8"))
+                for stock in prev.get("top", []):
+                    codes.add(stock["code"])
             except Exception:
-                continue
-        return logs
+                pass
+            break
+
+    updated = 0
+    for code in codes:
+        try:
+            _update_single(code, api)
+            updated += 1
+        except Exception as e:
+            logger.debug("OHLCV 갱신 실패 [%s]: %s", code, e)
+
+    logger.info("OHLCV 갱신: %d/%d종목", updated, len(codes))
+
+
+def _update_single(code: str, api):
+    """개별 종목 CSV 갱신"""
+    code = code.strip().zfill(6)
+    path = OHLCV_DIR / f"{code}.csv"
+
+    # 기존 CSV 로드
+    if path.exists():
+        df = pd.read_csv(path)
+        df.columns = [c.lower() for c in df.columns]  # 대문자→소문자 통일
+        df["date"] = pd.to_datetime(df["date"])
+    else:
+        df = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+
+    # API에서 최근 5일 가져오기
+    rows = api.get_daily_ohlcv(code)
+    if not rows:
+        return
+
+    new_df = pd.DataFrame(rows)
+    new_df["date"] = pd.to_datetime(new_df["date"])
+
+    # 기존에 없는 날짜만 추가
+    if len(df) > 0:
+        existing_dates = set(df["date"].dt.strftime("%Y-%m-%d"))
+        new_rows = new_df[~new_df["date"].dt.strftime("%Y-%m-%d").isin(existing_dates)]
+        if len(new_rows) > 0:
+            df = pd.concat([df, new_rows[["date", "open", "high", "low", "close", "volume"]]],
+                           ignore_index=True)
+    else:
+        df = new_df[["date", "open", "high", "low", "close", "volume"]].copy()
+
+    df = df.sort_values("date").reset_index(drop=True)
+    df.to_csv(path, index=False)
+
+
+def update_global_data():
+    """global_merged.csv 갱신 (FDR 사용)"""
+    try:
+        import FinanceDataReader as fdr
+
+        today = datetime.now()
+        start = (today - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+        end = today.strftime("%Y-%m-%d")
+
+        kospi = fdr.DataReader("KS11", start, end)
+        nasdaq = fdr.DataReader("IXIC", start, end)
+
+        merged = pd.DataFrame({
+            "date": kospi.index.strftime("%Y-%m-%d"),
+            "kospi_close": kospi["Close"].values,
+            "kospi_change_pct": kospi["Change"].values * 100 if "Change" in kospi.columns else 0,
+        })
+
+        if len(nasdaq) > 0:
+            nasdaq_aligned = nasdaq.reindex(kospi.index, method="ffill")
+            merged["nasdaq_close"] = nasdaq_aligned["Close"].values
+            merged["nasdaq_change_pct"] = nasdaq_aligned["Change"].values * 100 if "Change" in nasdaq_aligned.columns else 0
+
+        GLOBAL_CSV.parent.mkdir(parents=True, exist_ok=True)
+        merged.to_csv(GLOBAL_CSV, index=False)
+        logger.info("global_merged.csv 갱신 완료 (%d일)", len(merged))
+
+    except Exception as e:
+        logger.warning("글로벌 데이터 갱신 실패: %s", e)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    update_ohlcv()
+    update_global_data()

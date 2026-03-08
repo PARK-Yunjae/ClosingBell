@@ -1,19 +1,8 @@
 {
   "date": "2026-02-13",
-  "timestamp": "2026-02-13T15:06:00",
-  "market": {
-    "kospi": 5507.01,
-    "kospi_change": -0.28,
-    "kosdaq": 1106.08,
-    "kosdaq_change": -1.77,
-    "nasdaq": 22597.15,
-    "nasdaq_change": -2.03
-  },
   "skipped": true,
-  "reason": "나스닥 전일 -2.0% (기준: -2.0%)",
+  "reason": "나스닥 -2.0%",
   "universe_count": 0,
-  "top5": [],
-  "all_scored": [],
-  "sector_summary": [],
-  "prev_returns": []
+  "top": [],
+  "all_scored": []
 }
