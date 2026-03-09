@@ -1,10 +1,11 @@
 """
-ClosingBell v3 — Streamlit 대시보드
-====================================
-1) TOP3 카드뷰 (매물대+거래원+AI 포함)
-2) 유니버스 전체 테이블 (정렬/필터)
-3) 성과 추적 (순위별 승률, AI 정확도)
-4) 주도테마
+ClosingBell v3.5 — Streamlit 대시보드
+=======================================
+1) 🎯 매수 후보 (워치리스트 기반 확신도 순위)
+2) 👁️ 워치리스트 현황 (감시 종목 + 타이밍 가이드)
+3) 📈 성과 추적 (순위별 × 기간별 승률 매트릭스)
+4) 📋 스크리닝 로그 (일별 TOP3 + 유니버스)
+5) 🔥 주도테마
 """
 import os
 import sys
@@ -15,475 +16,355 @@ import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# 환경 설정 (Streamlit Cloud에서 API 키 없이 동작)
 os.environ.setdefault("DASHBOARD_ONLY", "true")
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 LOG_DIR = project_root / "data" / "logs"
+WATCHLIST_DIR = project_root / "data" / "watchlist"
+PERF_DIR = project_root / "data" / "performance"
 OHLCV_DIR = Path(os.getenv("DATA_DIR", "C:/Coding/data")) / "ohlcv"
 
-# ── 페이지 설정 ──
-st.set_page_config(page_title="ClosingBell v3", page_icon="🔔", layout="wide")
+st.set_page_config(page_title="ClosingBell v3.5", page_icon="🔔", layout="wide")
 
 
+# ── 데이터 로드 ──
 def load_logs() -> dict[str, dict]:
-    """날짜별 로그 로드"""
     logs = {}
     if not LOG_DIR.exists():
         return logs
     for f in sorted(LOG_DIR.glob("*.json")):
         try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            logs[f.stem] = data
+            logs[f.stem] = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             pass
     return logs
 
 
-def _clean_code(code: str) -> str:
-    """종목코드에서 _AL, _NX 접미사 제거"""
-    for suffix in ("_AL", "_NX", "_SOR"):
-        if code.endswith(suffix):
-            code = code[:-len(suffix)]
-    return code.strip().zfill(6)
-
-
-def draw_stock_chart(code: str, name: str, rec_date: str = "",
-                     stock_data: dict = None):
-    """
-    캔들차트 + MA20 + 매물대(반투명 가로막대) + 추천일 마커
-    stock_data: screener에서 계산된 지표 (없으면 차트만)
-    """
-    code = _clean_code(code)
-    df = None
-
-    # 1) 로컬 CSV 먼저
-    csv_path = OHLCV_DIR / f"{code}.csv"
-    if csv_path.exists():
+def load_watchlists() -> list[dict]:
+    if not WATCHLIST_DIR.exists():
+        return []
+    result = []
+    for f in sorted(WATCHLIST_DIR.glob("*.json"), reverse=True):
         try:
-            raw = pd.read_csv(csv_path)
-            raw.columns = [c.lower() for c in raw.columns]
-            raw["Date"] = pd.to_datetime(raw["date"])
-            df = raw.set_index("Date").rename(columns={
-                "open": "Open", "high": "High", "low": "Low",
-                "close": "Close", "volume": "Volume"
-            }).tail(60)
-        except Exception:
-            df = None
-
-    # 2) FDR fallback
-    if df is None or len(df) < 10:
-        try:
-            import FinanceDataReader as fdr
-            end = datetime.now()
-            start = end - timedelta(days=90)
-            fdr_df = fdr.DataReader(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-            if fdr_df is not None and len(fdr_df) >= 5:
-                df = fdr_df
+            result.append(json.loads(f.read_text(encoding="utf-8")))
         except Exception:
             pass
-
-    if df is None or len(df) < 5:
-        return None
-
-    df["MA20"] = df["Close"].rolling(20).mean()
-    df["MA5"] = df["Close"].rolling(5).mean()
-
-    from plotly.subplots import make_subplots
-
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.75, 0.25],
-    )
-
-    # ── 캔들차트 ──
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"],
-        low=df["Low"], close=df["Close"], name="캔들",
-        increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
-        increasing_fillcolor="#26a69a", decreasing_fillcolor="#ef5350",
-    ), row=1, col=1)
-
-    # MA5 (분홍)
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA5"], name="5일선",
-        line=dict(color="#FF69B4", width=1), opacity=0.7,
-    ), row=1, col=1)
-
-    # MA20 (주황)
-    fig.add_trace(go.Scatter(
-        x=df.index, y=df["MA20"], name="20일선",
-        line=dict(color="#FFB74D", width=1.5),
-    ), row=1, col=1)
-
-    # ── 매물대 (반투명 가로 막대) ──
-    _draw_volume_profile(fig, df)
-
-    # ── 추천일 마커 ──
-    if rec_date:
-        try:
-            rd = pd.Timestamp(rec_date)
-            if rd in df.index:
-                fig.add_vline(x=rd, line_dash="dash", line_color="gold",
-                              line_width=2, row=1, col=1)
-                fig.add_annotation(
-                    x=rd, y=df.loc[rd, "High"] * 1.02,
-                    text="⭐", showarrow=False, font_size=16,
-                    row=1, col=1,
-                )
-        except Exception:
-            pass
-
-    # ── 거래량 바 차트 ──
-    colors = ["#26a69a" if c >= o else "#ef5350"
-              for c, o in zip(df["Close"], df["Open"])]
-    fig.add_trace(go.Bar(
-        x=df.index, y=df["Volume"], name="거래량",
-        marker_color=colors, opacity=0.6,
-    ), row=2, col=1)
-
-    # ── 한글 날짜 + 레이아웃 ──
-    fig.update_layout(
-        height=420,
-        margin=dict(l=0, r=0, t=10, b=0),
-        xaxis_rangeslider_visible=False,
-        showlegend=False,
-        plot_bgcolor="#1a1a2e",
-        paper_bgcolor="#1a1a2e",
-        font_color="#e0e0e0",
-        xaxis=dict(gridcolor="#333"),
-        xaxis2=dict(gridcolor="#333"),
-        yaxis=dict(gridcolor="#333", side="right"),
-        yaxis2=dict(gridcolor="#333", side="right"),
-    )
-
-    # X축 한글 날짜
-    fig.update_xaxes(
-        dtick="M1",
-        tickformat="%m/%d",
-        tickfont=dict(size=10),
-    )
-
-    return fig
+    return result
 
 
-def _draw_volume_profile(fig, df: pd.DataFrame, bands: int = 12):
-    """매물대를 반투명 가로 막대로 차트에 겹치기"""
-    if len(df) < 10:
-        return
+def load_performance() -> dict:
+    path = PERF_DIR / "tracking.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {"records": []}
 
-    price_min = df["Low"].min()
-    price_max = df["High"].max()
-    if price_max <= price_min:
-        return
 
-    band_size = (price_max - price_min) / bands
-    band_volumes = [0.0] * bands
+def trading_days_since(date_str: str) -> int:
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    today = datetime.now()
+    count = 0
+    cur = d + timedelta(days=1)
+    while cur.date() <= today.date():
+        if cur.weekday() < 5:
+            count += 1
+        cur += timedelta(days=1)
+    return count
 
-    for _, row in df.iterrows():
-        candle_low = row["Low"]
-        candle_high = row["High"]
-        vol = row["Volume"]
-        for b in range(bands):
-            b_low = price_min + b * band_size
-            b_high = b_low + band_size
-            overlap = max(0, min(candle_high, b_high) - max(candle_low, b_low))
-            candle_range = candle_high - candle_low
-            if candle_range > 0 and overlap > 0:
-                band_volumes[b] += vol * (overlap / candle_range)
 
-    max_vol = max(band_volumes) if max(band_volumes) > 0 else 1
-    current_price = float(df["Close"].iloc[-1])
+# ── 사이드바 ──
+logs = load_logs()
+dates = sorted(logs.keys())
 
-    # 차트 X축 범위의 왼쪽에 그리기 (날짜 기반)
-    x_start = df.index[0]
-    x_range = (df.index[-1] - df.index[0]).days
-    bar_max_days = x_range * 0.25  # 차트 폭의 25%까지
+if not dates:
+    st.warning("데이터 없음 — 스크리닝 실행 후 확인하세요")
+    st.stop()
 
-    for b in range(bands):
-        b_low = price_min + b * band_size
-        b_high = b_low + band_size
-        b_mid = (b_low + b_high) / 2
-        width = band_volumes[b] / max_vol * bar_max_days
+page = st.sidebar.radio("페이지", [
+    "🎯 매수 후보",
+    "👁️ 워치리스트",
+    "📈 성과 추적",
+    "📋 스크리닝 로그",
+    "🔥 주도테마",
+])
 
-        if width < 0.5:
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"**최신 로그:** {dates[-1]}")
+st.sidebar.markdown(f"**데이터:** {len(dates)}일")
+
+
+# ══════════════════════════════════════════
+# 🎯 매수 후보 (워치리스트 기반)
+# ══════════════════════════════════════════
+if page == "🎯 매수 후보":
+    st.title("🎯 매수 후보 — 확신도 순위")
+    st.caption("매일 15시 디스코드로 발송되는 TOP3과 동일한 기준")
+
+    watchlists = load_watchlists()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # 활성 종목 수집
+    active_stocks = []
+    seen = set()
+    for wl in watchlists:
+        if wl.get("expires", "") < today:
             continue
+        created = wl["created"]
+        days = trading_days_since(created)
+        if days < 1:
+            continue
+        for s in wl.get("stocks", []):
+            code = s["code"]
+            if code in seen:
+                continue
+            seen.add(code)
+            s["_created"] = created
+            s["_days"] = days
+            active_stocks.append(s)
 
-        # 현재가 위/아래로 색상 구분
-        is_above = b_mid > current_price
-        color = "rgba(239, 83, 80, 0.2)" if is_above else "rgba(38, 166, 154, 0.2)"  # 빨강/초록 반투명
+    if not active_stocks:
+        st.info("활성 워치리스트 없음 — 스크리닝 실행 후 다음 날부터 표시됩니다")
+    else:
+        # 타이밍 기반 예상 점수
+        RANK_TIMING = {
+            1: {"sweet": 1, "window": (1, 2), "wr": 75, "ret": 3.9},
+            2: {"sweet": 4, "window": (3, 5), "wr": 64, "ret": -0.6},
+            3: {"sweet": 3, "window": (2, 4), "wr": 71, "ret": 8.0},
+        }
 
-        x_end = x_start + timedelta(days=width)
+        for s in active_stocks:
+            rank = s.get("rank", 99)
+            timing = RANK_TIMING.get(rank, RANK_TIMING.get(3, {}))
+            sweet = timing.get("sweet", 3)
+            w = timing.get("window", (1, 5))
+            days = s["_days"]
+            in_window = w[0] <= days <= w[1]
+            diff = abs(days - sweet)
 
-        fig.add_shape(
-            type="rect",
-            x0=x_start, x1=x_end,
-            y0=b_low, y1=b_high,
-            fillcolor=color,
-            line=dict(width=0),
-            layer="below",
-            row=1, col=1,
-        )
+            score = 0
+            if in_window and diff == 0:
+                score += 30
+            elif in_window and diff == 1:
+                score += 22
+            elif in_window:
+                score += 15
+            score += {1: 20, 3: 15, 4: 5, 5: 5}.get(rank, 0)
 
-        # 매물량 텍스트 (큰 것만)
-        ratio = band_volumes[b] / max_vol
-        if ratio > 0.4:
-            pct = band_volumes[b] / sum(band_volumes) * 100
-            fig.add_annotation(
-                x=x_start + timedelta(days=width / 2),
-                y=b_mid,
-                text=f"{pct:.0f}%",
-                showarrow=False,
-                font=dict(size=8, color="rgba(255,255,255,0.5)"),
-                row=1, col=1,
+            s["_base_score"] = score
+            s["_in_window"] = in_window
+            s["_sweet"] = sweet
+            s["_wr"] = timing.get("wr", 0)
+            s["_ret"] = timing.get("ret", 0)
+
+        active_stocks.sort(key=lambda x: x["_base_score"], reverse=True)
+
+        for i, s in enumerate(active_stocks[:5]):
+            score = s["_base_score"]
+            grade = "A" if score >= 50 else ("B" if score >= 30 else "C")
+            emoji = {"A": "🟢", "B": "🟡", "C": "⚪"}.get(grade)
+            sweet_mark = " ★" if s["_days"] == s["_sweet"] and s["_in_window"] else ""
+            window_mark = "감시중" if s["_in_window"] else "대기"
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(
+                    f"### {emoji} [{grade}] {s['_created'][5:]} #{s.get('rank','?')} "
+                    f"**{s['name']}** ({score}점)")
+                st.markdown(
+                    f"스크리닝 {s.get('score', 0)}점 | "
+                    f"D+{s['_days']}{sweet_mark} | {window_mark} | "
+                    f"기대승률 {s['_wr']}% / {s['_ret']:+.1f}%")
+            with col2:
+                st.metric("원래가격", f"{s.get('entry_price', 0):,}원")
+
+
+# ══════════════════════════════════════════
+# 👁️ 워치리스트 현황
+# ══════════════════════════════════════════
+elif page == "👁️ 워치리스트":
+    st.title("👁️ 워치리스트 현황")
+
+    watchlists = load_watchlists()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if not watchlists:
+        st.info("워치리스트 없음")
+    else:
+        for wl in watchlists:
+            created = wl["created"]
+            expires = wl.get("expires", "")
+            days = trading_days_since(created)
+            is_active = expires >= today
+            status = "✅ 활성" if is_active else "⌛ 만료"
+
+            with st.expander(f"{status} {created} (D+{days}) — 만료: {expires}",
+                             expanded=is_active):
+                rows = []
+                for s in wl.get("stocks", []):
+                    triggered = s.get("triggered", False)
+                    rows.append({
+                        "순위": f"#{s.get('rank', '?')}",
+                        "종목": s.get("name", ""),
+                        "점수": s.get("score", 0),
+                        "sweet": f"D+{s.get('sweet_spot_day', '?')}",
+                        "윈도우": f"D+{s.get('window_start', '?')}~{s.get('window_end', '?')}",
+                        "트리거": "✅" if triggered else "⏳",
+                        "확신도": s.get("conviction", "-"),
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                             hide_index=True)
+
+
+# ══════════════════════════════════════════
+# 📈 성과 추적
+# ══════════════════════════════════════════
+elif page == "📈 성과 추적":
+    st.title("📈 성과 추적 — 순위별 × 기간별 승률")
+
+    perf = load_performance()
+    records = perf.get("records", [])
+
+    if not records:
+        st.info("성과 데이터 없음 — `python performance_tracker.py --rebuild` 실행")
+    else:
+        df = pd.DataFrame(records)
+        st.metric("총 기록", f"{len(df)}건",
+                  delta=f"{df['rec_date'].nunique()}일 추천")
+
+        # 순위×기간 매트릭스
+        st.subheader("순위별 승률 매트릭스")
+        matrix_data = []
+        for rank in sorted(df["rank"].unique()):
+            row = {"순위": f"#{int(rank)}"}
+            for day in range(1, 6):
+                sub = df[(df["rank"] == rank) & (df["track_day"] == day)]
+                if len(sub) > 0:
+                    wr = sub["win"].mean() * 100
+                    avg = sub["return_pct"].mean()
+                    row[f"D+{day}"] = f"{wr:.0f}% / {avg:+.1f}%"
+                else:
+                    row[f"D+{day}"] = "-"
+            matrix_data.append(row)
+
+        st.dataframe(pd.DataFrame(matrix_data), use_container_width=True,
+                     hide_index=True)
+
+        # 기간별 전체 승률 차트
+        st.subheader("기간별 승률 추이")
+        day_stats = []
+        for day in range(1, 6):
+            sub = df[df["track_day"] == day]
+            if len(sub) > 0:
+                day_stats.append({
+                    "D+": f"D+{day}",
+                    "승률": round(sub["win"].mean() * 100, 1),
+                    "평균수익": round(sub["return_pct"].mean(), 2),
+                    "거래수": len(sub),
+                })
+        if day_stats:
+            ddf = pd.DataFrame(day_stats)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=ddf["D+"], y=ddf["승률"], name="승률(%)",
+                                 marker_color=["#e74c3c" if v < 50 else "#00b894"
+                                               for v in ddf["승률"]]))
+            fig.add_trace(go.Scatter(x=ddf["D+"], y=ddf["평균수익"], name="평균수익(%)",
+                                     yaxis="y2", line=dict(color="#3498db", width=3)))
+            fig.update_layout(
+                yaxis=dict(title="승률 (%)"),
+                yaxis2=dict(title="평균수익 (%)", overlaying="y", side="right"),
+                height=400, template="plotly_dark",
             )
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.caption("D+1 즉시매수 승률 42% → D+2~3 눌림목 진입 시 60~75%")
+
+        # 최고/최저
+        if len(df) > 0:
+            best = df.loc[df["return_pct"].idxmax()]
+            worst = df.loc[df["return_pct"].idxmin()]
+            c1, c2 = st.columns(2)
+            c1.success(f"🏆 최고: {best['name']} ({best['rec_date']} "
+                       f"D+{best['track_day']}) **{best['return_pct']:+.1f}%**")
+            c2.error(f"💀 최저: {worst['name']} ({worst['rec_date']} "
+                     f"D+{worst['track_day']}) **{worst['return_pct']:+.1f}%**")
 
 
-def main():
-    logs = load_logs()
-    dates = sorted(logs.keys())
+# ══════════════════════════════════════════
+# 📋 스크리닝 로그
+# ══════════════════════════════════════════
+elif page == "📋 스크리닝 로그":
+    st.title("📋 스크리닝 로그")
 
-    if not dates:
-        st.title("🔔 ClosingBell v3")
-        st.info("아직 데이터가 없습니다. 스크리닝을 실행해주세요.")
-        return
-
-    # ── 사이드바 ──
-    st.sidebar.title("🔔 ClosingBell v3")
     selected_date = st.sidebar.selectbox("날짜 선택", dates[::-1])
-    page = st.sidebar.radio("페이지", ["📊 TOP3 카드", "📋 유니버스 전체",
-                                        "📈 성과 추적", "🔥 주도테마"])
-
     data = logs[selected_date]
+    market = data.get("market", {})
+
+    # 시장 현황
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("코스피", f"{market.get('kospi', 0):,.0f}",
+              delta=f"{market.get('kospi_change', 0):+.1f}%")
+    c2.metric("코스닥", f"{market.get('kosdaq', 0):,.0f}",
+              delta=f"{market.get('kosdaq_change', 0):+.1f}%")
+    c3.metric("나스닥", f"{market.get('nasdaq', 0):,.0f}",
+              delta=f"{market.get('nasdaq_change', 0):+.1f}%")
+    c4.metric("유니버스", f"{data.get('universe_count', 0)}종목")
 
     if data.get("skipped"):
         st.warning(f"스킵: {data.get('reason', '')}")
-        return
+        st.stop()
 
-    market = data.get("market", {})
+    # TOP 카드
+    st.subheader("TOP 종목")
+    for s in data.get("top", []):
+        medal = ["🥇", "🥈", "🥉"][s["rank"] - 1] if s["rank"] <= 3 else ""
+        overheat = " 🔥과열" if s.get("overheat") else ""
+        vol = f" | 거래량 ×{s['vol_ratio']:.1f}" if s.get("vol_ratio", 0) > 2 else ""
 
-    # ── 시장 헤더 ──
-    cols = st.columns(4)
-    cols[0].metric("코스피", f"{market.get('kospi', 0):,.0f}",
-                    f"{market.get('kospi_change', 0):+.1f}%")
-    cols[1].metric("코스닥", f"{market.get('kosdaq', 0):,.0f}",
-                    f"{market.get('kosdaq_change', 0):+.1f}%")
-    cols[2].metric("나스닥(전일)", f"{market.get('nasdaq', 0):,.0f}",
-                    f"{market.get('nasdaq_change', 0):+.1f}%")
-    cols[3].metric("유니버스", f"{data.get('universe_count', 0)}종목")
+        st.markdown(f"**{medal} #{s['rank']} {s['name']}** ({s['sector']}) — "
+                    f"**{s['score']}점**{overheat}")
+        st.markdown(
+            f"💰 {s['price']:,}원 ({s['change_rate']:+.1f}%) | "
+            f"CCI {s['cci']:.0f} | RSI {s['rsi']:.0f} | "
+            f"MA20 {s['ma20_gap']:+.1f}% | {s.get('vp_tag', '')}{vol}")
 
-    st.divider()
+        if s.get("ai_summary"):
+            st.caption(f"AI: {s['ai_action']} — {s['ai_summary']}")
+        st.markdown("---")
 
-    # ════════════════════════════════════════
-    if page == "📊 TOP3 카드":
-        st.header("📊 오늘의 관심종목 TOP3")
-
-        top = data.get("top", [])
-        for stock in top:
-            with st.container():
-                medal = ["🥇", "🥈", "🥉"][stock["rank"] - 1] if stock["rank"] <= 3 else ""
-                clean = _clean_code(stock["code"])
-                st.subheader(f"{medal} {stock['name']} ({clean}) — {stock['score']}점")
-
-                c1, c2 = st.columns([2, 3])
-
-                with c1:
-                    st.markdown(f"**💰 {stock['price']:,}원** ({stock['change_rate']:+.1f}%)")
-
-                    # 매물대
-                    vp_tag = stock.get("vp_tag", "")
-                    vp_pct = stock.get("vp_above_pct", 50)
-                    vp_emoji = {"위 매물 적음": "✅", "매물대 중립": "➖", "위 저항 강함": "❌"}.get(vp_tag, "❓")
-                    st.markdown(f"📍 **매물대**: {vp_tag} {vp_emoji} (위 {vp_pct:.0f}%)")
-
-                    # 거래원
-                    broker_sig = stock.get("broker_signal", "중립")
-                    br_emoji = "✅" if "매수" in broker_sig or "매집" in broker_sig else "➖"
-                    broker_top = stock.get("broker_top_buy", "")
-                    frgn = stock.get("foreign_net", 0)
-                    broker_text = f"🏦 **거래원**: {broker_sig} {br_emoji}"
-                    if broker_top:
-                        broker_text += f" (매수1위: {broker_top})"
-                    if frgn:
-                        broker_text += f" | 외국계 {'+' if frgn > 0 else ''}{frgn:,}"
-                    st.markdown(broker_text)
-
-                    # DART
-                    dart_risk = stock.get("dart_risk", "확인불가")
-                    dart_emoji = {"정상": "✅", "주의": "⚠️", "위험": "❌"}.get(dart_risk, "❓")
-                    dart_note = stock.get("dart_note", "")
-                    pl = stock.get("profit_loss", "")
-                    dart_text = f"📋 **공시**: {dart_risk} {dart_emoji}"
-                    if pl:
-                        dart_text += f" ({pl})"
-                    if dart_note:
-                        dart_text += f" ({dart_note})"
-                    st.markdown(dart_text)
-
-                    # AI 판단
-                    action = stock.get("ai_action", "관망")
-                    risk = stock.get("ai_risk", "보통")
-                    a_emoji = {"매수관심": "🟢", "관망": "🟡", "주의": "🔴"}.get(action, "🟡")
-                    r_emoji = {"낮음": "✅", "보통": "⚠️", "높음": "🚫"}.get(risk, "⚠️")
-                    st.markdown(f"▶ **{action}** {a_emoji} | 위험도 {risk} {r_emoji}")
-
-                    summary = stock.get("ai_summary", "")
-                    if summary:
-                        st.caption(f'💡 "{summary}"')
-
-                    # 상세 지표 (접기)
-                    with st.expander("📊 상세 지표"):
-                        cci = stock.get("cci", 0)
-                        rsi = stock.get("rsi", 0)
-                        gap = stock.get("ma20_gap", 0)
-                        cci_s = stock.get("cci_slope", 0)
-                        ma_s = stock.get("ma20_slope", 0)
-                        br_sc = stock.get("broker_score", 0)
-
-                        st.markdown(
-                            f"- 추세강도(CCI): **{cci:.0f}** {'🔥' if 160<=cci<=200 else '⚠️' if cci>250 else ''}\n"
-                            f"- 과매수/과매도(RSI): **{rsi:.0f}** {'⚠️과매수' if rsi>70 else '✅적정' if rsi>45 else '⚠️과매도'}\n"
-                            f"- 20일선 거리: **{gap:+.1f}%** {'✅' if 2<=gap<=8 else ''}\n"
-                            f"- 추세 기울기: CCI {'↑'*cci_s or '→'} / MA20 {'↑'*ma_s or '→'}\n"
-                            f"- 거래원 점수: **{br_sc:.1f}**/5\n"
-                            f"- 매물대 위/아래: **{vp_pct:.0f}%** / {100-vp_pct:.0f}%"
-                        )
-
-                with c2:
-                    fig = draw_stock_chart(stock["code"], stock["name"],
-                                           selected_date, stock)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("차트 로드 불가")
-
-                st.divider()
-
-    # ════════════════════════════════════════
-    elif page == "📋 유니버스 전체":
-        st.header("📋 유니버스 전체 종목")
-
-        all_scored = data.get("all_scored", [])
-        if not all_scored:
-            st.info("데이터 없음")
-            return
-
-        df = pd.DataFrame(all_scored)
-        display_cols = ["rank", "name", "score", "change_rate",
-                        "vp_tag", "broker_signal", "ai_action", "ai_risk",
-                        "dart_risk", "price"]
-
-        # 필터
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            action_filter = st.multiselect("AI 판단", ["매수관심", "관망", "주의"], default=[])
-        with col2:
-            vp_filter = st.multiselect("매물대", ["위 매물 적음", "매물대 중립", "위 저항 강함"], default=[])
-        with col3:
-            min_score = st.slider("최소 점수", 0, 100, 0)
-
-        filtered = df.copy()
-        if action_filter:
-            filtered = filtered[filtered["ai_action"].isin(action_filter)]
-        if vp_filter:
-            filtered = filtered[filtered["vp_tag"].isin(vp_filter)]
-        if min_score > 0:
-            filtered = filtered[filtered["score"] >= min_score]
-
-        available_cols = [c for c in display_cols if c in filtered.columns]
-        st.dataframe(
-            filtered[available_cols].rename(columns={
-                "rank": "순위", "name": "종목명", "score": "점수",
-                "change_rate": "등락률", "vp_tag": "매물대",
-                "broker_signal": "거래원", "ai_action": "AI판단",
-                "ai_risk": "위험도", "dart_risk": "DART", "price": "현재가",
-            }),
-            use_container_width=True, hide_index=True,
-        )
-
-        st.caption(f"총 {len(filtered)}종목 표시 (전체 {len(all_scored)}종목)")
-
-    # ════════════════════════════════════════
-    elif page == "📈 성과 추적":
-        st.header("📈 성과 추적")
-
-        # 날짜별 전일 수익률 수집
-        returns_data = []
-        for d, log in logs.items():
-            for r in log.get("prev_returns", []):
-                returns_data.append({
-                    "date": d, "name": r.get("name", ""), "rank": r.get("rank", 0),
-                    "return_pct": r.get("return_pct", 0),
-                })
-
-        if not returns_data:
-            st.info("아직 성과 데이터가 없습니다 (최소 2일 운영 필요)")
-            return
-
-        df = pd.DataFrame(returns_data)
-
-        # 전체 승률
-        total = len(df)
-        wins = (df["return_pct"] > 0).sum()
-        avg_ret = df["return_pct"].mean()
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("전체 승률", f"{wins / total * 100:.1f}%" if total > 0 else "N/A")
-        c2.metric("평균 수익률", f"{avg_ret:+.2f}%")
-        c3.metric("총 추천 수", f"{total}건")
-
-        # 순위별 승률
-        if "rank" in df.columns:
-            rank_stats = df.groupby("rank").agg(
-                count=("return_pct", "count"),
-                win_rate=("return_pct", lambda x: (x > 0).mean() * 100),
-                avg_return=("return_pct", "mean"),
-            ).round(2)
-            st.subheader("순위별 성과")
-            st.dataframe(rank_stats, use_container_width=True)
-
-        # 일별 수익률 차트
-        daily = df.groupby("date")["return_pct"].mean().reset_index()
-        fig = go.Figure(go.Bar(
-            x=daily["date"], y=daily["return_pct"],
-            marker_color=["#26a69a" if v > 0 else "#ef5350" for v in daily["return_pct"]],
-        ))
-        fig.update_layout(
-            height=300, title="일별 평균 수익률",
-            plot_bgcolor="#1a1a2e", paper_bgcolor="#1a1a2e", font_color="#e0e0e0",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ════════════════════════════════════════
-    elif page == "🔥 주도테마":
-        st.header("🔥 주도테마")
-
-        themes = data.get("theme_summary", [])
-        if not themes:
-            st.info("테마 데이터 없음")
-            return
-
-        df = pd.DataFrame(themes)
-        display_cols = [c for c in ["name", "change_rate", "stock_count",
-                                     "rising_count", "main_stock"] if c in df.columns]
-        st.dataframe(
-            df[display_cols].rename(columns={
-                "name": "테마명", "change_rate": "등락률(%)",
-                "stock_count": "종목수", "rising_count": "상승",
-                "main_stock": "대표종목",
-            }),
-            use_container_width=True, hide_index=True,
-        )
-
-    # ── 푸터 ──
-    st.sidebar.divider()
-    st.sidebar.caption(f"ClosingBell v3 | {selected_date}")
-    st.sidebar.caption("점수: CCI 25 + 이격도 20 + 등락률 15 + 기울기 20 + RSI 5 + 매물대 10 + 거래원 5")
+    # 전체 유니버스 테이블
+    st.subheader("유니버스 전체")
+    all_scored = data.get("all_scored", [])
+    if all_scored:
+        tdf = pd.DataFrame(all_scored)
+        cols = ["rank", "name", "sector", "price", "change_rate", "score",
+                "cci", "rsi", "ma20_gap", "vp_tag", "ai_action"]
+        show = [c for c in cols if c in tdf.columns]
+        st.dataframe(tdf[show], use_container_width=True, hide_index=True)
 
 
-if __name__ == "__main__":
-    main()
-else:
-    main()
+# ══════════════════════════════════════════
+# 🔥 주도테마
+# ══════════════════════════════════════════
+elif page == "🔥 주도테마":
+    st.title("🔥 주도테마")
+
+    selected_date = st.sidebar.selectbox("날짜 선택", dates[::-1])
+    data = logs[selected_date]
+    themes = data.get("theme_summary", [])
+
+    if not themes:
+        st.info("테마 데이터 없음")
+    else:
+        for t in themes:
+            change = t.get("change_rate", 0)
+            emoji = "🔥" if change > 2 else ("⚡" if change > 0 else "❄️")
+            st.markdown(f"### {emoji} {t['name']} ({change:+.1f}%)")
+            st.markdown(f"종목 {t.get('stock_count', 0)}개 | "
+                        f"주요: {t.get('main_stock', '')}")
+
+
+# ── 푸터 ──
+st.sidebar.markdown("---")
+st.sidebar.markdown("ClosingBell v3.5")
+st.sidebar.markdown("[GitHub](https://github.com) | "
+                    "[Streamlit Cloud](https://closingbell.streamlit.app)")

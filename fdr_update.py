@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — FDR 데이터 갱신
+ClosingBell v3.5 — FDR 데이터 갱신
 =================================
 FinanceDataReader로 OHLCV + 글로벌 지수를 최신 거래일까지 갱신.
 키움 API 없이 동작 (주말/공휴일에도 실행 가능).
@@ -348,7 +348,7 @@ def update_ohlcv_all(full: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ClosingBell v3 — FDR 데이터 갱신")
+    parser = argparse.ArgumentParser(description="ClosingBell v3.5 — FDR 데이터 갱신")
     parser.add_argument("--check", action="store_true", help="갱신 상태만 확인")
     parser.add_argument("--global-only", action="store_true", help="글로벌 지수만 갱신")
     parser.add_argument("--code", type=str, default="", help="특정 종목만 갱신")

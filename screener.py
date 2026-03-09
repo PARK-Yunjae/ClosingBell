@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — 스크리닝 + 8지표 점수 계산
+ClosingBell v3.5 — 스크리닝 + 8지표 점수 계산
 =============================================
 키움 REST API 기반 / 유니버스 전체 분석 / 매물대+거래원+AI 통합
 """
@@ -36,7 +36,7 @@ logger = logging.getLogger("closingbell")
 
 
 class Screener:
-    """종가매매 스크리닝 엔진 v3"""
+    """종가매매 스크리닝 엔진 v3.5"""
 
     def __init__(self, api: KiwoomAPI):
         self.api = api
@@ -570,10 +570,14 @@ class Screener:
         for keyword in EXCLUDE_NAMES:
             if keyword in name:
                 return True
-        if EXCLUDE_PREF_STOCK and code[-1] in ("5", "7", "8", "9"):
-            return True
-        if EXCLUDE_PREF_STOCK and (name.endswith("우") or name.endswith("우B")):
-            return True
+        # 우선주: 이름 기반만 사용 (코드 끝자리 판별은 오탐 위험)
+        if EXCLUDE_PREF_STOCK:
+            if name.endswith("우") or name.endswith("우B") or name.endswith("우C"):
+                return True
+            # stock_mapping에 market 정보가 있으면 활용
+            info = self.stock_map.get(code, {})
+            if "우선주" in info.get("market", "") or "우선주" in info.get("name", ""):
+                return True
         if EXCLUDE_ETF:
             info = self.stock_map.get(code, {})
             if "ETF" in info.get("market", "").upper() or "ETF" in name.upper():

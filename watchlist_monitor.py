@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — 눌림목 모니터 (순위별 타이밍 최적화)
+ClosingBell v3.5 — 눌림목 모니터 (순위별 타이밍 최적화)
 ======================================================
 백테스트 데이터 기반 순위별 최적 진입 타이밍:
 
@@ -56,6 +56,18 @@ def _trading_days_since(date_str: str) -> int:
     return count
 
 
+def _add_trading_days(date_str: str, n: int) -> str:
+    """date_str로부터 N거래일 후 날짜 반환"""
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    added = 0
+    current = d
+    while added < n:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            added += 1
+    return current.strftime("%Y-%m-%d")
+
+
 # ──────────────────────────────────────────────
 # 1단계: 워치리스트 저장
 # ──────────────────────────────────────────────
@@ -69,8 +81,7 @@ def save_watchlist(result: dict):
 
     watchlist = {
         "created": today,
-        "expires": (datetime.strptime(today, "%Y-%m-%d")
-                    + timedelta(days=WATCHLIST_MAX_DAYS)).strftime("%Y-%m-%d"),
+        "expires": _add_trading_days(today, WATCHLIST_MAX_DAYS),  # 거래일 기준
         "stocks": [],
     }
 
@@ -114,7 +125,7 @@ def load_active_watchlists() -> list[dict]:
     today = datetime.now().strftime("%Y-%m-%d")
     active = []
 
-    for f in sorted(WATCHLIST_DIR.glob("*.json")):
+    for f in sorted(WATCHLIST_DIR.glob("*.json"), reverse=True):  # 최신 먼저
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             if data.get("expires", "") >= today:

@@ -206,17 +206,29 @@ def run_screening_then_pipeline():
 # Git push
 # ══════════════════════════════════════════════
 def run_git_push():
-    """Git 커밋 + 푸시"""
+    """Git 커밋 + 푸시 (결과 검증)"""
     logger.info("Git push 시작...")
     try:
         cwd = Path(__file__).parent
         subprocess.run(["git", "add", "."], cwd=cwd, capture_output=True)
         msg = f"auto: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        subprocess.run(["git", "commit", "-m", msg], cwd=cwd, capture_output=True)
-        subprocess.run(["git", "push"], cwd=cwd, capture_output=True, timeout=30)
-        logger.info("Git push 완료")
+        commit = subprocess.run(["git", "commit", "-m", msg], cwd=cwd,
+                                capture_output=True, text=True)
+        if commit.returncode != 0 and "nothing to commit" not in commit.stdout:
+            logger.warning("Git commit 실패: %s", commit.stderr.strip())
+            return
+
+        push = subprocess.run(["git", "push"], cwd=cwd,
+                              capture_output=True, text=True, timeout=30)
+        if push.returncode == 0:
+            logger.info("Git push 완료")
+        else:
+            logger.warning("Git push 실패 (code %d): %s",
+                           push.returncode, push.stderr.strip()[:100])
+    except subprocess.TimeoutExpired:
+        logger.warning("Git push 타임아웃 (30초)")
     except Exception as e:
-        logger.warning("Git push 실패: %s", e)
+        logger.warning("Git push 에러: %s", e)
 
 
 # ══════════════════════════════════════════════

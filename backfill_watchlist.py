@@ -33,6 +33,17 @@ def _trading_days_since(date_str: str) -> int:
     return count
 
 
+def _add_trading_days(date_str: str, n: int) -> str:
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    added = 0
+    current = d
+    while added < n:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            added += 1
+    return current.strftime("%Y-%m-%d")
+
+
 def backfill():
     today = datetime.now().strftime("%Y-%m-%d")
     created = 0
@@ -62,8 +73,7 @@ def backfill():
             if not top:
                 continue
 
-            expires = (datetime.strptime(rec_date, "%Y-%m-%d")
-                       + timedelta(days=WATCHLIST_MAX_DAYS)).strftime("%Y-%m-%d")
+            expires = _add_trading_days(rec_date, WATCHLIST_MAX_DAYS)
 
             # 만료일이 이미 지났으면 스킵
             if expires < today:

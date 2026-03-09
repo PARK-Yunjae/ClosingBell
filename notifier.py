@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — 디스코드 웹훅 (2층 구조)
+ClosingBell v3.5 — 디스코드 웹훅 (2층 구조)
 ==========================================
 공유용: 이모지+한글, CCI/RSI 영어 없음, 행동 신호등
 본인용: JSON 로그에 상세 데이터
@@ -169,7 +169,7 @@ class Notifier:
         color = 0xE74C3C if caution_count >= 2 else (0xF39C12 if caution_count >= 1 else 0x00B894)
 
         embed = {
-            "title": f"🔔 ClosingBell v3 — {result['date']}",
+            "title": f"🔔 ClosingBell v3.5 — {result['date']}",
             "description": "\n".join(lines),
             "color": color,
             "timestamp": datetime.utcnow().isoformat(),

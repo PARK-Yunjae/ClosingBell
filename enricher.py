@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — Enricher (유니버스 전체 분석)
+ClosingBell v3.5 — Enricher (유니버스 전체 분석)
 ===============================================
 유니버스 전체(50~80종목)에 거래원+DART+AI를 적용.
 매물대는 screener._calc_indicators에서 이미 계산됨.

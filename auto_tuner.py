@@ -1,5 +1,5 @@
 """
-ClosingBell v3 — 자동 튜닝
+ClosingBell v3.5 — 자동 튜닝
 ============================
 축적된 로그 + OHLCV 데이터로 각 지표의 최적 구간을 분석하고
 .env 파라미터 변경을 제안.
@@ -238,7 +238,7 @@ def run_analysis(min_days: int = 5):
 def print_report(results: dict):
     """분석 결과 리포트 출력"""
     print("\n" + "=" * 70)
-    print("📊 ClosingBell v3 — 자동 튜닝 리포트")
+    print("📊 ClosingBell v3.5 — 자동 튜닝 리포트")
     print("=" * 70)
 
     suggestions = {}
