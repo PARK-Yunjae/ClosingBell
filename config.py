@@ -55,6 +55,12 @@ DART_API_KEY = _env("DART_API_KEY", "")
 DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL", "")
 
 # ============================================================
+# 네이버 뉴스 API (https://developers.naver.com/apps/)
+# ============================================================
+NAVER_CLIENT_ID = _env("NAVER_CLIENT_ID", "")
+NAVER_CLIENT_SECRET = _env("NAVER_CLIENT_SECRET", "")
+
+# ============================================================
 # 점수 파라미터 (.env에서 튜닝 가능)
 # ============================================================
 CCI_PERIOD = _env("CCI_PERIOD", 14, int)
@@ -88,14 +94,47 @@ RSI_ZERO_LOW = _env("RSI_ZERO_LOW", 25, float)
 RSI_ZERO_HIGH = _env("RSI_ZERO_HIGH", 85, float)
 
 # 배점 (합계 100점)
-SCORE_CCI = _env("SCORE_CCI", 25, float)
-SCORE_MA20_GAP = _env("SCORE_MA20_GAP", 20, float)
+SCORE_CCI = _env("SCORE_CCI", 22, float)           # 25→22 (거래량 폭발 추가분)
+SCORE_MA20_GAP = _env("SCORE_MA20_GAP", 18, float)  # 20→18
 SCORE_CHANGE = _env("SCORE_CHANGE", 15, float)
 SCORE_CCI_SLOPE = _env("SCORE_CCI_SLOPE", 10, float)
 SCORE_MA20_SLOPE = _env("SCORE_MA20_SLOPE", 10, float)
 SCORE_RSI = _env("SCORE_RSI", 5, float)
 SCORE_VOLUME_PROFILE = _env("SCORE_VOLUME_PROFILE", 10, float)
 SCORE_BROKER_FLOW = _env("SCORE_BROKER_FLOW", 5, float)
+SCORE_VOLUME_BURST = _env("SCORE_VOLUME_BURST", 5, float)  # 거래량 폭발 (22+18+15+10+10+5+10+5+5=100)
+
+# 과열 복합 감점 (CCI>200 & RSI>80 & MA20이격>15% 동시 충족 시)
+OVERHEAT_PENALTY = _env("OVERHEAT_PENALTY", 8.0, float)
+OVERHEAT_CCI_THRESH = _env("OVERHEAT_CCI_THRESH", 200, float)
+OVERHEAT_RSI_THRESH = _env("OVERHEAT_RSI_THRESH", 80, float)
+OVERHEAT_GAP_THRESH = _env("OVERHEAT_GAP_THRESH", 15.0, float)
+
+# 거래량 폭발 최적 구간 (당일거래량 / 20일평균)
+VOL_BURST_OPTIMAL = (
+    _env("VOL_BURST_OPTIMAL_LOW", 2.0, float),
+    _env("VOL_BURST_OPTIMAL_HIGH", 5.0, float),
+)
+VOL_BURST_ZERO_HIGH = _env("VOL_BURST_ZERO_HIGH", 10.0, float)
+
+# ============================================================
+# 눌림목 모니터 (2단계 아키텍처)
+# ============================================================
+WATCHLIST_DIR = PROJECT_DIR / "data" / "watchlist"
+WATCHLIST_DIR.mkdir(parents=True, exist_ok=True)
+WATCHLIST_MAX_DAYS = _env("WATCHLIST_MAX_DAYS", 5, int)  # 워치리스트 유효기간
+
+# 눌림목 진입 조건
+PULLBACK_MA5_GAP = _env("PULLBACK_MA5_GAP", 1.5, float)     # MA5 이격도 ±% 이내
+PULLBACK_VOL_DECLINE = _env("PULLBACK_VOL_DECLINE", 0.5, float)  # 거래량 감소율 (50% 이하)
+PULLBACK_BB_LOWER = _env("PULLBACK_BB_LOWER", 0.3, float)     # 볼린저 하단 근접도 (0~1)
+
+# ============================================================
+# 성과 추적
+# ============================================================
+PERFORMANCE_DIR = PROJECT_DIR / "data" / "performance"
+PERFORMANCE_DIR.mkdir(parents=True, exist_ok=True)
+PERFORMANCE_TRACK_DAYS = _env("PERFORMANCE_TRACK_DAYS", 5, int)
 
 # ============================================================
 # 필터 (.env에서 튜닝 가능)
@@ -126,10 +165,9 @@ EXCLUDE_ETF = True
 # 스케줄 (.env에서 시간 변경 가능)
 # ============================================================
 SCHEDULE = {
-    "screen": _env("SCHEDULE_SCREEN", "14:55"),
-    "update_data": _env("SCHEDULE_UPDATE_DATA", "15:35"),
-    "git_push": _env("SCHEDULE_GIT_PUSH", "15:40"),
-    "shutdown": _env("SCHEDULE_SHUTDOWN", "15:43"),
+    "daily_pick": _env("SCHEDULE_DAILY_PICK", "15:00"),    # 감시 종목 스캔 → TOP3 웹훅
+    "screen": _env("SCHEDULE_SCREEN", "15:05"),             # 스크리닝 → 워치리스트 저장 (웹훅 없음)
+    # 스크리닝 후 순차 실행: OHLCV → 글로벌 → 성과추적 → (월)매핑+메타 → (월초)재무 → git push → 종료
 }
 
 # API 속도 제한

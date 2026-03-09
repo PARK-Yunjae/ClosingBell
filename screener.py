@@ -19,6 +19,8 @@ from config import (
     SCORE_CCI, SCORE_MA20_GAP, SCORE_CHANGE,
     SCORE_CCI_SLOPE, SCORE_MA20_SLOPE, SCORE_RSI,
     SCORE_VOLUME_PROFILE, SCORE_BROKER_FLOW,
+    SCORE_VOLUME_BURST, VOL_BURST_OPTIMAL, VOL_BURST_ZERO_HIGH,
+    OVERHEAT_PENALTY, OVERHEAT_CCI_THRESH, OVERHEAT_RSI_THRESH, OVERHEAT_GAP_THRESH,
     TOP_N, TOP_N_CONSERVATIVE,
     MIN_PRICE, MAX_PRICE,
     MIN_CHANGE_RATE, MAX_CHANGE_RATE,
@@ -120,18 +122,45 @@ class Screener:
             for s in scored:
                 s["score"] = round(max(0, s["score"] - NASDAQ_PENALTY), 1)
 
+        # ── 5) 과열 복합 감점 (CCI>200 & RSI>80 & MA20이격>15% 동시 충족) ──
+        overheat_count = 0
+        for s in scored:
+            cci_hot = s.get("cci", 0) > OVERHEAT_CCI_THRESH
+            rsi_hot = s.get("rsi", 0) > OVERHEAT_RSI_THRESH
+            gap_hot = s.get("ma20_gap", 0) > OVERHEAT_GAP_THRESH
+            if cci_hot and rsi_hot and gap_hot:
+                s["score"] = round(max(0, s["score"] - OVERHEAT_PENALTY), 1)
+                s["overheat"] = True
+                overheat_count += 1
+            else:
+                s["overheat"] = False
+        if overheat_count > 0:
+            logger.info("과열 감점: %d종목 (CCI>%d & RSI>%d & 이격>%.0f%%)",
+                        overheat_count, OVERHEAT_CCI_THRESH,
+                        OVERHEAT_RSI_THRESH, OVERHEAT_GAP_THRESH)
+
         # 정렬
         scored.sort(key=lambda x: x["score"], reverse=True)
 
-        # TOP_N 결정 (나스닥 급락 또는 코스피<MA20 → 보수 모드)
+        # TOP_N 결정 (시장 상황별 차등)
         top_n = TOP_N
         kospi_ma20 = market.get("kospi_ma20")
         if market.get("nasdaq_warning"):
-            top_n = TOP_N_CONSERVATIVE
+            top_n = max(1, TOP_N_CONSERVATIVE - 1)  # 나스닥 급락: 1개
             logger.info("나스닥 급락 → 보수 모드 (TOP%d)", top_n)
-        elif kospi_ma20 and market.get("kospi", 0) < kospi_ma20:
-            top_n = TOP_N_CONSERVATIVE
-            logger.info("코스피 < MA20 → 보수 모드 (TOP%d)", top_n)
+        elif kospi_ma20 and kospi_ma20 > 0:
+            kospi_gap = (market.get("kospi", 0) / kospi_ma20 - 1) * 100
+            market["kospi_ma20_gap"] = round(kospi_gap, 1)
+            if kospi_gap < -10:
+                top_n = 1        # 폭락장
+                logger.info("코스피 MA20 이격 %.1f%% (폭락) → TOP%d", kospi_gap, top_n)
+            elif kospi_gap < -3:
+                top_n = TOP_N_CONSERVATIVE  # 약세장
+                logger.info("코스피 MA20 이격 %.1f%% (약세) → TOP%d", kospi_gap, top_n)
+            elif kospi_gap < 0:
+                top_n = TOP_N    # MA20 근접: 반등 가능
+                logger.info("코스피 MA20 이격 %.1f%% (반등기대) → TOP%d", kospi_gap, top_n)
+            # kospi_gap >= 0: 기본 TOP_N 유지
 
         top = scored[:top_n]
 
@@ -262,6 +291,26 @@ class Screener:
         stock["cci_slope"] = _count_rising(prev_4["cci"].dropna().tolist())
         stock["ma20_slope"] = _count_rising(prev_4["ma20"].dropna().tolist())
 
+        # MA5 (눌림목 감지용)
+        df["ma5"] = df["close"].rolling(5).mean()
+        stock["ma5"] = round(float(latest["close"]), 0)
+        if pd.notna(df["ma5"].iloc[-1]) and df["ma5"].iloc[-1] > 0:
+            stock["ma5"] = round(float(df["ma5"].iloc[-1]), 0)
+            stock["ma5_gap"] = round(
+                (float(latest["close"]) / float(df["ma5"].iloc[-1]) - 1) * 100, 1
+            )
+        else:
+            stock["ma5_gap"] = 0
+
+        # 거래량 폭발 (당일 거래량 / 20일 평균)
+        df["vol_ma20"] = df["volume"].rolling(20).mean()
+        if pd.notna(df["vol_ma20"].iloc[-1]) and df["vol_ma20"].iloc[-1] > 0:
+            stock["vol_ratio"] = round(
+                float(latest["volume"]) / float(df["vol_ma20"].iloc[-1]), 1
+            )
+        else:
+            stock["vol_ratio"] = 1.0
+
         # 매물대 자체 계산 (OHLCV 기반 가격대별 거래량)
         vp = self._calc_volume_profile(df, float(latest["close"]))
         stock["vp_above_pct"] = vp["above_pct"]
@@ -331,10 +380,10 @@ class Screener:
         return {"above_pct": above_pct, "below_pct": below_pct, "tag": tag}
 
     # ──────────────────────────────────────────────
-    # 점수 계산 (100점, 8지표 종형분포)
+    # 점수 계산 (100점, 9지표 종형분포)
     # ──────────────────────────────────────────────
     def _calc_score(self, stock: dict) -> float:
-        """8개 지표 종형분포 점수"""
+        """9개 지표 종형분포 점수"""
         score = 0.0
 
         # 1. CCI (25점)
@@ -378,6 +427,13 @@ class Screener:
         # 8. 거래원 이상도 (5점): enricher에서 설정
         broker_score = stock.get("broker_score", 0)
         score += min(SCORE_BROKER_FLOW, broker_score)
+
+        # 9. 거래량 폭발 (5점): 당일거래량/20일평균 비율
+        vol_ratio = stock.get("vol_ratio", 1.0)
+        if vol_ratio >= VOL_BURST_OPTIMAL[0]:
+            score += bell_score(vol_ratio,
+                                VOL_BURST_OPTIMAL[0], VOL_BURST_OPTIMAL[1],
+                                1.0, VOL_BURST_ZERO_HIGH, SCORE_VOLUME_BURST)
 
         return round(score, 1)
 
@@ -536,7 +592,7 @@ class Screener:
             "price": stock.get("price", 0),
             "change_rate": stock.get("change_rate", 0),
             "score": stock.get("score", 0),
-            # 8지표
+            # 9지표
             "cci": stock.get("cci", 0),
             "rsi": stock.get("rsi", 0),
             "ma20_gap": stock.get("ma20_gap", 0),
@@ -546,6 +602,10 @@ class Screener:
             "vp_tag": stock.get("vp_tag", ""),
             "broker_score": stock.get("broker_score", 0),
             "broker_signal": stock.get("broker_signal", ""),
+            "vol_ratio": stock.get("vol_ratio", 1.0),
+            # 추가 지표
+            "ma5_gap": stock.get("ma5_gap", 0),
+            "overheat": stock.get("overheat", False),
             # enricher 결과
             "broker_top_buy": stock.get("broker_top_buy", ""),
             "foreign_net": stock.get("foreign_net", 0),

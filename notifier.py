@@ -121,6 +121,16 @@ class Notifier:
             )
             if summary:
                 lines.append(f"　💡 *\"{summary}\"*")
+
+            # 거래량 폭발 표시
+            vol_ratio = stock.get("vol_ratio", 1.0)
+            if vol_ratio >= 2.0:
+                lines.append(f"　📊 거래량 ×{vol_ratio:.1f} (평균 대비)")
+
+            # 과열 경고
+            if stock.get("overheat"):
+                lines.append("　🔥 **과열 주의** — 2~3위 우선 검토 권장")
+
             lines.append("")
 
         # ── 주도테마 ──
@@ -150,6 +160,9 @@ class Notifier:
             f"유니버스 {result.get('universe_count', 0)}종목 | "
             f"🌐 closingbell.streamlit.app"
         )
+        lines.append("")
+        lines.append("⚠️ **워치리스트 등록 완료 — 즉시 매수 금지**")
+        lines.append("D+1 승률 42% → 눌림목 신호(14:50 웹훅) 대기")
 
         # 색상: 전체적으로 긍정이면 초록, 주의 많으면 노랑
         caution_count = sum(1 for s in top if s.get("ai_action") == "주의")
@@ -163,9 +176,140 @@ class Notifier:
         }
         self._send(embeds=[embed])
 
+    def send_daily_picks(self, picks: list[dict]):
+        """매일 15시 매수 후보 TOP3 — 무조건 발송 (DART+뉴스 포함)"""
+        if not picks:
+            # 감시 종목 없으면 관망 메시지
+            self._send(content=(
+                "🎯 **ClosingBell** — 활성 감시 종목 없음\n"
+                "내일 스크리닝 후 워치리스트 등록 예정"
+            ))
+            return
+
+        lines = ["🎯 **오늘의 매수 후보 TOP3**", ""]
+
+        # A등급 강조 (상단에)
+        a_list = [s["name"] for s in picks if s.get("conviction") == "A"]
+        if a_list:
+            lines.append(f"⚡ **A등급 {len(a_list)}건: {', '.join(a_list)}** ← 매수 우선")
+        else:
+            lines.append("💤 **A등급 없음 — 오늘은 관망**")
+        lines.append("")
+
+        for i, sig in enumerate(picks):
+            name = sig.get("name", sig.get("code", ""))
+            price = sig.get("current_price", 0)
+            sig_type = sig.get("signal_type", "")
+            change = sig.get("price_change_from_screen", 0)
+            conv = sig.get("conviction", "C")
+            rank = sig.get("rank", "?")
+            days = sig.get("days_elapsed", 0)
+            exp_wr = sig.get("expected_wr", 0)
+            exp_ret = sig.get("expected_ret", 0)
+            rank_note = sig.get("rank_note", "")
+            in_window = sig.get("in_window", False)
+            c_score = sig.get("conviction_score", 0)
+            sweet = sig.get("sweet_spot_day", "?")
+
+            # DART + 뉴스
+            dart_risk = sig.get("dart_risk", "확인불가")
+            dart_note = sig.get("dart_note", "")
+            news_risk = sig.get("news_risk", "확인불가")
+            news_summary = sig.get("news_summary", "")
+            risk_flags = sig.get("risk_flags", [])
+
+            medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
+            conv_emoji = {"A": "🟢", "B": "🟡", "C": "⚪"}.get(conv, "⚪")
+            sweet_mark = " ★" if days == sweet and in_window else ""
+            dart_e = {"정상": "✅", "양호": "✅", "주의": "⚠️", "위험": "❌"}.get(dart_risk, "❓")
+            news_e = {"양호": "✅", "주의": "⚠️", "위험": "❌"}.get(news_risk, "❓")
+
+            wl_date = sig.get("watchlist_date", "")
+            date_short = wl_date[5:] if wl_date else ""  # "03/06"
+            lines.append(f"{medal} {conv_emoji} **[{conv}] {date_short} #{rank} {name}** ({c_score}점)")
+            lines.append(f"　💰 {price:,}원 ({change:+.1f}%) | D+{days}{sweet_mark}")
+            if sig_type:
+                lines.append(f"　📍 {sig_type}")
+            lines.append(f"　📊 기대승률 {exp_wr}% / {exp_ret:+.1f}%")
+
+            # 위험 정보
+            dart_text = f"{dart_risk}"
+            if dart_note:
+                dart_text += f"({dart_note})"
+            lines.append(f"　📋 공시: {dart_text} {dart_e} | 뉴스: {news_summary} {news_e}")
+
+            if risk_flags:
+                lines.append(f"　⚠️ {', '.join(risk_flags)}")
+
+            if rank_note:
+                lines.append(f"　💡 {rank_note}")
+            lines.append("")
+
+        if not a_list:
+            lines.append("관망 권장 — 조건 좋은 종목이 나타날 때까지 대기")
+
+        a_count = len(a_list)
+        color = 0x00B894 if a_count >= 2 else (0x3498DB if a_count == 1 else 0x95A5A6)
+
+        embed = {
+            "title": f"🎯 ClosingBell — 매수 후보 ({datetime.now().strftime('%m/%d %H:%M')})",
+            "description": "\n".join(lines),
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        self._send(embeds=[embed])
+
     def send_shutdown(self, message: str = ""):
         now = datetime.now().strftime("%H:%M")
         self._send(content=f"✅ ClosingBell v3 종료 ({now}) {message}")
+
+    def send_pullback_signals(self, signals: list[dict]):
+        """눌림목 진입 신호 알림 (확신도 등급 + 순위별 가이드)"""
+        if not signals:
+            return
+
+        lines = ["🎯 **눌림목 진입 신호 감지!**", ""]
+
+        for sig in signals:
+            name = sig.get("name", sig.get("code", ""))
+            price = sig.get("current_price", 0)
+            sig_type = sig.get("signal_type", "")
+            change = sig.get("price_change_from_screen", 0)
+            conv = sig.get("conviction", "C")
+            rank = sig.get("rank", "?")
+            days = sig.get("days_elapsed", 0)
+            exp_wr = sig.get("expected_wr", 0)
+            exp_ret = sig.get("expected_ret", 0)
+            rank_note = sig.get("rank_note", "")
+
+            conv_emoji = {"A": "🟢🟢🟢", "B": "🟢🟢", "C": "🟡"}.get(conv, "🟡")
+            conv_label = {"A": "강력 매수", "B": "관심 매수", "C": "참고"}.get(conv, "참고")
+
+            lines.append(f"{conv_emoji} **[{conv}등급] #{rank}위 {name}**")
+            lines.append(f"　💰 {price:,}원 (스크리닝 대비 {change:+.1f}%)")
+            lines.append(f"　📍 {sig_type} | D+{days}")
+            lines.append(f"　📊 기대승률 {exp_wr}% / 평균수익 {exp_ret:+.1f}%")
+            lines.append(f"　▶ **{conv_label}** | {rank_note}")
+            lines.append("")
+
+        # A등급이 있으면 상단에 요약
+        a_count = sum(1 for s in signals if s.get("conviction") == "A")
+        if a_count > 0:
+            a_names = [s["name"] for s in signals if s["conviction"] == "A"]
+            lines.insert(2, f"⚡ **A등급 {a_count}건: {', '.join(a_names)}** ← 매수 우선")
+            lines.insert(3, "")
+
+        lines.append("⏰ 14:50 최종 체크 | closingbell.streamlit.app")
+
+        color = 0x00B894 if a_count > 0 else (0xF39C12 if signals else 0x95A5A6)
+
+        embed = {
+            "title": f"🎯 ClosingBell — 눌림목 신호 ({datetime.now().strftime('%m/%d %H:%M')})",
+            "description": "\n".join(lines),
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        self._send(embeds=[embed])
 
     def send_error(self, error_msg: str):
         self._send(content=f"❌ ClosingBell 에러: {error_msg}")

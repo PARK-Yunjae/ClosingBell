@@ -138,7 +138,22 @@ def update_global():
             else:
                 start_from = "2016-01-01"
 
-            data = fdr.DataReader(symbol, start_from, end)
+            data = None
+            for retry in range(3):
+                try:
+                    data = fdr.DataReader(symbol, start_from, end)
+                    if data is not None and len(data) > 0:
+                        break
+                except Exception as retry_err:
+                    err_str = str(retry_err)
+                    if "LOGOUT" in err_str or "session" in err_str.lower():
+                        logger.debug("%s LOGOUT 재시도 %d/3", name, retry + 1)
+                        time.sleep(2)
+                        import importlib
+                        importlib.reload(fdr)
+                        continue
+                    raise
+
             if data is not None and len(data) > 0:
                 updates[name] = {
                     "dates": data.index,
@@ -252,9 +267,10 @@ def update_ohlcv_single(code: str, force_days: int = 30):
 
 def update_ohlcv_all(full: bool = False):
     """
-    전체 OHLCV 갱신
-    full=False: stock_mapping에 있는 종목만, 최근 데이터 추가
-    full=True: 전체 종목 강제 갱신 (느림)
+    전체 OHLCV 갱신 (스마트 스킵)
+    1) 삼성전자로 최신 거래일 확인
+    2) 각 종목 CSV의 마지막 날짜와 비교
+    3) 이미 최신이면 FDR 호출 없이 스킵 → ~3분 소요
     """
     import FinanceDataReader as fdr
 
@@ -265,20 +281,22 @@ def update_ohlcv_all(full: bool = False):
         codes = mapping["code"].tolist()
         logger.info("stock_mapping: %d종목", len(codes))
     else:
-        # 파일 목록에서
         codes = [f.stem for f in OHLCV_DIR.glob("*.csv") if not f.stem.startswith("INDEX")]
         logger.info("CSV 파일 기반: %d종목", len(codes))
 
-    # 먼저 샘플로 마지막 거래일 확인
-    sample_path = OHLCV_DIR / "005930.csv"
-    if sample_path.exists():
-        sample = pd.read_csv(sample_path)
-        date_col = "Date" if "Date" in sample.columns else "date"
-        sample[date_col] = pd.to_datetime(sample[date_col])
-        last_date = sample[date_col].max().strftime("%Y-%m-%d")
-        logger.info("현재 마지막 거래일(삼성전자 기준): %s", last_date)
-    else:
-        last_date = "unknown"
+    # 1) 삼성전자로 최신 거래일 확인
+    latest_trading_day = None
+    try:
+        ref = update_ohlcv_single("005930")
+        sample_path = OHLCV_DIR / "005930.csv"
+        if sample_path.exists():
+            sdf = pd.read_csv(sample_path)
+            sdf.columns = [c.lower() for c in sdf.columns]
+            sdf["date"] = pd.to_datetime(sdf["date"])
+            latest_trading_day = sdf["date"].max().strftime("%Y-%m-%d")
+            logger.info("최신 거래일: %s (삼성전자 기준)", latest_trading_day)
+    except Exception:
+        pass
 
     updated = 0
     failed = 0
@@ -286,6 +304,25 @@ def update_ohlcv_all(full: bool = False):
     total = len(codes)
 
     for i, code in enumerate(codes):
+        if code == "005930":
+            skipped += 1
+            continue
+
+        # 스마트 스킵: CSV 마지막 날짜가 최신 거래일이면 FDR 호출 안 함
+        if latest_trading_day and not full:
+            csv_path = OHLCV_DIR / f"{code.strip().zfill(6)}.csv"
+            if csv_path.exists():
+                try:
+                    peek = pd.read_csv(csv_path, usecols=[0], nrows=0)
+                    date_col = peek.columns[0]
+                    tail = pd.read_csv(csv_path, usecols=[date_col]).iloc[-1][date_col]
+                    if str(tail)[:10] >= latest_trading_day:
+                        skipped += 1
+                        continue
+                except Exception:
+                    pass
+
+        # FDR 갱신 필요
         result = update_ohlcv_single(code)
         if result > 0:
             updated += 1
@@ -294,27 +331,20 @@ def update_ohlcv_all(full: bool = False):
         else:
             failed += 1
 
-        # 진행률 (100개마다)
-        if (i + 1) % 100 == 0 or i == total - 1:
+        # 진행률 (200개마다)
+        if (i + 1) % 200 == 0 or i == total - 1:
             logger.info("진행: %d/%d (갱신 %d, 스킵 %d, 실패 %d)",
                          i + 1, total, updated, skipped, failed)
 
-        # FDR 속도 제한 (너무 빠르면 차단)
-        time.sleep(0.3)
+        time.sleep(0.2)
 
     logger.info("=" * 50)
     logger.info("OHLCV 갱신 완료!")
     logger.info("  갱신: %d종목", updated)
     logger.info("  스킵(이미 최신): %d종목", skipped)
     logger.info("  실패: %d종목", failed)
-
-    # 갱신 후 마지막 거래일 재확인
-    if sample_path.exists():
-        sample = pd.read_csv(sample_path)
-        date_col = "Date" if "Date" in sample.columns else "date"
-        sample[date_col] = pd.to_datetime(sample[date_col])
-        new_last = sample[date_col].max().strftime("%Y-%m-%d")
-        logger.info("  갱신 후 마지막 거래일: %s → %s", last_date, new_last)
+    if latest_trading_day:
+        logger.info("  최신 거래일: %s", latest_trading_day)
 
 
 def main():
