@@ -1,0 +1,163 @@
+{
+  "sig_stats": {
+    "total": 6668,
+    "A": 347,
+    "B": 2213,
+    "C": 4108,
+    "in_window": 3914
+  },
+  "sig_A": [
+    {
+      "day": "D+1",
+      "n": 345,
+      "wr_close": 46.1,
+      "avg_close": 0.01,
+      "med_close": -0.19,
+      "wr_open": 52.5,
+      "avg_open": 0.1,
+      "avg_high": 3.03,
+      "avg_low": -2.27
+    },
+    {
+      "day": "D+2",
+      "n": 344,
+      "wr_close": 46.8,
+      "avg_close": 0.48,
+      "med_close": -0.16,
+      "wr_open": 47.4,
+      "avg_open": 0.35,
+      "avg_high": 3.47,
+      "avg_low": -1.97
+    },
+    {
+      "day": "D+3",
+      "n": 342,
+      "wr_close": 49.7,
+      "avg_close": 0.65,
+      "med_close": -0.17,
+      "wr_open": 48.8,
+      "avg_open": 0.68,
+      "avg_high": 3.43,
+      "avg_low": -1.72
+    },
+    {
+      "day": "D+4",
+      "n": 342,
+      "wr_close": 48.8,
+      "avg_close": 0.49,
+      "med_close": 0.0,
+      "wr_open": 49.7,
+      "avg_open": 0.66,
+      "avg_high": 3.25,
+      "avg_low": -1.84
+    },
+    {
+      "day": "D+5",
+      "n": 341,
+      "wr_close": 46.0,
+      "avg_close": 0.6,
+      "med_close": -0.25,
+      "wr_open": 49.9,
+      "avg_open": 0.78,
+      "avg_high": 3.5,
+      "avg_low": -1.78
+    }
+  ],
+  "sig_B": [
+    {
+      "day": "D+1",
+      "n": 2207,
+      "wr_close": 46.3,
+      "avg_close": 0.22,
+      "med_close": -0.17,
+      "wr_open": 51.7,
+      "avg_open": 0.26,
+      "avg_high": 3.26,
+      "avg_low": -2.27
+    },
+    {
+      "day": "D+2",
+      "n": 2201,
+      "wr_close": 45.2,
+      "avg_close": 0.39,
+      "med_close": -0.45,
+      "wr_open": 48.3,
+      "avg_open": 0.51,
+      "avg_high": 3.42,
+      "avg_low": -2.12
+    },
+    {
+      "day": "D+3",
+      "n": 2198,
+      "wr_close": 45.9,
+      "avg_close": 0.52,
+      "med_close": -0.38,
+      "wr_open": 47.8,
+      "avg_open": 0.7,
+      "avg_high": 3.55,
+      "avg_low": -1.95
+    },
+    {
+      "day": "D+4",
+      "n": 2193,
+      "wr_close": 47.5,
+      "avg_close": 0.61,
+      "med_close": -0.35,
+      "wr_open": 47.7,
+      "avg_open": 0.78,
+      "avg_high": 3.56,
+      "avg_low": -1.83
+    },
+    {
+      "day": "D+5",
+      "n": 2188,
+      "wr_close": 45.5,
+      "avg_close": 0.61,
+      "med_close": -0.53,
+      "wr_open": 47.3,
+      "avg_open": 0.73,
+      "avg_high": 3.49,
+      "avg_low": -1.79
+    }
+  ],
+  "sig_A_by_rank": [
+    {
+      "rank": 1,
+      "n": 712,
+      "wr": 52.2,
+      "avg": 1.08,
+      "avg_high": 3.87
+    },
+    {
+      "rank": 3,
+      "n": 790,
+      "wr": 46.6,
+      "avg": 0.46,
+      "avg_high": 3.36
+    },
+    {
+      "rank": 4,
+      "n": 122,
+      "wr": 32.0,
+      "avg": -1.35,
+      "avg_high": 1.68
+    },
+    {
+      "rank": 5,
+      "n": 90,
+      "wr": 38.9,
+      "avg": -2.33,
+      "avg_high": 1.17
+    }
+  ],
+  "A_dart_정상": {
+    "n": 1669,
+    "wr": 48.2,
+    "avg": 0.57
+  },
+  "A_dart_주의": {
+    "n": 45,
+    "wr": 22.2,
+    "avg": -4.11
+  }
+}

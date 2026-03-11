@@ -3,7 +3,7 @@ ClosingBell v3.5 — 메인 스케줄러
 =================================
 [매일]
   15:00  🎯 감시 종목 스캔 → TOP3 디스코드 웹훅
-  15:05  🔇 스크리닝 → 워치리스트 저장 (웹훅 없음)
+  15:40  🔇 스크리닝 → 워치리스트 저장 (웹훅 없음, .env로 시간 변경 가능)
          ↓ 완료 후 자동 순차 실행 ↓
          ① OHLCV 전체 2,782종목 갱신 (~3분 스마트 스킵)
          ② 글로벌 지수 갱신
@@ -35,6 +35,13 @@ from config import (
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY,
     LOG_DIR, SCHEDULE, API_DELAY,
 )
+from storage import (
+    init_storage,
+    prune_legacy_json,
+    save_buy_picks,
+    save_legacy_json,
+    save_screen_result,
+)
 
 # ── 로깅 설정 ──
 logging.basicConfig(
@@ -60,9 +67,11 @@ def run_daily_pick():
     try:
         from watchlist_monitor import daily_top3
         from notifier import Notifier
+        pick_date = datetime.now().strftime("%Y-%m-%d")
         top3 = daily_top3()
+        save_buy_picks(pick_date, top3)
         if top3:
-            Notifier().send_daily_picks(top3)
+            Notifier().send_daily_picks(top3, pick_date=pick_date)
         else:
             logger.info("활성 워치리스트 없음 — 내일부터 발송")
     except Exception as e:
@@ -90,12 +99,10 @@ def run_screening(once: bool = False):
         enricher = Enricher()
         result = screener.run(enricher=enricher)
 
-        log_file = LOG_DIR / f"{result['date']}.json"
-        log_file.write_text(
-            json.dumps(result, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        logger.info("로그 저장: %s", log_file)
+        save_screen_result(result)
+        save_legacy_json(LOG_DIR / f"{result['date']}.json", result)
+        prune_legacy_json(LOG_DIR)
+        logger.info("스크리닝 결과 저장: %s", result["date"])
 
         try:
             from watchlist_monitor import save_watchlist
@@ -197,7 +204,7 @@ def run_post_pipeline():
 
 
 def run_screening_then_pipeline():
-    """15:05에 호출: 스크리닝 → 장마감 파이프라인 순차 실행"""
+    """스크리닝 시간에 호출: 스크리닝 → 장마감 파이프라인 순차 실행"""
     run_screening()
     run_post_pipeline()
 
@@ -239,8 +246,8 @@ def run_scheduler():
     import schedule as sched
 
     logger.info("스케줄러 시작")
-    logger.info("  15:00 → 🎯 TOP3 웹훅")
-    logger.info("  15:05 → 🔇 스크리닝 → OHLCV → 글로벌 → 성과추적")
+    logger.info("  %s → 🎯 TOP3 웹훅", SCHEDULE["daily_pick"])
+    logger.info("  %s → 🔇 스크리닝 → OHLCV → 글로벌 → 성과추적", SCHEDULE["screen"])
     logger.info("         → [월] 매핑+메타 → [월초] 재무 → Git → 종료")
 
     sched.every().day.at(SCHEDULE["daily_pick"]).do(run_daily_pick)
@@ -264,6 +271,7 @@ def run_scheduler():
 # CLI
 # ══════════════════════════════════════════════
 def main():
+    init_storage()
     parser = argparse.ArgumentParser(description="ClosingBell v3.5")
     parser.add_argument("--once", action="store_true", help="즉시 1회 스크리닝 (조용히)")
     parser.add_argument("--preflight", action="store_true", help="전체 파이프라인 검증")

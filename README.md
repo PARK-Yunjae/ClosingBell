@@ -28,7 +28,7 @@ v3.5 방식:  스크리닝 → 워치리스트 → 눌림목 대기 → 매수 �
        + 네이버 뉴스 + Gemini AI 위험 요약
        → 확신도 A/B/C 등급 매겨서 TOP3 발송
 
-15:30  🔇 스크리닝 (조용히, 웹훅 없음)
+15:40  🔇 스크리닝 (조용히, 웹훅 없음)
        키움 API 거래량/거래대금 상위 → 유니버스 확보
        → 9지표 점수 계산 + AI 분석
        → TOP3 워치리스트 저장 (D+5까지 감시)
@@ -255,7 +255,7 @@ NAVER_CLIENT_SECRET=네이버개발자센터
 
 # 스케줄 (기본값 사용 시 생략 가능)
 SCHEDULE_DAILY_PICK=15:00
-SCHEDULE_SCREEN=15:30
+SCHEDULE_SCREEN=15:40
 ```
 
 ### 3. 최초 실행
@@ -278,7 +278,7 @@ python main.py
 
 | 명령어 | 설명 |
 |--------|------|
-| `python main.py` | 스케줄러 모드 (15:00 웹훅 + 15:30 파이프라인) |
+| `python main.py` | 스케줄러 모드 (15:00 웹훅 + 15:40 파이프라인) |
 | `python main.py --pick` | 즉시 TOP3 선정 + 디스코드 발송 |
 | `python main.py --once` | 즉시 스크리닝 (웹훅 없음) |
 | `python main.py --preflight` | 전체 파이프라인 검증 |

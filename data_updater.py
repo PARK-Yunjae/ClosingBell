@@ -9,24 +9,21 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from config import (
-    OHLCV_DIR, GLOBAL_CSV, LOG_DIR,
+    OHLCV_DIR, GLOBAL_CSV,
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
 )
+from storage import get_screen_result, iter_screen_results, load_screen_results_from_fs
 
 logger = logging.getLogger("closingbell")
 
 
 def update_ohlcv():
     """오늘 추천된 종목 + 전일 추천 종목의 OHLCV 갱신"""
-    import json
-
     today = datetime.now().strftime("%Y-%m-%d")
-    log_file = LOG_DIR / f"{today}.json"
-    if not log_file.exists():
+    data = get_screen_result(today)
+    if not data:
         logger.info("오늘 로그 없음 → 갱신 스킵")
         return
-
-    data = json.loads(log_file.read_text(encoding="utf-8"))
     if data.get("skipped"):
         return
 
@@ -42,15 +39,11 @@ def update_ohlcv():
         codes.add(stock["code"])
 
     # 전일 로그
-    log_files = sorted(LOG_DIR.glob("*.json"))
-    for lf in reversed(log_files):
-        if lf.stem != today:
-            try:
-                prev = json.loads(lf.read_text(encoding="utf-8"))
-                for stock in prev.get("top", []):
-                    codes.add(stock["code"])
-            except Exception:
-                pass
+    log_runs = iter_screen_results(desc=True) or load_screen_results_from_fs()[::-1]
+    for prev in log_runs:
+        if prev.get("date") != today:
+            for stock in prev.get("top", []):
+                codes.add(stock["code"])
             break
 
     updated = 0

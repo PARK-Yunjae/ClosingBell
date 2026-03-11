@@ -20,6 +20,14 @@ def _env(key: str, default, type_fn=str):
     except (ValueError, TypeError):
         return default
 
+
+def _env_bool(key: str, default: bool) -> bool:
+    """불리언 환경변수 읽기 헬퍼"""
+    val = os.getenv(key, "")
+    if not val:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
+
 # ============================================================
 # 경로
 # ============================================================
@@ -28,8 +36,17 @@ DATA_DIR = Path(_env("DATA_DIR", "C:/Coding/data"))
 OHLCV_DIR = DATA_DIR / "ohlcv"
 GLOBAL_CSV = DATA_DIR / "global" / "global_merged.csv"
 MAPPING_CSV = DATA_DIR / "stock_mapping.csv"
+APP_DATA_DIR = PROJECT_DIR / "data"
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = PROJECT_DIR / "data" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+BACKTEST_DIR = PROJECT_DIR / "data" / "backtest"
+BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+ARCHIVE_DIR = APP_DATA_DIR / "archive"
+ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+APP_DB_PATH = APP_DATA_DIR / "closingbell.db"
+SAVE_LEGACY_JSON = _env_bool("SAVE_LEGACY_JSON", False)
+LEGACY_JSON_RETENTION_DAYS = _env("LEGACY_JSON_RETENTION_DAYS", 5, int)
 
 # ============================================================
 # 키움 REST API
@@ -53,6 +70,7 @@ DART_API_KEY = _env("DART_API_KEY", "")
 # 디스코드
 # ============================================================
 DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL", "")
+DASHBOARD_URL = _env("DASHBOARD_URL", "https://closingbell.streamlit.app")
 
 # ============================================================
 # 네이버 뉴스 API (https://developers.naver.com/apps/)
@@ -128,6 +146,12 @@ WATCHLIST_MAX_DAYS = _env("WATCHLIST_MAX_DAYS", 5, int)  # 워치리스트 유�
 PULLBACK_MA5_GAP = _env("PULLBACK_MA5_GAP", 1.5, float)     # MA5 이격도 ±% 이내
 PULLBACK_VOL_DECLINE = _env("PULLBACK_VOL_DECLINE", 0.5, float)  # 거래량 감소율 (50% 이하)
 PULLBACK_BB_LOWER = _env("PULLBACK_BB_LOWER", 0.3, float)     # 볼린저 하단 근접도 (0~1)
+BUY_A_MIN_SCORE = _env("BUY_A_MIN_SCORE", 60, float)
+BUY_B_MIN_SCORE = _env("BUY_B_MIN_SCORE", 40, float)
+BUY_DART_DANGER_PENALTY = _env("BUY_DART_DANGER_PENALTY", 10, float)
+BUY_DART_CAUTION_PENALTY = _env("BUY_DART_CAUTION_PENALTY", 5, float)
+BUY_NEWS_DANGER_PENALTY = _env("BUY_NEWS_DANGER_PENALTY", 10, float)
+BUY_NEWS_CAUTION_PENALTY = _env("BUY_NEWS_CAUTION_PENALTY", 3, float)
 
 # ============================================================
 # 성과 추적
@@ -166,7 +190,7 @@ EXCLUDE_ETF = True
 # ============================================================
 SCHEDULE = {
     "daily_pick": _env("SCHEDULE_DAILY_PICK", "15:00"),    # 감시 종목 스캔 → TOP3 웹훅
-    "screen": _env("SCHEDULE_SCREEN", "15:05"),             # 스크리닝 → 워치리스트 저장 (웹훅 없음)
+    "screen": _env("SCHEDULE_SCREEN", "15:40"),             # 스크리닝 → 워치리스트 저장 (웹훅 없음)
     # 스크리닝 후 순차 실행: OHLCV → 글로벌 → 성과추적 → (월)매핑+메타 → (월초)재무 → git push → 종료
 }
 

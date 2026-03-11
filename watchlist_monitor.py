@@ -7,25 +7,31 @@ ClosingBell v3.5 — 눌림목 모니터 (순위별 타이밍 최적화)
   2위: 전 구간 약세 → 우선순위 낮음 (참고용)
   3위: D+2~D+3 눌림목 진입 → D+3 승률 71%, 평균 +8.0%  ← 기다려야
 
-14:50 최종 체크에서 조건 충족 시 디스코드 웹훅 발송.
+15:00 디스코드 웹훅 발송.
 웹훅에 확신도(A/B/C) 표시 → A등급만 매수 권장.
 
 사용법:
     python watchlist_monitor.py              # 워치리스트 체크
     python watchlist_monitor.py --status     # 현재 상태
 """
-import json
 import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from config import (
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
-    OHLCV_DIR, LOG_DIR,
-    WATCHLIST_DIR, WATCHLIST_MAX_DAYS,
+    OHLCV_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS,
     PULLBACK_MA5_GAP, PULLBACK_VOL_DECLINE, PULLBACK_BB_LOWER,
+    BUY_A_MIN_SCORE, BUY_B_MIN_SCORE,
+    BUY_DART_DANGER_PENALTY, BUY_DART_CAUTION_PENALTY,
+    BUY_NEWS_DANGER_PENALTY, BUY_NEWS_CAUTION_PENALTY,
+)
+from storage import (
+    load_active_watchlists as load_active_watchlists_db,
+    prune_legacy_json,
+    save_legacy_json,
+    save_watchlist_payload,
 )
 
 logger = logging.getLogger("closingbell")
@@ -41,6 +47,14 @@ RANK_TIMING = {
     3: {"sweet_spot": 3, "window": (2, 4), "exp_wr": 71, "exp_ret": 8.0,
         "note": "깊은 조정 후 급반등 — 기다려야 큰 수익"},
 }
+
+
+def _conviction_from_score(score: float) -> str:
+    if score >= BUY_A_MIN_SCORE:
+        return "A"
+    if score >= BUY_B_MIN_SCORE:
+        return "B"
+    return "C"
 
 
 def _trading_days_since(date_str: str) -> int:
@@ -109,12 +123,10 @@ def save_watchlist(result: dict):
             "conviction": None,
         })
 
-    path = WATCHLIST_DIR / f"{today}.json"
-    path.write_text(
-        json.dumps(watchlist, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    logger.info("워치리스트 저장: %d종목 (%s)", len(watchlist["stocks"]), path.name)
+    save_watchlist_payload(watchlist)
+    save_legacy_json(WATCHLIST_DIR / f"{today}.json", watchlist)
+    prune_legacy_json(WATCHLIST_DIR)
+    logger.info("워치리스트 저장: %d종목 (%s)", len(watchlist["stocks"]), today)
 
 
 # ──────────────────────────────────────────────
@@ -122,22 +134,15 @@ def save_watchlist(result: dict):
 # ──────────────────────────────────────────────
 def load_active_watchlists() -> list[dict]:
     """만료되지 않은 활성 워치리스트 로드"""
-    today = datetime.now().strftime("%Y-%m-%d")
     active = []
-
-    for f in sorted(WATCHLIST_DIR.glob("*.json"), reverse=True):  # 최신 먼저
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            if data.get("expires", "") >= today:
-                untriggered = [
-                    s for s in data.get("stocks", [])
-                    if not s.get("triggered")
-                ]
-                if untriggered:
-                    data["stocks"] = untriggered
-                    active.append(data)
-        except Exception:
-            pass
+    for data in load_active_watchlists_db():
+        untriggered = [
+            s for s in data.get("stocks", [])
+            if not s.get("triggered")
+        ]
+        if untriggered:
+            data["stocks"] = untriggered
+            active.append(data)
 
     return active
 
@@ -199,12 +204,7 @@ def check_pullback() -> list[dict]:
 
     # 워치리스트 업데이트 저장
     for wl in watchlists:
-        path = WATCHLIST_DIR / f"{wl['created']}.json"
-        if path.exists():
-            path.write_text(
-                json.dumps(wl, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+        save_watchlist_payload(wl)
 
     if signals:
         signals.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
@@ -271,10 +271,10 @@ def daily_top3() -> list[dict]:
 
                 # DART 위험 감점
                 if dart_info["risk"] == "위험":
-                    result["conviction_score"] -= 10
+                    result["conviction_score"] -= BUY_DART_DANGER_PENALTY
                     result["risk_flags"] = result.get("risk_flags", []) + ["DART위험"]
                 elif dart_info["risk"] == "주의":
-                    result["conviction_score"] -= 5
+                    result["conviction_score"] -= BUY_DART_CAUTION_PENALTY
                     result["risk_flags"] = result.get("risk_flags", []) + ["DART주의"]
 
                 # ④ 뉴스 체크
@@ -283,14 +283,14 @@ def daily_top3() -> list[dict]:
                 result["news_summary"] = news_info["summary"]
 
                 if news_info["risk"] == "위험":
-                    result["conviction_score"] -= 10
+                    result["conviction_score"] -= BUY_NEWS_DANGER_PENALTY
                     result["risk_flags"] = result.get("risk_flags", []) + ["뉴스위험"]
                 elif news_info["risk"] == "주의":
-                    result["conviction_score"] -= 3
+                    result["conviction_score"] -= BUY_NEWS_CAUTION_PENALTY
 
                 # 등급 재계산 (감점 반영)
                 s = result["conviction_score"]
-                result["conviction"] = "A" if s >= 60 else ("B" if s >= 40 else "C")
+                result["conviction"] = _conviction_from_score(s)
 
                 result["watchlist_date"] = created
                 result["rank"] = rank
@@ -466,12 +466,7 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
         risk_flags.append("급락")
 
     # ── 확신도 등급 ──
-    if score >= 60:
-        conviction = "A"
-    elif score >= 40:
-        conviction = "B"
-    else:
-        conviction = "C"
+    conviction = _conviction_from_score(score)
 
     rank_info = RANK_TIMING.get(rank, {})
 
@@ -581,12 +576,7 @@ def _check_single(code: str, stock_info: dict, api,
         score -= 15
 
     # ── 등급 결정 ──
-    if score >= 60:
-        conviction = "A"
-    elif score >= 40:
-        conviction = "B"
-    else:
-        conviction = "C"
+    conviction = _conviction_from_score(score)
 
     # C등급 + 기술 조건 1개면 제외 (노이즈)
     if conviction == "C" and len(tech) < 2:
