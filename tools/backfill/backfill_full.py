@@ -1,4 +1,4 @@
-"""
+﻿"""
 ClosingBell v3.5 — 풀 파이프라인 백필
 ======================================
 위치: ClosingBell/ 프로젝트 루트 (main.py 옆)
@@ -72,6 +72,7 @@ from config import (
     DART_API_KEY,
 )
 from screener import bell_score, _count_rising
+from trading_calendar import add_trading_days, trading_days_between
 from watchlist_monitor import RANK_TIMING
 from ai_analyzer import AIAnalyzer
 from storage import (
@@ -307,11 +308,7 @@ def _sim_pullback(ohlcv, wls, day, ds):
     sigs = []
     for _, wl in wls.items():
         if wl.get("expires","") < ds: continue
-        created = datetime.strptime(wl["created"],"%Y-%m-%d")
-        de = 0; c = created + timedelta(days=1)
-        while c.date() <= day.date():
-            if c.weekday() < 5: de += 1
-            c += timedelta(days=1)
+        de = trading_days_between(wl["created"], day)
         if de < 1: continue
 
         for st in wl.get("stocks",[]):
@@ -579,11 +576,7 @@ def run(start_date, end_date, force=False, use_dart=True, use_enrich=True, dry_r
 
         # ── 워치리스트 ──
         if top:
-            def _atd(d,n):
-                dt=datetime.strptime(d,"%Y-%m-%d"); a=0; c=dt
-                while a<n: c+=timedelta(days=1); a += 1 if c.weekday()<5 else 0
-                return c.strftime("%Y-%m-%d")
-            wl = {"created":ds,"expires":_atd(ds,WATCHLIST_MAX_DAYS),"stocks":[]}
+            wl = {"created":ds,"expires":add_trading_days(ds, WATCHLIST_MAX_DAYS),"stocks":[]}
             for s in scored[:5]:
                 rk=s.get("rank",99); tm=RANK_TIMING.get(rk,RANK_TIMING[3])
                 wl["stocks"].append({"code":s["code"],"name":s["name"],"rank":rk,"score":s["score"],
@@ -723,3 +716,5 @@ if __name__ == "__main__":
     else:
         ed = a.end or (datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
         run(a.start, ed, a.force, not a.no_dart, not a.no_enrich, a.dry_run)
+
+

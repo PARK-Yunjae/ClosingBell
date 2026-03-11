@@ -218,18 +218,18 @@ class Notifier:
             f"매수 후보 `{len(picks)}개` | A `{grade_counts['A']}` / B `{grade_counts['B']}` / C `{grade_counts['C']}`",
             f"상단 후보 `{top.get('name', '-')}` | 확신점수 `{_fmt_score(top.get('conviction_score'))}` | 감시 D+{top.get('days_elapsed', '-')}",
             f"공통 리스크 `{self._common_risks(picks)}`",
-            f"[Dashboard]({self.dashboard_url})",
+            f"[대시보드]({self.dashboard_url})",
         ]
         if recent:
             lines.insert(3, recent)
 
         return {
-            "title": f"ClosingBell | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+            "title": f"클로징벨 | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
             "description": "\n".join(lines),
             "color": _pick_color(picks),
             "fields": [
                 _field("평균 확신점수", _fmt_score(avg_score), True),
-                _field("최상단 신호", _safe_text(top.get("signal_type"), "조건 재확인"), True),
+                _field("대표 신호", _safe_text(top.get("signal_type"), "조건 재확인"), True),
                 _field("권장 메모", "A등급 우선, C등급은 관망 보조로 해석", False),
             ],
             "timestamp": _utc_now_iso(),
@@ -255,12 +255,12 @@ class Notifier:
             "title": f"#{order} [{conviction}] {name} ({code})",
             "description": (
                 f"{signal_type}\n"
-                f"스크리닝 #{pick.get('rank', '-')} | 감시 D+{pick.get('days_elapsed', '-')} | sweet spot D+{sweet_spot}"
+                f"스크리닝 #{pick.get('rank', '-')} | 감시 D+{pick.get('days_elapsed', '-')} | 스위트스팟 D+{sweet_spot}"
             ),
             "color": GRADE_COLOR.get(conviction, GRADE_COLOR["C"]),
             "fields": [
                 _field(
-                    "Entry",
+                    "진입 정보",
                     "\n".join(
                         [
                             f"현재가 {_fmt_won(pick.get('current_price'))}",
@@ -271,7 +271,7 @@ class Notifier:
                     True,
                 ),
                 _field(
-                    "Edge",
+                    "기대치",
                     "\n".join(
                         [
                             f"확신점수 {_fmt_score(pick.get('conviction_score'))}",
@@ -283,7 +283,7 @@ class Notifier:
                     True,
                 ),
                 _field(
-                    "Risk",
+                    "리스크",
                     "\n".join(
                         [
                             _risk_line("DART", _safe_text(pick.get("dart_risk"), "확인불가"), pick.get("dart_note", "")),
@@ -293,9 +293,9 @@ class Notifier:
                     ),
                     False,
                 ),
-                _field("Note", note, False),
+                _field("메모", note, False),
             ],
-            "footer": {"text": f"Dashboard: {self.dashboard_url}"},
+            "footer": {"text": f"대시보드: {self.dashboard_url}"},
             "timestamp": _utc_now_iso(),
         }
         return embed
@@ -320,16 +320,16 @@ class Notifier:
         ) or "-"
 
         return {
-            "title": f"ClosingBell | 장마감 스크리닝 ({result.get('date', '-')})",
+            "title": f"클로징벨 | 장마감 스크리닝 ({result.get('date', '-')})",
             "description": (
                 f"유니버스 `{result.get('universe_count', 0)}개` | "
                 f"관심종목 `{len(result.get('top', []))}개`\n"
-                f"[Dashboard]({self.dashboard_url})"
+                f"[대시보드]({self.dashboard_url})"
             ),
             "color": WARNING_COLOR if market.get("nasdaq_warning") else SUMMARY_COLOR,
             "fields": [
-                _field("Market", market_text, True),
-                _field("Leading Themes", theme_text, True),
+                _field("시장 요약", market_text, True),
+                _field("주도 테마", theme_text, True),
                 _field("전일 추천 추적", prev_text, False),
             ],
             "timestamp": _utc_now_iso(),
@@ -352,13 +352,13 @@ class Notifier:
             "title": f"#{order} {stock.get('name', '-')} ({stock.get('code', '-')})",
             "description": (
                 f"{action_icon} {ACTION_LABEL.get(action, action)} | "
-                f"AI risk {RISK_ICON.get(risk, '⚪')} {risk}\n"
+                f"AI 리스크 {RISK_ICON.get(risk, '⚪')} {risk}\n"
                 f"점수 {_fmt_score(stock.get('score'))} | 거래대금 신호 {_safe_text(stock.get('vp_tag'), '-')}"
             ),
             "color": WARNING_COLOR if stock.get("overheat") else SUMMARY_COLOR,
             "fields": [
                 _field(
-                    "Price",
+                    "가격",
                     "\n".join(
                         [
                             f"현재가 {_fmt_won(stock.get('price'))}",
@@ -368,14 +368,14 @@ class Notifier:
                     ),
                     True,
                 ),
-                _field("Flow", broker_text, True),
+                _field("수급", broker_text, True),
                 _field(
-                    "Signals",
+                    "지표",
                     "\n".join(indicators),
                     True,
                 ),
                 _field(
-                    "DART / AI",
+                    "DART / AI 요약",
                     "\n".join(
                         [
                             _risk_line("DART", _safe_text(stock.get("dart_risk"), "확인불가"), stock.get("dart_note", "")),
@@ -385,7 +385,7 @@ class Notifier:
                     False,
                 ),
             ],
-            "footer": {"text": f"Dashboard: {self.dashboard_url}"},
+            "footer": {"text": f"대시보드: {self.dashboard_url}"},
             "timestamp": _utc_now_iso(),
         }
 
@@ -393,8 +393,8 @@ class Notifier:
         if result.get("skipped"):
             reason = _safe_text(result.get("reason"), "사유 없음")
             embed = {
-                "title": f"ClosingBell | 장마감 스크리닝 스킵 ({result.get('date', '-')})",
-                "description": f"사유: {reason}\n[Dashboard]({self.dashboard_url})",
+                "title": f"클로징벨 | 장마감 스크리닝 건너뜀 ({result.get('date', '-')})",
+                "description": f"사유: {reason}\n[대시보드]({self.dashboard_url})",
                 "color": WARNING_COLOR,
                 "timestamp": _utc_now_iso(),
             }
@@ -409,10 +409,10 @@ class Notifier:
     def send_daily_picks(self, picks: list[dict], pick_date: str | None = None) -> None:
         if not picks:
             embed = {
-                "title": f"ClosingBell | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+                "title": f"클로징벨 | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
                 "description": (
                     "오늘은 활성 워치리스트에서 매수 조건을 만족한 종목이 없습니다.\n"
-                    f"[Dashboard]({self.dashboard_url})"
+                    f"[대시보드]({self.dashboard_url})"
                 ),
                 "color": NEUTRAL_COLOR,
                 "timestamp": _utc_now_iso(),
@@ -426,7 +426,7 @@ class Notifier:
 
     def send_shutdown(self, message: str = "") -> None:
         now = datetime.now().strftime("%H:%M")
-        content = f"ClosingBell 종료 ({now})"
+        content = f"클로징벨 종료 ({now})"
         if message:
             content = f"{content} | {message}"
         self._send(content=content, event_type="shutdown")
@@ -435,7 +435,7 @@ class Notifier:
         if not signals:
             return
 
-        title = f"ClosingBell | 눌림목 진입 신호 ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        title = f"클로징벨 | 눌림목 진입 신호 ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
         summary = {
             "title": title,
             "description": (
@@ -443,7 +443,7 @@ class Notifier:
                 f"A `{sum(1 for s in signals if s.get('conviction') == 'A')}` / "
                 f"B `{sum(1 for s in signals if s.get('conviction') == 'B')}` / "
                 f"C `{sum(1 for s in signals if s.get('conviction') == 'C')}`\n"
-                f"[Dashboard]({self.dashboard_url})"
+                f"[대시보드]({self.dashboard_url})"
             ),
             "color": _pick_color(signals),
             "timestamp": _utc_now_iso(),
@@ -454,7 +454,7 @@ class Notifier:
 
     def send_error(self, error_msg: str) -> None:
         embed = {
-            "title": "ClosingBell | Error",
+            "title": "클로징벨 | 오류",
             "description": _clip(error_msg, 1500),
             "color": ERROR_COLOR,
             "timestamp": _utc_now_iso(),

@@ -1,4 +1,4 @@
-"""
+﻿"""
 기존 스크리닝 로그 → 워치리스트 백필
 =====================================
 data/logs/*.json에서 D+5 이내 로그를 워치리스트로 변환.
@@ -9,7 +9,7 @@ data/logs/*.json에서 D+5 이내 로그를 워치리스트로 변환.
 """
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -17,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from config import LOG_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS
+from trading_calendar import add_trading_days, trading_days_since
 
 # 순위별 타이밍 (watchlist_monitor.py의 RANK_TIMING과 동일)
 RANK_TIMING = {
@@ -26,28 +27,6 @@ RANK_TIMING = {
 }
 
 
-def _trading_days_since(date_str: str) -> int:
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    today = datetime.now()
-    count = 0
-    cur = d + timedelta(days=1)
-    while cur.date() <= today.date():
-        if cur.weekday() < 5:
-            count += 1
-        cur += timedelta(days=1)
-    return count
-
-
-def _add_trading_days(date_str: str, n: int) -> str:
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    added = 0
-    current = d
-    while added < n:
-        current += timedelta(days=1)
-        if current.weekday() < 5:
-            added += 1
-    return current.strftime("%Y-%m-%d")
-
 
 def backfill():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -56,7 +35,7 @@ def backfill():
 
     for lf in sorted(LOG_DIR.glob("*.json")):
         rec_date = lf.stem
-        days = _trading_days_since(rec_date)
+        days = trading_days_since(rec_date)
 
         # D+0(오늘)과 만료(D+5 초과)는 스킵
         if days < 1 or days > WATCHLIST_MAX_DAYS:
@@ -78,7 +57,7 @@ def backfill():
             if not top:
                 continue
 
-            expires = _add_trading_days(rec_date, WATCHLIST_MAX_DAYS)
+            expires = add_trading_days(rec_date, WATCHLIST_MAX_DAYS)
 
             # 만료일이 이미 지났으면 스킵
             if expires < today:
@@ -136,3 +115,4 @@ if __name__ == "__main__":
     print("  기존 로그 → 워치리스트 백필")
     print("=" * 60)
     backfill()
+

@@ -38,6 +38,8 @@ GLOBAL_CSV = DATA_DIR / "global" / "global_merged.csv"
 MAPPING_CSV = DATA_DIR / "stock_mapping.csv"
 APP_DATA_DIR = PROJECT_DIR / "data"
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+REFERENCE_DIR = APP_DATA_DIR / "reference"
+REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = PROJECT_DIR / "data" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 BACKTEST_DIR = PROJECT_DIR / "data" / "backtest"
@@ -45,6 +47,8 @@ BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
 ARCHIVE_DIR = APP_DATA_DIR / "archive"
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 APP_DB_PATH = APP_DATA_DIR / "closingbell.db"
+KRX_HOLIDAYS_PATH = REFERENCE_DIR / "krx_holidays.json"
+TRADING_CALENDAR_REFERENCE_CODE = _env("TRADING_CALENDAR_REFERENCE_CODE", "005930")
 SAVE_LEGACY_JSON = _env_bool("SAVE_LEGACY_JSON", False)
 LEGACY_JSON_RETENTION_DAYS = _env("LEGACY_JSON_RETENTION_DAYS", 5, int)
 

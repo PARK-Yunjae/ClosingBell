@@ -1,4 +1,4 @@
-"""
+﻿"""
 ClosingBell — 매수신호 재생성 v2 (rank 수정 + DART/AI 연동)
 ============================================================
 repair_watchlist.py의 업그레이드 버전.
@@ -42,6 +42,7 @@ from storage import (
     save_watchlist_payload,
 )
 from watchlist_monitor import RANK_TIMING
+from trading_calendar import add_trading_days, trading_days_between
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("repair_v2")
@@ -59,20 +60,6 @@ def _load_ohlcv():
     log.info("  %d종목", len(out))
     return out
 
-
-def _add_td(date_str, n):
-    d = datetime.strptime(date_str, "%Y-%m-%d"); a = 0; c = d
-    while a < n: c += timedelta(days=1); a += 1 if c.weekday() < 5 else 0
-    return c.strftime("%Y-%m-%d")
-
-
-def _td_since(date_str, target):
-    d = datetime.strptime(date_str, "%Y-%m-%d"); count = 0
-    cur = d + timedelta(days=1)
-    while cur.date() <= target.date():
-        if cur.weekday() < 5: count += 1
-        cur += timedelta(days=1)
-    return count
 
 
 def _load_screen_results():
@@ -157,7 +144,7 @@ def rebuild_watchlists():
         top5 = data.get("all_scored", [])[:5]
         if not top5: continue
 
-        wl = {"created": ds, "expires": _add_td(ds, WATCHLIST_MAX_DAYS), "stocks": []}
+        wl = {"created": ds, "expires": add_trading_days(ds, WATCHLIST_MAX_DAYS), "stocks": []}
 
         for stock in top5:
             rank = stock.get("rank", 99)
@@ -214,7 +201,7 @@ def rebuild_signals(ohlcv, dart_cache):
             if wl.get("expires", "") < ds: continue
             if wl["created"] >= ds: continue
 
-            de = _td_since(wl["created"], day)
+            de = trading_days_between(wl["created"], day)
             if de < 1: continue
 
             for stock in wl.get("stocks", []):
@@ -489,3 +476,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

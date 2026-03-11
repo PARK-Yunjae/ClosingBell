@@ -1,4 +1,4 @@
-"""
+﻿"""
 ClosingBell — 워치리스트 + 매수신호 재생성 (rank 버그 수정)
 ==========================================================
 기존 로그(data/logs/*.json)는 그대로 두고,
@@ -18,7 +18,7 @@ import logging
 import sys
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
@@ -42,6 +42,7 @@ from storage import (
     save_watchlist_payload,
 )
 from watchlist_monitor import RANK_TIMING
+from trading_calendar import add_trading_days, trading_days_between
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("repair")
@@ -59,26 +60,6 @@ def _load_ohlcv():
     log.info("  %d종목", len(out))
     return out
 
-
-def _trading_days_since(date_str, target_date):
-    """date_str부터 target_date까지 거래일 수"""
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    count = 0
-    cur = d + timedelta(days=1)
-    while cur.date() <= target_date.date():
-        if cur.weekday() < 5:
-            count += 1
-        cur += timedelta(days=1)
-    return count
-
-
-def _add_trading_days(date_str, n):
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    added = 0; cur = d
-    while added < n:
-        cur += timedelta(days=1)
-        if cur.weekday() < 5: added += 1
-    return cur.strftime("%Y-%m-%d")
 
 
 def _load_screen_results():
@@ -116,7 +97,7 @@ def rebuild_watchlists(dry_run=False):
 
         wl = {
             "created": ds,
-            "expires": _add_trading_days(ds, WATCHLIST_MAX_DAYS),
+            "expires": add_trading_days(ds, WATCHLIST_MAX_DAYS),
             "stocks": [],
         }
 
@@ -185,7 +166,7 @@ def rebuild_signals(ohlcv, dry_run=False):
             if wl.get("expires", "") < ds: continue
             if wl["created"] >= ds: continue
 
-            days_elapsed = _trading_days_since(wl["created"], day)
+            days_elapsed = trading_days_between(wl["created"], day)
             if days_elapsed < 1: continue
 
             for stock in wl.get("stocks", []):
@@ -444,3 +425,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

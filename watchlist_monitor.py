@@ -1,4 +1,4 @@
-"""
+﻿"""
 ClosingBell v3.5 — 눌림목 모니터 (순위별 타이밍 최적화)
 ======================================================
 백테스트 데이터 기반 순위별 최적 진입 타이밍:
@@ -17,7 +17,7 @@ ClosingBell v3.5 — 눌림목 모니터 (순위별 타이밍 최적화)
 import logging
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from config import (
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
@@ -33,6 +33,7 @@ from storage import (
     save_legacy_json,
     save_watchlist_payload,
 )
+from trading_calendar import add_trading_days, trading_days_since
 
 logger = logging.getLogger("closingbell")
 
@@ -57,30 +58,6 @@ def _conviction_from_score(score: float) -> str:
     return "C"
 
 
-def _trading_days_since(date_str: str) -> int:
-    """스크리닝일로부터 오늘까지 거래일 수"""
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    today = datetime.now()
-    count = 0
-    current = d + timedelta(days=1)
-    while current.date() <= today.date():
-        if current.weekday() < 5:
-            count += 1
-        current += timedelta(days=1)
-    return count
-
-
-def _add_trading_days(date_str: str, n: int) -> str:
-    """date_str로부터 N거래일 후 날짜 반환"""
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    added = 0
-    current = d
-    while added < n:
-        current += timedelta(days=1)
-        if current.weekday() < 5:
-            added += 1
-    return current.strftime("%Y-%m-%d")
-
 
 # ──────────────────────────────────────────────
 # 1단계: 워치리스트 저장
@@ -95,7 +72,7 @@ def save_watchlist(result: dict):
 
     watchlist = {
         "created": today,
-        "expires": _add_trading_days(today, WATCHLIST_MAX_DAYS),  # 거래일 기준
+        "expires": add_trading_days(today, WATCHLIST_MAX_DAYS),  # 거래일 기준
         "stocks": [],
     }
 
@@ -167,7 +144,7 @@ def check_pullback() -> list[dict]:
 
     for wl in watchlists:
         created = wl["created"]
-        days_elapsed = _trading_days_since(created)
+        days_elapsed = trading_days_since(created)
 
         for stock in wl["stocks"]:
             code = stock["code"]
@@ -238,7 +215,7 @@ def daily_top3() -> list[dict]:
 
     for wl in watchlists:
         created = wl["created"]
-        days_elapsed = _trading_days_since(created)
+        days_elapsed = trading_days_since(created)
 
         if days_elapsed < 1:
             continue
@@ -620,7 +597,7 @@ def show_status():
 
     for wl in watchlists:
         created = wl["created"]
-        days = _trading_days_since(created)
+        days = trading_days_since(created)
         print(f"\n[{created}] D+{days} | 만료: {wl['expires']}")
 
         for s in wl["stocks"]:
@@ -665,3 +642,6 @@ if __name__ == "__main__":
             print(f"[{conv}] #{sig['rank']} {sig['name']} "
                   f"-- {sig['signal_type']} "
                   f"(D+{sig['days_elapsed']}, WR {sig['expected_wr']}%)")
+
+
+

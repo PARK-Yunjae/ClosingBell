@@ -70,6 +70,12 @@ SCREEN_INDICATORS = {
     },
 }
 
+SCREEN_PRIOR_FRACTION = 0.08
+SCREEN_MIN_COVERAGE = 0.06
+SCREEN_MOVE_PENALTY = 0.8
+SCREEN_SINGLE_BIN_PENALTY = 2.0
+SCREEN_CHANGE_THRESHOLD = 0.75
+
 BUY_THRESHOLD_GRID = [35, 40, 45, 50, 55, 60, 65, 70, 75]
 BUY_ENV_DEFAULTS = {
     "BUY_A_MIN_SCORE": BUY_A_MIN_SCORE,
@@ -148,6 +154,65 @@ def calc_screen_next_open(records: list[dict]) -> pd.DataFrame:
     return df.dropna(subset=["return_d1"]).copy()
 
 
+def _find_range_indices(bins: list[float], low: float, high: float) -> tuple[int, int]:
+    low_idx = max(i for i in range(len(bins) - 1) if bins[i] <= low)
+    high_idx = next(
+        (i for i in range(len(bins) - 1) if bins[i + 1] >= high),
+        len(bins) - 2,
+    )
+    return low_idx, max(low_idx, high_idx)
+
+
+def _screen_range_stats(
+    grouped: pd.DataFrame,
+    bins: list[float],
+    start_idx: int,
+    end_idx: int,
+    *,
+    overall_win: float,
+    overall_avg: float,
+    prior_count: int,
+    current_low_idx: int,
+    current_high_idx: int,
+) -> dict:
+    count = int(grouped.loc[start_idx:end_idx, "count"].sum())
+    wins = float(grouped.loc[start_idx:end_idx, "wins"].sum())
+    ret_sum = float(grouped.loc[start_idx:end_idx, "ret_sum"].sum())
+
+    win_rate = wins / count * 100 if count else 0.0
+    avg_return = ret_sum / count if count else 0.0
+    shrunk_win = (
+        (wins + prior_count * (overall_win / 100)) / (count + prior_count) * 100
+        if count
+        else overall_win
+    )
+    shrunk_avg = (
+        (ret_sum + prior_count * overall_avg) / (count + prior_count)
+        if count
+        else overall_avg
+    )
+    coverage = count / float(grouped["count"].sum()) if count else 0.0
+    movement = abs(start_idx - current_low_idx) + abs(end_idx - current_high_idx)
+    width_bins = end_idx - start_idx + 1
+    objective = (
+        (shrunk_win - overall_win) * 1.2
+        + max(shrunk_avg - overall_avg, 0) * 10
+        + min(coverage, 0.30) * 8
+        - movement * SCREEN_MOVE_PENALTY
+        - (SCREEN_SINGLE_BIN_PENALTY if width_bins == 1 else 0)
+    )
+    return {
+        "range": (float(bins[start_idx]), float(bins[end_idx + 1])),
+        "count": count,
+        "coverage": round(coverage * 100, 1),
+        "win_rate": round(float(win_rate), 1),
+        "avg_return": round(float(avg_return), 2),
+        "objective": float(objective),
+        "movement": int(movement),
+        "width_bins": int(width_bins),
+    }
+
+
 def analyze_screen_indicator(df: pd.DataFrame, indicator: str, min_count: int) -> dict:
     config = SCREEN_INDICATORS[indicator]
     bins = config["bins"]
@@ -158,26 +223,71 @@ def analyze_screen_indicator(df: pd.DataFrame, indicator: str, min_count: int) -
         work.groupby("bin", observed=True)
         .agg(
             count=("return_d1", "count"),
-            win_rate=("return_d1", lambda s: (s > 0).mean() * 100),
-            avg_return=("return_d1", "mean"),
+            wins=("return_d1", lambda s: (s > 0).sum()),
+            ret_sum=("return_d1", "sum"),
         )
         .reset_index()
     )
+    grouped["win_rate"] = grouped["wins"] / grouped["count"] * 100
+    grouped["avg_return"] = grouped["ret_sum"] / grouped["count"]
 
-    eligible = grouped[grouped["count"] >= min_count].copy()
-    if eligible.empty:
+    total_count = int(grouped["count"].sum())
+    if total_count == 0:
         return {"current": config["current"], "suggested": config["current"], "table": grouped}
 
-    eligible["objective"] = eligible["win_rate"] + eligible["avg_return"].clip(lower=0) * 5
-    best = eligible.sort_values(["objective", "count"], ascending=[False, False]).iloc[0]
-    low, high = map(float, str(best["bin"]).split("~"))
+    overall_win = float((df["return_d1"] > 0).mean() * 100)
+    overall_avg = float(df["return_d1"].mean())
+    prior_count = max(min_count * 3, int(total_count * SCREEN_PRIOR_FRACTION))
+    required_count = max(min_count, int(total_count * SCREEN_MIN_COVERAGE))
+    current_low_idx, current_high_idx = _find_range_indices(bins, *config["current"])
+    current_stats = _screen_range_stats(
+        grouped,
+        bins,
+        current_low_idx,
+        current_high_idx,
+        overall_win=overall_win,
+        overall_avg=overall_avg,
+        prior_count=prior_count,
+        current_low_idx=current_low_idx,
+        current_high_idx=current_high_idx,
+    )
+
+    best_stats = current_stats
+    for start_idx in range(len(grouped)):
+        for end_idx in range(start_idx, len(grouped)):
+            stats = _screen_range_stats(
+                grouped,
+                bins,
+                start_idx,
+                end_idx,
+                overall_win=overall_win,
+                overall_avg=overall_avg,
+                prior_count=prior_count,
+                current_low_idx=current_low_idx,
+                current_high_idx=current_high_idx,
+            )
+            if stats["count"] < required_count:
+                continue
+            if stats["objective"] > best_stats["objective"]:
+                best_stats = stats
+
+    chosen_stats = best_stats
+    if best_stats["objective"] < current_stats["objective"] + SCREEN_CHANGE_THRESHOLD:
+        chosen_stats = current_stats
+    low, high = chosen_stats["range"]
     return {
         "current": config["current"],
         "suggested": (low, high),
-        "best_win_rate": round(float(best["win_rate"]), 1),
-        "best_avg_return": round(float(best["avg_return"]), 2),
-        "best_count": int(best["count"]),
-        "table": grouped,
+        "overall": {
+            "count": total_count,
+            "win_rate": round(overall_win, 1),
+            "avg_return": round(overall_avg, 2),
+        },
+        "current_stats": current_stats,
+        "best_candidate": best_stats,
+        "change_applied": chosen_stats["range"] != tuple(map(float, config["current"])),
+        "required_count": required_count,
+        "table": grouped[["bin", "count", "win_rate", "avg_return"]],
     }
 
 
@@ -378,6 +488,39 @@ def print_screen_report(results: dict) -> dict:
         current = tuple(result["current"])
         suggested = tuple(result["suggested"])
         print(f"\n[{indicator}] current={current[0]}~{current[1]} suggested={suggested[0]}~{suggested[1]}")
+        overall = result.get("overall", {})
+        current_stats = result.get("current_stats", {})
+        best_candidate = result.get("best_candidate", {})
+        if overall:
+            print(
+                f"overall count={overall.get('count', 0):,} "
+                f"win={overall.get('win_rate')}% avg={overall.get('avg_return')}%"
+            )
+        if current_stats:
+            print(
+                f"current range count={current_stats.get('count', 0):,} "
+                f"coverage={current_stats.get('coverage', 0)}% "
+                f"win={current_stats.get('win_rate')}% avg={current_stats.get('avg_return')}% "
+                f"obj={current_stats.get('objective', 0):.2f}"
+            )
+        if best_candidate:
+            best_range = best_candidate.get("range", suggested)
+            print(
+                f"best candidate={best_range[0]}~{best_range[1]} "
+                f"count={best_candidate.get('count', 0):,} "
+                f"coverage={best_candidate.get('coverage', 0)}% "
+                f"win={best_candidate.get('win_rate')}% avg={best_candidate.get('avg_return')}% "
+                f"obj={best_candidate.get('objective', 0):.2f} "
+                f"move={best_candidate.get('movement', 0)}"
+            )
+        if not result.get("change_applied"):
+            print(
+                f"decision=hold current "
+                f"(required improvement >= {SCREEN_CHANGE_THRESHOLD:.2f}, "
+                f"min_count={result.get('required_count', 0)})"
+            )
+        else:
+            print(f"decision=change (min_count={result.get('required_count', 0)})")
         table = result.get("table", pd.DataFrame())
         if not table.empty:
             print("range            count  win_rate  avg_return")

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Performance tracking utilities for screening picks and saved daily buy picks.
 """
 
@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 
@@ -21,12 +21,14 @@ from config import (
     PERFORMANCE_TRACK_DAYS,
 )
 from storage import (
+
     get_buy_picks,
     iter_screen_results,
     list_buy_pick_dates,
     load_screen_results_from_fs,
     save_buy_pick_outcomes,
 )
+from trading_calendar import trading_days_between
 
 logger = logging.getLogger("closingbell")
 PERF_FILE = PERFORMANCE_DIR / "tracking.json"
@@ -95,7 +97,7 @@ def track_today() -> int:
         if not top:
             continue
 
-        days_diff = _trading_days_between(rec_date, today)
+        days_diff = trading_days_between(rec_date, today)
         if days_diff < 1 or days_diff > PERFORMANCE_TRACK_DAYS:
             continue
 
@@ -353,16 +355,6 @@ def generate_report() -> dict:
     return report
 
 
-def _trading_days_between(date1: str, date2: str) -> int:
-    d1 = datetime.strptime(date1, "%Y-%m-%d")
-    d2 = datetime.strptime(date2, "%Y-%m-%d")
-    count = 0
-    current = d1 + timedelta(days=1)
-    while current <= d2:
-        if current.weekday() < 5:
-            count += 1
-        current += timedelta(days=1)
-    return count
 
 
 if __name__ == "__main__":
@@ -383,3 +375,6 @@ if __name__ == "__main__":
         print(json.dumps(generate_report(), ensure_ascii=False, indent=2))
     else:
         track_today()
+
+
+
