@@ -56539,6 +56539,19 @@
     },
     {
       "rec_date": "2026-03-05",
+      "code": "028670",
+      "name": "팬오션",
+      "rank": 1,
+      "score": 78.3,
+      "buy_price": 5660,
+      "track_day": 5,
+      "track_date": "2026-03-12",
+      "track_price": 5250,
+      "return_pct": -7.24,
+      "win": false
+    },
+    {
+      "rec_date": "2026-03-05",
       "code": "402490",
       "name": "그린리소스",
       "rank": 2,
@@ -56590,6 +56603,19 @@
       "win": true
     },
     {
+      "rec_date": "2026-03-05",
+      "code": "402490",
+      "name": "그린리소스",
+      "rank": 2,
+      "score": 69.0,
+      "buy_price": 12090,
+      "track_day": 5,
+      "track_date": "2026-03-12",
+      "track_price": 12670,
+      "return_pct": 4.8,
+      "win": true
+    },
+    {
       "rec_date": "2026-03-06",
       "code": "403870",
       "name": "HPSP",
@@ -56626,6 +56652,19 @@
       "track_date": "2026-03-11",
       "track_price": 43600,
       "return_pct": -8.88,
+      "win": false
+    },
+    {
+      "rec_date": "2026-03-06",
+      "code": "403870",
+      "name": "HPSP",
+      "rank": 1,
+      "score": 73.6,
+      "buy_price": 47850,
+      "track_day": 4,
+      "track_date": "2026-03-12",
+      "track_price": 43250,
+      "return_pct": -9.61,
       "win": false
     },
     {
@@ -56668,6 +56707,19 @@
       "win": false
     },
     {
+      "rec_date": "2026-03-06",
+      "code": "440110",
+      "name": "파두",
+      "rank": 2,
+      "score": 67.5,
+      "buy_price": 71000,
+      "track_day": 4,
+      "track_date": "2026-03-12",
+      "track_price": 66600,
+      "return_pct": -6.2,
+      "win": false
+    },
+    {
       "rec_date": "2026-03-09",
       "code": "218150",
       "name": "미래생명자원",
@@ -56691,6 +56743,19 @@
       "track_date": "2026-03-11",
       "track_price": 3230,
       "return_pct": -6.92,
+      "win": false
+    },
+    {
+      "rec_date": "2026-03-09",
+      "code": "218150",
+      "name": "미래생명자원",
+      "rank": 1,
+      "score": 88.5,
+      "buy_price": 3470,
+      "track_day": 3,
+      "track_date": "2026-03-12",
+      "track_price": 3265,
+      "return_pct": -5.91,
       "win": false
     },
     {
@@ -56721,6 +56786,19 @@
     },
     {
       "rec_date": "2026-03-09",
+      "code": "047050",
+      "name": "포스코인터내셔널",
+      "rank": 2,
+      "score": 79.9,
+      "buy_price": 76600,
+      "track_day": 3,
+      "track_date": "2026-03-12",
+      "track_price": 79500,
+      "return_pct": 3.79,
+      "win": true
+    },
+    {
+      "rec_date": "2026-03-09",
       "code": "002100",
       "name": "경농",
       "rank": 3,
@@ -56746,6 +56824,19 @@
       "win": true
     },
     {
+      "rec_date": "2026-03-09",
+      "code": "002100",
+      "name": "경농",
+      "rank": 3,
+      "score": 74.6,
+      "buy_price": 9640,
+      "track_day": 3,
+      "track_date": "2026-03-12",
+      "track_price": 9720,
+      "return_pct": 0.83,
+      "win": true
+    },
+    {
       "rec_date": "2026-03-10",
       "code": "083650",
       "name": "비에이치아이",
@@ -56756,6 +56847,19 @@
       "track_date": "2026-03-11",
       "track_price": 100400,
       "return_pct": -4.38,
+      "win": false
+    },
+    {
+      "rec_date": "2026-03-10",
+      "code": "083650",
+      "name": "비에이치아이",
+      "rank": 1,
+      "score": 74.8,
+      "buy_price": 105000,
+      "track_day": 2,
+      "track_date": "2026-03-12",
+      "track_price": 99700,
+      "return_pct": -5.05,
       "win": false
     },
     {
@@ -56773,6 +56877,19 @@
     },
     {
       "rec_date": "2026-03-10",
+      "code": "347700",
+      "name": "스피어",
+      "rank": 2,
+      "score": 72.2,
+      "buy_price": 51100,
+      "track_day": 2,
+      "track_date": "2026-03-12",
+      "track_price": 53100,
+      "return_pct": 3.91,
+      "win": true
+    },
+    {
+      "rec_date": "2026-03-10",
       "code": "034020",
       "name": "두산에너빌리티",
       "rank": 3,
@@ -56783,7 +56900,59 @@
       "track_price": 101000,
       "return_pct": -1.46,
       "win": false
+    },
+    {
+      "rec_date": "2026-03-10",
+      "code": "034020",
+      "name": "두산에너빌리티",
+      "rank": 3,
+      "score": 71.0,
+      "buy_price": 102500,
+      "track_day": 2,
+      "track_date": "2026-03-12",
+      "track_price": 103500,
+      "return_pct": 0.98,
+      "win": true
+    },
+    {
+      "rec_date": "2026-03-11",
+      "code": "253590",
+      "name": "네오셈",
+      "rank": 1,
+      "score": 81.0,
+      "buy_price": 19730,
+      "track_day": 1,
+      "track_date": "2026-03-12",
+      "track_price": 20300,
+      "return_pct": 2.89,
+      "win": true
+    },
+    {
+      "rec_date": "2026-03-11",
+      "code": "000390",
+      "name": "삼화페인트",
+      "rank": 2,
+      "score": 80.1,
+      "buy_price": 10540,
+      "track_day": 1,
+      "track_date": "2026-03-12",
+      "track_price": 9720,
+      "return_pct": -7.78,
+      "win": false
+    },
+    {
+      "rec_date": "2026-03-11",
+      "code": "100590",
+      "name": "머큐리",
+      "rank": 3,
+      "score": 65.8,
+      "buy_price": 4140,
+      "track_day": 1,
+      "track_date": "2026-03-12",
+      "track_price": 4660,
+      "return_pct": 12.56,
+      "win": true
     }
   ],
-  "last_updated": "2026-03-11T16:03:01"
+  "last_updated": "2026-03-12T16:03:45"
 }
