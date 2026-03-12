@@ -1,7 +1,8 @@
 """
-ClosingBell v3.5 — 스크리닝 + 8지표 점수 계산
-=============================================
+ClosingBell v3.6 — 스크리닝 + 9지표 점수 계산 + 시장 컨텍스트
+=============================================================
 키움 REST API 기반 / 유니버스 전체 분석 / 매물대+거래원+AI 통합
+v3.6: 대주주 투매 필터, 캘린더 이벤트 감점, 기업정보 표시
 """
 import logging
 import json
@@ -31,6 +32,13 @@ from config import (
     API_DELAY,
 )
 from kiwoom_api import KiwoomAPI
+
+# v3.6: 시장 컨텍스트 (캘린더+지분+기업정보)
+try:
+    from market_context import get_market_context
+except Exception:
+    def get_market_context():
+        return None
 
 logger = logging.getLogger("closingbell")
 
@@ -63,6 +71,15 @@ class Screener:
         """
         today = datetime.now().strftime("%Y-%m-%d")
         market = self.get_market_status()
+        market_ctx = get_market_context()
+
+        # v3.6: 캘린더 이벤트 체크
+        if market_ctx:
+            today_ctx = market_ctx.today_context(today)
+            market["event_warning"] = today_ctx["event_warning"]
+            market["calendar_adj"] = today_ctx["score_adj"]
+            if today_ctx["event_warning"]:
+                logger.info("📅 이벤트: %s (감점 %.0f)", today_ctx["event_warning"], today_ctx["score_adj"])
 
         # 나스닥 경고 (스킵하지 않고 진행, 웹훅에서 경고 표시)
         nasdaq_chg = market.get("nasdaq_change", 0)
@@ -148,6 +165,9 @@ class Screener:
         if market.get("nasdaq_warning"):
             top_n = max(1, TOP_N_CONSERVATIVE - 1)  # 나스닥 급락: 1개
             logger.info("나스닥 급락 → 보수 모드 (TOP%d)", top_n)
+        elif market_ctx and market_ctx.should_conservative(today):
+            top_n = 1  # v3.6: 정치위기 → TOP1만
+            logger.info("⚠️ 정치위기 → 보수 모드 (TOP1)")
         elif kospi_ma20 and kospi_ma20 > 0:
             kospi_gap = (market.get("kospi", 0) / kospi_ma20 - 1) * 100
             market["kospi_ma20_gap"] = round(kospi_gap, 1)
@@ -435,6 +455,19 @@ class Screener:
                                 VOL_BURST_OPTIMAL[0], VOL_BURST_OPTIMAL[1],
                                 1.0, VOL_BURST_ZERO_HIGH, SCORE_VOLUME_BURST)
 
+        # v3.6: 캘린더 이벤트 감점 (FOMC 등)
+        market_ctx = get_market_context()
+        if market_ctx:
+            score_ctx = market_ctx.stock_score_context(
+                stock.get("code", ""),
+                stock.get("price", 0),
+            )
+            score += score_ctx["score_adj"]
+            stock["calendar_adj"] = score_ctx["event_adj"]
+            stock["holder_penalty"] = score_ctx["holder_penalty"]
+            stock["market_flags"] = score_ctx["flags"]
+
+        # v3.6: 잡주(≤1만) + 저지분(<30%) 감점
         return round(score, 1)
 
     # ──────────────────────────────────────────────
@@ -582,17 +615,25 @@ class Screener:
             info = self.stock_map.get(code, {})
             if "ETF" in info.get("market", "").upper() or "ETF" in name.upper():
                 return True
+        # v3.6: 대주주 투매 종목 제외 (지분 -10%p 이상 감소)
+        market_ctx = get_market_context()
+        if market_ctx and market_ctx.is_dumping(code):
+            logger.debug("투매 제외 [%s] %s", code, name)
+            return True
         return False
 
     def _stock_summary(self, stock: dict, rank: int) -> dict:
         code = stock.get("code", "").strip().zfill(6)
         name = stock.get("name", "")
         info = self.stock_map.get(code, {})
+        market_ctx = get_market_context()
+        company_info = market_ctx.get_company_info(code) if market_ctx else {}
         return {
             "rank": rank,
             "code": code,
             "name": name or info.get("name", code),
-            "sector": stock.get("sector") or info.get("sector", ""),
+            "sector": stock.get("sector") or company_info.get("sector") or info.get("sector", ""),
+            "industry": stock.get("industry") or company_info.get("industry", ""),
             "price": stock.get("price", 0),
             "change_rate": stock.get("change_rate", 0),
             "score": stock.get("score", 0),
@@ -619,6 +660,14 @@ class Screener:
             "ai_action": stock.get("ai_action", ""),
             "ai_risk": stock.get("ai_risk", ""),
             "ai_summary": stock.get("ai_summary", ""),
+            # v3.6: 기업정보 + 지분
+            "company_brief": market_ctx.get_company_brief(code) if market_ctx else info.get("sector", ""),
+            "holder_tag": market_ctx.holder_tag(code, stock.get("price", 0)) if market_ctx else "",
+            "holder_pct": market_ctx.get_holder_level(code) if market_ctx else None,
+            "holder_change": market_ctx.get_holder_change(code) if market_ctx else None,
+            "calendar_adj": stock.get("calendar_adj", 0),
+            "holder_penalty": stock.get("holder_penalty", 0),
+            "market_flags": stock.get("market_flags", []),
         }
 
 

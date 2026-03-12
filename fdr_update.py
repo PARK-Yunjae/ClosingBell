@@ -19,14 +19,13 @@ import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from config import DATA_DIR, GLOBAL_CSV, MAPPING_CSV, OHLCV_DIR
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("fdr_update")
 
 # ── 설정 ──
-DATA_DIR = Path("C:/Coding/data")
-OHLCV_DIR = DATA_DIR / "ohlcv"
-GLOBAL_DIR = DATA_DIR / "global"
-MAPPING_CSV = DATA_DIR / "stock_mapping.csv"
+GLOBAL_DIR = GLOBAL_CSV.parent
 
 
 def check_status():

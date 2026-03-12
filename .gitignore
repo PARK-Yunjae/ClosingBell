@@ -6,3 +6,12 @@ data/closingbell.log
 
 # Streamlit Cloud용 로그 허용
 !data/logs/
+
+# 생성 산출물 (재생성 가능)
+*.npz
+data/backtest/pattern_index.npz
+data/analysis/
+data/archive/
+data/meta/major_holder.csv
+data/meta/holder_analysis.csv
+data/meta/v36_simulation.csv

@@ -1,5 +1,5 @@
 """
-ClosingBell v3.5 — 메인 스케줄러
+ClosingBell v3.6 — 메인 스케줄러
 =================================
 [매일]
   15:00  🎯 감시 종목 스캔 → TOP3 디스코드 웹훅
@@ -50,7 +50,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(
-            Path(__file__).parent / "data" / "closingbell.log",
+            LOG_DIR.parent / "closingbell.log",
             encoding="utf-8",
         ),
     ],
@@ -88,8 +88,20 @@ def run_screening(once: bool = False):
     from enricher import Enricher
 
     logger.info("=" * 50)
-    logger.info("ClosingBell v3.5 스크리닝 시작 (조용히)")
+    logger.info("ClosingBell v3.6 스크리닝 시작 (조용히)")
     logger.info("=" * 50)
+
+    # v3.6: 시장 컨텍스트 로그
+    try:
+        from market_context import get_market_context
+        ctx = get_market_context()
+        today_ctx = ctx.today_context()
+        if today_ctx["event_warning"]:
+            logger.info("📅 오늘 이벤트: %s", today_ctx["event_warning"])
+        if today_ctx["conservative"]:
+            logger.warning("⚠️ 보수 모드 활성화 — %s", today_ctx["event_warning"])
+    except Exception:
+        pass
 
     try:
         api = KiwoomAPI(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_BASE_URL, API_DELAY)
@@ -262,8 +274,22 @@ def run_scheduler():
 
     logger.info("대기 중... (TOP3: %s, 파이프라인: %s)",
                 SCHEDULE["daily_pick"], SCHEDULE["screen"])
+    fail_count = 0
     while True:
-        sched.run_pending()
+        try:
+            sched.run_pending()
+            fail_count = 0
+        except Exception as e:
+            fail_count += 1
+            logger.error("스케줄러 에러 (%d회연속): %s", fail_count, e)
+            if fail_count >= 5:
+                logger.critical("스케줄러 5회 연속 실패 — 종료")
+                try:
+                    from notifier import Notifier
+                    Notifier().send_error(f"스케줄러 5회 연속 실패: {e}")
+                except Exception:
+                    pass
+                sys.exit(1)
         time.sleep(30)
 
 
@@ -272,7 +298,7 @@ def run_scheduler():
 # ══════════════════════════════════════════════
 def main():
     init_storage()
-    parser = argparse.ArgumentParser(description="ClosingBell v3.5")
+    parser = argparse.ArgumentParser(description="ClosingBell v3.6")
     parser.add_argument("--once", action="store_true", help="즉시 1회 스크리닝 (조용히)")
     parser.add_argument("--preflight", action="store_true", help="전체 파이프라인 검증")
     parser.add_argument("--pick", action="store_true", help="즉시 TOP3 선정 + 웹훅")

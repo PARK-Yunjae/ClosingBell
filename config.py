@@ -5,7 +5,9 @@ ClosingBell v3.5 — 설정 및 상수
 .env에 없으면 아래 기본값 사용.
 """
 import os
+from datetime import datetime
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,26 +30,52 @@ def _env_bool(key: str, default: bool) -> bool:
         return default
     return val.strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _env_path(key: str, default) -> Path:
+    raw = os.getenv(key, "")
+    return Path(raw or str(default)).expanduser()
+
+
+def _slugify(text: str) -> str:
+    cleaned = []
+    for char in text.strip():
+        if char.isalnum():
+            cleaned.append(char.lower())
+        elif char in {" ", "-", "_"}:
+            cleaned.append("_")
+    return "".join(cleaned).strip("_")
+
 # ============================================================
 # 경로
 # ============================================================
-PROJECT_DIR = Path(__file__).parent
-DATA_DIR = Path(_env("DATA_DIR", "C:/Coding/data"))
-OHLCV_DIR = DATA_DIR / "ohlcv"
-GLOBAL_CSV = DATA_DIR / "global" / "global_merged.csv"
-MAPPING_CSV = DATA_DIR / "stock_mapping.csv"
-APP_DATA_DIR = PROJECT_DIR / "data"
+PROJECT_DIR = Path(__file__).resolve().parent
+DATA_DIR = _env_path("DATA_DIR", "C:/Coding/data")
+META_DIR = _env_path("META_DIR", DATA_DIR / "meta")
+OHLCV_DIR = _env_path("OHLCV_DIR", DATA_DIR / "ohlcv")
+GLOBAL_CSV = _env_path("GLOBAL_CSV", DATA_DIR / "global" / "global_merged.csv")
+MAPPING_CSV = _env_path("MAPPING_CSV", DATA_DIR / "stock_mapping.csv")
+MAJOR_HOLDER_CSV = _env_path("MAJOR_HOLDER_CSV", META_DIR / "major_holder.csv")
+HOLDER_ANALYSIS_CSV = _env_path("HOLDER_ANALYSIS_CSV", META_DIR / "holder_analysis.csv")
+APP_DATA_DIR = _env_path("APP_DATA_DIR", PROJECT_DIR / "data")
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-REFERENCE_DIR = APP_DATA_DIR / "reference"
+REFERENCE_DIR = _env_path("REFERENCE_DIR", APP_DATA_DIR / "reference")
 REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
-LOG_DIR = PROJECT_DIR / "data" / "logs"
+LOG_DIR = _env_path("LOG_DIR", APP_DATA_DIR / "logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-BACKTEST_DIR = PROJECT_DIR / "data" / "backtest"
+BACKTEST_DIR = _env_path("BACKTEST_DIR", APP_DATA_DIR / "backtest")
 BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-ARCHIVE_DIR = APP_DATA_DIR / "archive"
+ARCHIVE_DIR = _env_path("ARCHIVE_DIR", APP_DATA_DIR / "archive")
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-APP_DB_PATH = APP_DATA_DIR / "closingbell.db"
-KRX_HOLIDAYS_PATH = REFERENCE_DIR / "krx_holidays.json"
+WATCHLIST_DIR = _env_path("WATCHLIST_DIR", APP_DATA_DIR / "watchlist")
+WATCHLIST_DIR.mkdir(parents=True, exist_ok=True)
+PERFORMANCE_DIR = _env_path("PERFORMANCE_DIR", APP_DATA_DIR / "performance")
+PERFORMANCE_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_DIR = _env_path("ANALYSIS_DIR", APP_DATA_DIR / "analysis")
+ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_KEEP_LATEST = _env("ANALYSIS_KEEP_LATEST", 2, int)
+APP_DB_PATH = _env_path("APP_DB_PATH", APP_DATA_DIR / "closingbell.db")
+KRX_HOLIDAYS_PATH = _env_path("KRX_HOLIDAYS_PATH", REFERENCE_DIR / "krx_holidays.json")
+MARKET_CALENDAR_PATH = _env_path("MARKET_CALENDAR_PATH", REFERENCE_DIR / "market_calendar.json")
 TRADING_CALENDAR_REFERENCE_CODE = _env("TRADING_CALENDAR_REFERENCE_CODE", "005930")
 SAVE_LEGACY_JSON = _env_bool("SAVE_LEGACY_JSON", False)
 LEGACY_JSON_RETENTION_DAYS = _env("LEGACY_JSON_RETENTION_DAYS", 5, int)
@@ -142,9 +170,19 @@ VOL_BURST_ZERO_HIGH = _env("VOL_BURST_ZERO_HIGH", 10.0, float)
 # ============================================================
 # 눌림목 모니터 (2단계 아키텍처)
 # ============================================================
-WATCHLIST_DIR = PROJECT_DIR / "data" / "watchlist"
-WATCHLIST_DIR.mkdir(parents=True, exist_ok=True)
 WATCHLIST_MAX_DAYS = _env("WATCHLIST_MAX_DAYS", 5, int)  # 워치리스트 유효기간
+WATCHLIST_MAX_STOCKS = _env("WATCHLIST_MAX_STOCKS", 5, int)
+DAILY_PICK_TOP_K = _env("DAILY_PICK_TOP_K", 3, int)
+RANK1_PULLBACK_BONUS = _env("RANK1_PULLBACK_BONUS", 20, float)
+RANK2_PULLBACK_BONUS = _env("RANK2_PULLBACK_BONUS", -5, float)
+RANK3_PULLBACK_BONUS = _env("RANK3_PULLBACK_BONUS", 15, float)
+RANK4_PULLBACK_BONUS = _env("RANK4_PULLBACK_BONUS", 5, float)
+RANK5_PULLBACK_BONUS = _env("RANK5_PULLBACK_BONUS", 5, float)
+BUY_REGIME_CHAOTIC_BONUS = _env("BUY_REGIME_CHAOTIC_BONUS", 3.0, float)
+BUY_REGIME_RISING_PENALTY = _env("BUY_REGIME_RISING_PENALTY", 2.0, float)
+BUY_REGIME_WEAK_PENALTY = _env("BUY_REGIME_WEAK_PENALTY", 1.0, float)
+REGIME_CHAOTIC_NASDAQ_ABS = _env("REGIME_CHAOTIC_NASDAQ_ABS", 1.5, float)
+REGIME_EVENT_HIGH_IMPACT = _env("REGIME_EVENT_HIGH_IMPACT", 3, int)
 
 # 눌림목 진입 조건
 PULLBACK_MA5_GAP = _env("PULLBACK_MA5_GAP", 1.5, float)     # MA5 이격도 ±% 이내
@@ -153,15 +191,13 @@ PULLBACK_BB_LOWER = _env("PULLBACK_BB_LOWER", 0.3, float)     # 볼린저 하단
 BUY_A_MIN_SCORE = _env("BUY_A_MIN_SCORE", 60, float)
 BUY_B_MIN_SCORE = _env("BUY_B_MIN_SCORE", 40, float)
 BUY_DART_DANGER_PENALTY = _env("BUY_DART_DANGER_PENALTY", 10, float)
-BUY_DART_CAUTION_PENALTY = _env("BUY_DART_CAUTION_PENALTY", 5, float)
+BUY_DART_CAUTION_PENALTY = _env("BUY_DART_CAUTION_PENALTY", 7, float)
 BUY_NEWS_DANGER_PENALTY = _env("BUY_NEWS_DANGER_PENALTY", 10, float)
 BUY_NEWS_CAUTION_PENALTY = _env("BUY_NEWS_CAUTION_PENALTY", 3, float)
 
 # ============================================================
 # 성과 추적
 # ============================================================
-PERFORMANCE_DIR = PROJECT_DIR / "data" / "performance"
-PERFORMANCE_DIR.mkdir(parents=True, exist_ok=True)
 PERFORMANCE_TRACK_DAYS = _env("PERFORMANCE_TRACK_DAYS", 5, int)
 
 # ============================================================
@@ -200,3 +236,27 @@ SCHEDULE = {
 
 # API 속도 제한
 API_DELAY = _env("API_DELAY", 0.12, float)
+
+# ============================================================
+# v3.6 — 대주주 지분 필터
+# ============================================================
+HOLDER_DUMP_THRESHOLD = _env("HOLDER_DUMP_THRESHOLD", -10.0, float)
+HOLDER_LOW_PENALTY = _env("HOLDER_LOW_PENALTY", 2.0, float)
+HOLDER_LOW_THRESH = _env("HOLDER_LOW_THRESH", 30.0, float)
+HOLDER_LOW_PRICE_MAX = _env("HOLDER_LOW_PRICE_MAX", 10000, int)
+
+# ============================================================
+# v3.6 — 캘린더 이벤트 감점
+# ============================================================
+FOMC_PENALTY = _env("FOMC_PENALTY", 3.0, float)
+POLITICAL_CRISIS_MODE = _env("POLITICAL_CRISIS_MODE", "top1")
+
+
+def create_analysis_run_dir(label: str = "") -> Path:
+    suffix = _slugify(label)
+    name = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if suffix:
+        name = f"{name}_{suffix}"
+    path = ANALYSIS_DIR / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path

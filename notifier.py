@@ -111,6 +111,24 @@ def _field(name: str, value: str, inline: bool = False) -> dict:
     return {"name": name, "value": _clip(value, 1000), "inline": inline}
 
 
+def _company_lines(payload: dict) -> list[str]:
+    lines: list[str] = []
+    sector = _safe_text(payload.get("sector"), "")
+    industry = _safe_text(payload.get("industry"), "")
+    brief = _safe_text(payload.get("company_brief"), "")
+    holder_tag = _safe_text(payload.get("holder_tag"), "")
+
+    if sector and sector != "-":
+        lines.append(f"🏭 업종 {sector}")
+    if industry and industry != "-":
+        lines.append(f"🧩 사업 {industry}")
+    elif brief and brief != "-":
+        lines.append(f"📋 {brief}")
+    if holder_tag and holder_tag != "-":
+        lines.append(f"👤 {holder_tag}")
+    return lines
+
+
 class Notifier:
     """Send Discord webhook notifications."""
 
@@ -244,19 +262,25 @@ class Notifier:
         sweet_spot = pick.get("sweet_spot_day", "-")
         in_window = "예" if pick.get("in_window") else "아니오"
         risk_flags = ", ".join(pick.get("risk_flags", [])) or "없음"
+        market_regime = _safe_text(pick.get("market_regime"), "")
         news_summary = _clip(pick.get("news_summary", "") or "", 120)
         note_parts = [
             _safe_text(pick.get("rank_note"), ""),
+            f"시장 레짐: {market_regime}" if market_regime and market_regime != "-" else "",
+            _safe_text(pick.get("event_warning"), ""),
             news_summary if news_summary != "-" else "",
         ]
         note = "\n".join(part for part in note_parts if part) or "-"
+        company_lines = _company_lines(pick)
+        desc_lines = [
+            signal_type,
+            f"스크리닝 #{pick.get('rank', '-')} | 감시 D+{pick.get('days_elapsed', '-')} | 스위트스팟 D+{sweet_spot}",
+            *company_lines,
+        ]
 
         embed = {
             "title": f"#{order} [{conviction}] {name} ({code})",
-            "description": (
-                f"{signal_type}\n"
-                f"스크리닝 #{pick.get('rank', '-')} | 감시 D+{pick.get('days_elapsed', '-')} | 스위트스팟 D+{sweet_spot}"
-            ),
+            "description": "\n".join(line for line in desc_lines if line),
             "color": GRADE_COLOR.get(conviction, GRADE_COLOR["C"]),
             "fields": [
                 _field(
@@ -340,6 +364,8 @@ class Notifier:
         action_icon = ACTION_ICON.get(action, "🟡")
         risk = _safe_text(stock.get("ai_risk"), "보통")
 
+        extra_line = "\n".join(_company_lines(stock))
+
         broker_bits = [stock.get("broker_signal", ""), stock.get("broker_top_buy", "")]
         broker_text = " | ".join(bit for bit in broker_bits if str(bit).strip()) or "-"
         indicators = [
@@ -348,13 +374,17 @@ class Notifier:
             f"MA20 괴리 {_fmt_pct(stock.get('ma20_gap'))}",
         ]
 
+        desc = (
+            f"{action_icon} {ACTION_LABEL.get(action, action)} | "
+            f"AI 리스크 {RISK_ICON.get(risk, '⚪')} {risk}\n"
+            f"점수 {_fmt_score(stock.get('score'))} | 거래대금 신호 {_safe_text(stock.get('vp_tag'), '-')}"
+        )
+        if extra_line:
+            desc += f"\n{extra_line}"
+
         return {
             "title": f"#{order} {stock.get('name', '-')} ({stock.get('code', '-')})",
-            "description": (
-                f"{action_icon} {ACTION_LABEL.get(action, action)} | "
-                f"AI 리스크 {RISK_ICON.get(risk, '⚪')} {risk}\n"
-                f"점수 {_fmt_score(stock.get('score'))} | 거래대금 신호 {_safe_text(stock.get('vp_tag'), '-')}"
-            ),
+            "description": desc,
             "color": WARNING_COLOR if stock.get("overheat") else SUMMARY_COLOR,
             "fields": [
                 _field(
@@ -403,6 +433,15 @@ class Notifier:
 
         top = result.get("top", [])
         embeds = [self._screen_summary_embed(result)]
+        # v3.6: 이벤트 경고
+        event_warning = result.get("market", {}).get("event_warning", "")
+        if event_warning:
+            embeds.append({
+                "title": "📅 오늘의 시장 이벤트",
+                "description": event_warning,
+                "color": WARNING_COLOR,
+                "timestamp": _utc_now_iso(),
+            })
         embeds.extend(self._screen_stock_embed(idx, stock) for idx, stock in enumerate(top[:5], start=1))
         self._send(embeds=embeds, event_type="screen_recommendation", ref_date=result.get("date"))
 

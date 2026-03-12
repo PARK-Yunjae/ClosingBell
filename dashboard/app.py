@@ -16,13 +16,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from storage import get_buy_picks, iter_buy_pick_outcomes, iter_notification_events, iter_screen_results, list_buy_pick_dates, list_watchlists as list_watchlists_db, load_backtest_dataset
-from config import WATCHLIST_MAX_DAYS
+from config import LOG_DIR, OHLCV_DIR, PERFORMANCE_DIR as PERF_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS
 from trading_calendar import trading_days_since
-
-LOG_DIR = ROOT / "data" / "logs"
-WATCHLIST_DIR = ROOT / "data" / "watchlist"
-PERF_DIR = ROOT / "data" / "performance"
-OHLCV_DIR = Path(os.getenv("DATA_DIR", "C:/Coding/data")) / "ohlcv"
 NAV = ["Overview", "Pick Vault", "Dispatch Log", "Watchlist Lab", "Performance Lab", "Screening Log", "Theme Radar"]
 COLORS = {"navy": "#143A52", "teal": "#1E6F74", "mint": "#2A9D8F", "coral": "#E76F51", "gold": "#E9C46A", "bg": "#FFF9F1", "ink": "#16202A"}
 MATCH_GAP_WARN_DAYS = 3
@@ -91,6 +86,10 @@ st.markdown(
     .pick .meta {{color:#5E6A75;font-size:.92rem;margin-bottom:.35rem;}}
     .pick .note {{color:{COLORS["ink"]};font-size:.95rem;line-height:1.45;margin-top:auto;}}
     .pick .chips {{display:flex;flex-wrap:wrap;gap:.35rem;margin:.35rem 0 .25rem 0;align-items:flex-start;}}
+    .info-card {{padding:1rem 1.05rem;background:rgba(255,255,255,.86);border:1px solid rgba(20,58,82,.08);border-radius:18px;box-shadow:0 10px 26px rgba(20,58,82,.05);margin-bottom:.7rem;}}
+    .info-card h4 {{margin:0 0 .25rem 0;color:{COLORS["ink"]};font-size:1rem;}}
+    .info-card .meta {{color:#5E6A75;font-size:.86rem;margin-bottom:.3rem;}}
+    .info-card .note {{color:{COLORS["ink"]};font-size:.92rem;line-height:1.45;}}
     div[data-testid="stHorizontalBlock"] {{gap:.9rem;}}
     @media (max-width: 1024px) {{
         .block-container {{padding-left:1rem;padding-right:1rem;}}
@@ -191,6 +190,43 @@ def compact_text(value, limit: int = 120, fallback: str = "-") -> str:
     if len(text) <= limit:
         return text
     return f"{text[: limit - 3].rstrip()}..."
+
+
+def business_summary(row, limit: int = 96, fallback: str = "-") -> str:
+    parts = []
+    sector = row.get("sector") if isinstance(row, (dict, pd.Series)) else None
+    industry = row.get("industry") if isinstance(row, (dict, pd.Series)) else None
+    company_brief = row.get("company_brief") if isinstance(row, (dict, pd.Series)) else None
+    holder_tag = row.get("holder_tag") if isinstance(row, (dict, pd.Series)) else None
+    if not is_blank(sector):
+        parts.append(f"업종 {sector}")
+    if not is_blank(industry):
+        parts.append(f"사업 {industry}")
+    elif not is_blank(company_brief):
+        parts.append(str(company_brief))
+    if not is_blank(holder_tag):
+        parts.append(f"지분 {holder_tag}")
+    if not parts:
+        return fallback
+    return compact_text(" | ".join(parts), limit, fallback)
+
+
+def render_info_cards(items: list[dict], cards_per_row: int = 2) -> None:
+    if not items:
+        st.info("표시할 요약이 없습니다.")
+        return
+    chunk = max(1, cards_per_row)
+    for start in range(0, len(items), chunk):
+        cols = st.columns(min(chunk, len(items) - start))
+        for col, item in zip(cols, items[start : start + chunk]):
+            with col:
+                title = html.escape(str(item.get("title", "-")))
+                meta = html.escape(str(item.get("meta", "")))
+                note = html.escape(str(item.get("note", ""))).replace("\n", "<br/>")
+                st.markdown(
+                    f"<div class='info-card'><h4>{title}</h4><div class='meta'>{meta}</div><div class='note'>{note}</div></div>",
+                    unsafe_allow_html=True,
+                )
 
 
 def safe_int(value, fallback: int = 0) -> int:
@@ -467,6 +503,13 @@ def render_pick_cards(day_rows: pd.DataFrame, mode: str) -> None:
                 html.escape(compact_text(signal_type, 54, "기본 신호")),
                 f"확신점수 {safe_int(row.get('conviction_score', 0), 0)} | D+{int(row.get('days_elapsed', 0) or 0)} | 현재가 {price:,}",
             ]
+            if not is_blank(row.get("market_regime")):
+                note_lines.append(f"레짐: {html.escape(str(row.get('market_regime')))}")
+            if not is_blank(row.get("event_warning")):
+                note_lines.append(f"이벤트: {html.escape(compact_text(row.get('event_warning'), 54))}")
+            summary_line = business_summary(row, 88, "")
+            if summary_line:
+                note_lines.insert(1, html.escape(summary_line))
             if risk:
                 note_lines.append(f"리스크: {html.escape(compact_text(', '.join(risk[:4]), 42, '없음'))}")
             if not is_blank(row.get("news_summary")):
@@ -508,6 +551,13 @@ def render_watchlist_stock_cards(sdf: pd.DataFrame) -> None:
                 f"스크리닝 점수 {score} | 기준가 {entry_price:,}",
                 f"트리거일 {fmt_date(row.get('trigger_date')) if triggered else '미감지'}",
             ]
+            if not is_blank(row.get("market_regime")):
+                note_lines.append(f"레짐: {html.escape(str(row.get('market_regime')))}")
+            if not is_blank(row.get("event_warning")):
+                note_lines.append(f"이벤트: {html.escape(compact_text(row.get('event_warning'), 54))}")
+            summary_line = business_summary(row, 88, "")
+            if summary_line:
+                note_lines.insert(1, html.escape(summary_line))
             if not is_blank(row.get("rank_note")):
                 note_lines.append(html.escape(compact_text(row.get("rank_note"), 54)))
             card_html = (
@@ -1421,11 +1471,38 @@ if page == "Overview":
     d1 = perf_view[perf_view["track_day"] == 1] if not perf_view.empty else pd.DataFrame()
     d3 = perf_view[perf_view["track_day"] == 3] if not perf_view.empty else pd.DataFrame()
     hero("개요", "스크리닝, 감시목록, 매수 추천 성과를 한 화면에서 확인합니다.", [f"최신 로그 {latest_date}", f"활성 감시목록 {len(active_wls)}", f"신호 아카이브 {len(signals)}", perf_mode])
+    # v3.6: 이벤트 경고 배너
+    event_warning = latest_log.get("market", {}).get("event_warning", "")
+    if event_warning:
+        st.warning(f"📅 시장 이벤트: {event_warning}")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("활성 감시목록", len(active_wls))
     c2.metric("백테스트 신호", f"{len(signals):,}")
     c3.metric("D+1 종가 승률", f"{d1['win'].mean() * 100:.1f}%" if not d1.empty else "-", delta=f"{d1['return_pct'].mean():+.2f}%" if not d1.empty else None)
     c4.metric("D+3 평균 수익", f"{d3['return_pct'].mean():+.2f}%" if not d3.empty else "-", delta=f"{len(live_pick_perf):,} 실전 행" if not live_pick_perf.empty else (f"{len(saved_picks):,} 저장 행" if not saved_picks.empty else "저장 추천 대기"))
+    overview_cards = []
+    latest_top = (latest_log.get("top") or [])[:3]
+    for row in latest_top[:2]:
+        overview_cards.append(
+            {
+                "title": f"#{row.get('rank', '-')} {row.get('name', row.get('code', '-'))}",
+                "meta": f"점수 {safe_int(row.get('score', 0), 0)} | 등락률 {fmt_pct(row.get('change_rate'))}",
+                "note": business_summary(row, 110, "업종 정보 없음"),
+            }
+        )
+    if latest_top:
+        market = latest_log.get("market", {})
+        warning_text = market.get("event_warning") or ("나스닥 약세 경고" if market.get("nasdaq_warning") else "이벤트/약세 경고 없음")
+        overview_cards.append(
+            {
+                "title": "시장 메모",
+                "meta": f"코스피 {market.get('kospi_change', 0):+.2f}% | 나스닥 {market.get('nasdaq_change', 0):+.2f}%",
+                "note": warning_text,
+            }
+        )
+    if overview_cards:
+        kicker("오늘 핵심")
+        render_info_cards(overview_cards, cards_per_row=3)
     l, r = st.columns([1.15, 1])
     with l:
         kicker("일별 흐름")
@@ -1952,8 +2029,8 @@ elif page == "Watchlist Lab":
                 if not sdf.empty:
                     kicker("종목 카드")
                     render_watchlist_stock_cards(sdf)
-                    cols = [c for c in ["rank", "name", "score", "entry_price", "sweet_spot_day", "window_start", "window_end", "triggered", "trigger_date", "conviction"] if c in sdf.columns]
-                    st.dataframe(sdf[cols].rename(columns={"rank": "순위", "name": "종목명", "score": "스크리닝 점수", "entry_price": "기준가", "sweet_spot_day": "스위트스팟", "window_start": "시작", "window_end": "종료", "triggered": "트리거", "trigger_date": "트리거 날짜", "conviction": "등급"}), width="stretch", hide_index=True)
+                    cols = [c for c in ["rank", "name", "sector", "industry", "score", "entry_price", "sweet_spot_day", "window_start", "window_end", "triggered", "trigger_date", "conviction", "holder_tag"] if c in sdf.columns]
+                    st.dataframe(sdf[cols].rename(columns={"rank": "순위", "name": "종목명", "sector": "업종", "industry": "사업", "score": "스크리닝 점수", "entry_price": "기준가", "sweet_spot_day": "스위트스팟", "window_start": "시작", "window_end": "종료", "triggered": "트리거", "trigger_date": "트리거 날짜", "conviction": "등급", "holder_tag": "지분"}), width="stretch", hide_index=True)
                     kicker("종목 타임라인")
                     timeline_fig = watchlist_stock_timeline(payload)
                     if timeline_fig:
@@ -2014,10 +2091,24 @@ elif page == "Screening Log":
     if payload.get("skipped"):
         st.warning(payload.get("reason", "건너뛴 로그입니다."))
     else:
-        l, r = st.columns([.94, 1.06])
-        with l:
-            kicker("상위 종목")
-            for _, row in pd.DataFrame(payload.get("top", [])).iterrows():
+        top_rows = pd.DataFrame(payload.get("top", []))
+        udf = pd.DataFrame(payload.get("all_scored", []))
+        digest_cards = []
+        for _, row in top_rows.head(3).iterrows():
+            digest_cards.append(
+                {
+                    "title": f"#{safe_int(row.get('rank', 0), 0)} {row.get('name', row.get('code', '-'))}",
+                    "meta": f"점수 {safe_int(row.get('score', 0), 0)} | 등락률 {fmt_pct(row.get('change_rate'))}",
+                    "note": business_summary(row, 118, "기업 정보 없음"),
+                }
+            )
+        if digest_cards:
+            kicker("핵심 보기")
+            render_info_cards(digest_cards, cards_per_row=3)
+
+        top_tab, universe_tab = st.tabs(["상위 카드", "유니버스 표"])
+        with top_tab:
+            for _, row in top_rows.iterrows():
                 sector = compact_text(row.get("sector", "업종 미확인"), 24, "업종 미확인")
                 score = safe_int(row.get("score", 0), 0)
                 price = safe_int(row.get("price", 0), 0)
@@ -2039,6 +2130,7 @@ elif page == "Screening Log":
                     f"{compare_chip_html('과열', overheat_text)}"
                 )
                 note_lines = [
+                    html.escape(business_summary(row, 92, "기업 정보 없음")),
                     f"CCI {cci:.0f} · RSI {rsi:.0f} · MA20 괴리 {ma20_gap:+.1f}%",
                     f"거래량 배수 {vol_ratio:.1f}x · 점수 {score}",
                 ]
@@ -2055,17 +2147,42 @@ elif page == "Screening Log":
                     f"</div>"
                 )
                 st.markdown(card, unsafe_allow_html=True)
-        with r:
-            kicker("유니버스 표")
-            udf = pd.DataFrame(payload.get("all_scored", []))
-            if not udf.empty:
-                cols = [c for c in ["rank", "name", "sector", "price", "change_rate", "score", "cci", "rsi", "ma20_gap", "vol_ratio", "vp_tag", "dart_risk", "ai_action"] if c in udf.columns]
+
+        with universe_tab:
+            if udf.empty:
+                st.info("유니버스 데이터가 없습니다.")
+            else:
+                f1, f2, f3 = st.columns([1.15, .8, .7])
+                with f1:
+                    query = st.text_input("종목/업종 검색", "", key=f"screen_query_{selected}")
+                with f2:
+                    min_score = st.number_input("최소 점수", min_value=0.0, value=0.0, step=5.0, key=f"screen_min_score_{selected}")
+                with f3:
+                    top_only = st.checkbox("상위 50만", value=False, key=f"screen_top_only_{selected}")
+
+                table_rows = udf.copy()
+                if "score" in table_rows.columns:
+                    table_rows = table_rows[pd.to_numeric(table_rows["score"], errors="coerce").fillna(0) >= float(min_score)]
+                if query:
+                    haystack = (
+                        table_rows["name"].fillna("").astype(str) + " " +
+                        table_rows.get("sector", pd.Series(index=table_rows.index, dtype=str)).fillna("").astype(str) + " " +
+                        table_rows.get("industry", pd.Series(index=table_rows.index, dtype=str)).fillna("").astype(str) + " " +
+                        table_rows.get("company_brief", pd.Series(index=table_rows.index, dtype=str)).fillna("").astype(str)
+                    ).str.lower()
+                    table_rows = table_rows[haystack.str.contains(query.lower(), na=False)]
+                if top_only and "rank" in table_rows.columns:
+                    table_rows = table_rows[pd.to_numeric(table_rows["rank"], errors="coerce").fillna(999) <= 50]
+
+                st.caption(f"필터 후 {len(table_rows):,}행")
+                cols = [c for c in ["rank", "name", "sector", "industry", "price", "change_rate", "score", "cci", "rsi", "ma20_gap", "vol_ratio", "vp_tag", "dart_risk", "ai_action", "company_brief", "holder_tag"] if c in table_rows.columns]
                 st.dataframe(
-                    udf[cols].rename(
+                    table_rows[cols].rename(
                         columns={
                             "rank": "순위",
                             "name": "종목명",
                             "sector": "업종",
+                            "industry": "사업",
                             "price": "현재가",
                             "change_rate": "등락률",
                             "score": "점수",
@@ -2076,6 +2193,8 @@ elif page == "Screening Log":
                             "vp_tag": "거래대금 신호",
                             "dart_risk": "DART",
                             "ai_action": "AI",
+                            "company_brief": "기업정보",
+                            "holder_tag": "지분",
                         }
                     ),
                     width="stretch",
@@ -2167,5 +2286,3 @@ elif page == "Theme Radar":
 
 st.sidebar.markdown("---")
 st.sidebar.caption("대시보드는 런타임 SQLite 기준으로 갱신됩니다.")
-
-

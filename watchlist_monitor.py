@@ -18,14 +18,20 @@ import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from functools import lru_cache
 
 from config import (
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
-    OHLCV_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS,
+    GLOBAL_CSV, OHLCV_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS, WATCHLIST_MAX_STOCKS,
     PULLBACK_MA5_GAP, PULLBACK_VOL_DECLINE, PULLBACK_BB_LOWER,
+    DAILY_PICK_TOP_K,
     BUY_A_MIN_SCORE, BUY_B_MIN_SCORE,
     BUY_DART_DANGER_PENALTY, BUY_DART_CAUTION_PENALTY,
     BUY_NEWS_DANGER_PENALTY, BUY_NEWS_CAUTION_PENALTY,
+    BUY_REGIME_CHAOTIC_BONUS, BUY_REGIME_RISING_PENALTY, BUY_REGIME_WEAK_PENALTY,
+    REGIME_CHAOTIC_NASDAQ_ABS, REGIME_EVENT_HIGH_IMPACT,
+    RANK1_PULLBACK_BONUS, RANK2_PULLBACK_BONUS, RANK3_PULLBACK_BONUS,
+    RANK4_PULLBACK_BONUS, RANK5_PULLBACK_BONUS,
 )
 from storage import (
     load_active_watchlists as load_active_watchlists_db,
@@ -34,6 +40,12 @@ from storage import (
     save_watchlist_payload,
 )
 from trading_calendar import add_trading_days, trading_days_since
+
+try:
+    from market_context import get_market_context
+except Exception:
+    def get_market_context():
+        return None
 
 logger = logging.getLogger("closingbell")
 
@@ -48,6 +60,13 @@ RANK_TIMING = {
     3: {"sweet_spot": 3, "window": (2, 4), "exp_wr": 71, "exp_ret": 8.0,
         "note": "깊은 조정 후 급반등 — 기다려야 큰 수익"},
 }
+RANK_PULLBACK_BONUS = {
+    1: RANK1_PULLBACK_BONUS,
+    2: RANK2_PULLBACK_BONUS,
+    3: RANK3_PULLBACK_BONUS,
+    4: RANK4_PULLBACK_BONUS,
+    5: RANK5_PULLBACK_BONUS,
+}
 
 
 def _conviction_from_score(score: float) -> str:
@@ -58,6 +77,148 @@ def _conviction_from_score(score: float) -> str:
     return "C"
 
 
+def _company_context(code: str, price: float = 0) -> dict:
+    market_ctx = get_market_context()
+    if not market_ctx:
+        return {}
+    ctx = market_ctx.stock_context(code, price)
+    return {
+        "sector": ctx.get("sector", ""),
+        "industry": ctx.get("industry", ""),
+        "company_brief": ctx.get("brief", ""),
+        "holder_tag": ctx.get("holder_tag", ""),
+    }
+
+
+def _merged_company_context(stock_info: dict, price: float = 0) -> dict:
+    code = str(stock_info.get("code", "")).strip().zfill(6)
+    context = _company_context(code, price)
+    return {
+        "sector": stock_info.get("sector") or context.get("sector", ""),
+        "industry": stock_info.get("industry") or context.get("industry", ""),
+        "company_brief": stock_info.get("company_brief") or context.get("company_brief", ""),
+        "holder_tag": stock_info.get("holder_tag") or context.get("holder_tag", ""),
+    }
+
+
+@lru_cache(maxsize=1)
+def _load_global_snapshot() -> pd.DataFrame:
+    if not GLOBAL_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(GLOBAL_CSV)
+    df.columns = [c.strip().lower() for c in df.columns]
+    if "date" not in df.columns:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+
+
+def _event_impact(date_str: str) -> int:
+    market_ctx = get_market_context()
+    if not market_ctx:
+        return 0
+    score_map = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    return max((score_map.get(ev.get("impact", ""), 0) for ev in market_ctx.get_events(date_str)), default=0)
+
+
+def _market_regime_context(date_str: str | None = None) -> dict:
+    date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+    snapshot = _load_global_snapshot()
+    if snapshot.empty:
+        return {"regime": "unknown", "nasdaq_prev_change": None, "kospi_ma20_gap": None, "event_impact": 0}
+
+    target = pd.Timestamp(date_str)
+    same_or_prev = snapshot[snapshot["date"] <= target]
+    prev_global = snapshot[snapshot["date"] < target]
+    nasdaq_prev = None
+    kospi_gap = None
+
+    if "nasdaq_change_pct" in prev_global.columns:
+        valid = prev_global.dropna(subset=["nasdaq_change_pct"])
+        if not valid.empty:
+            nasdaq_prev = float(valid.iloc[-1]["nasdaq_change_pct"])
+
+    if "kospi_close" in same_or_prev.columns:
+        valid = same_or_prev.dropna(subset=["kospi_close"]).tail(20)
+        if len(valid) >= 20:
+            current = float(valid.iloc[-1]["kospi_close"])
+            ma20 = float(valid["kospi_close"].mean())
+            if ma20:
+                kospi_gap = (current / ma20 - 1) * 100
+
+    impact = _event_impact(date_str)
+    if nasdaq_prev is not None and nasdaq_prev > 0 and kospi_gap is not None and kospi_gap > 0:
+        regime = "rising"
+    elif (nasdaq_prev is not None and abs(nasdaq_prev) >= REGIME_CHAOTIC_NASDAQ_ABS) or impact >= REGIME_EVENT_HIGH_IMPACT:
+        regime = "chaotic"
+    elif nasdaq_prev is not None and nasdaq_prev < 0 and kospi_gap is not None and kospi_gap < 0:
+        regime = "weak"
+    else:
+        regime = "mixed"
+
+    return {
+        "regime": regime,
+        "nasdaq_prev_change": nasdaq_prev,
+        "kospi_ma20_gap": kospi_gap,
+        "event_impact": impact,
+    }
+
+
+def _apply_regime_adjustment(score: float, risk_flags: list[str], date_str: str | None = None) -> tuple[float, str]:
+    regime_ctx = _market_regime_context(date_str)
+    regime = regime_ctx["regime"]
+    if regime == "chaotic":
+        score += BUY_REGIME_CHAOTIC_BONUS
+    elif regime == "rising":
+        score -= BUY_REGIME_RISING_PENALTY
+        risk_flags.append("상승장보수")
+    elif regime == "weak":
+        score -= BUY_REGIME_WEAK_PENALTY
+        risk_flags.append("약세장")
+    return score, regime
+
+
+def _apply_market_context_adjustment(
+    code: str,
+    rank: int,
+    price: float,
+    score: float,
+    risk_flags: list[str],
+    date_str: str | None = None,
+) -> tuple[float, dict]:
+    market_ctx = get_market_context()
+    if not market_ctx:
+        return score, {
+            "blocked": False,
+            "conservative": False,
+            "event_warning": "",
+            "event_adj": 0.0,
+            "holder_penalty": 0.0,
+        }
+
+    score_ctx = market_ctx.stock_score_context(code, price, date_str)
+    for flag in score_ctx.get("flags", []):
+        if flag not in risk_flags:
+            risk_flags.append(flag)
+
+    blocked = bool(score_ctx.get("skip"))
+    if score_ctx.get("conservative") and rank != 1:
+        blocked = True
+        if "정치위기TOP1만" not in risk_flags:
+            risk_flags.append("정치위기TOP1만")
+
+    if not blocked:
+        score += score_ctx.get("score_adj", 0.0)
+
+    return score, {
+        "blocked": blocked,
+        "conservative": bool(score_ctx.get("conservative")),
+        "event_warning": score_ctx.get("event_warning", ""),
+        "event_adj": score_ctx.get("event_adj", 0.0),
+        "holder_penalty": score_ctx.get("holder_penalty", 0.0),
+    }
+
+
 
 # ──────────────────────────────────────────────
 # 1단계: 워치리스트 저장
@@ -65,7 +226,11 @@ def _conviction_from_score(score: float) -> str:
 def save_watchlist(result: dict):
     """스크리닝 결과에서 워치리스트 저장 (순위+타이밍 정보 포함)"""
     today = result.get("date", datetime.now().strftime("%Y-%m-%d"))
-    top = result.get("all_scored", [])[:5]
+    limit = WATCHLIST_MAX_STOCKS
+    market_ctx = get_market_context()
+    if market_ctx and market_ctx.should_conservative(today):
+        limit = 1
+    top = result.get("all_scored", [])[:limit]
 
     if not top:
         return
@@ -79,6 +244,7 @@ def save_watchlist(result: dict):
     for stock in top:
         rank = stock.get("rank", 99)
         timing = RANK_TIMING.get(rank, RANK_TIMING[3])
+        meta = _merged_company_context(stock, stock.get("price", 0))
 
         watchlist["stocks"].append({
             "code": stock["code"],
@@ -93,6 +259,11 @@ def save_watchlist(result: dict):
             "sweet_spot_day": timing["sweet_spot"],
             "window_start": timing["window"][0],
             "window_end": timing["window"][1],
+            "rank_note": timing["note"],
+            "sector": meta["sector"],
+            "industry": meta["industry"],
+            "company_brief": meta["company_brief"],
+            "holder_tag": meta["holder_tag"],
             "triggered": False,
             "trigger_date": None,
             "trigger_price": None,
@@ -113,10 +284,17 @@ def load_active_watchlists() -> list[dict]:
     """만료되지 않은 활성 워치리스트 로드"""
     active = []
     for data in load_active_watchlists_db():
-        untriggered = [
-            s for s in data.get("stocks", [])
-            if not s.get("triggered")
-        ]
+        untriggered = []
+        for stock in data.get("stocks", []):
+            if stock.get("triggered"):
+                continue
+            meta = _merged_company_context(stock, stock.get("entry_price", 0))
+            if not stock.get("rank_note"):
+                stock["rank_note"] = RANK_TIMING.get(stock.get("rank", 99), RANK_TIMING[3]).get("note", "")
+            for key, value in meta.items():
+                if not stock.get(key):
+                    stock[key] = value
+            untriggered.append(stock)
         if untriggered:
             data["stocks"] = untriggered
             active.append(data)
@@ -279,9 +457,13 @@ def daily_top3() -> list[dict]:
                 logger.debug("daily 스코어링 실패 [%s]: %s", code, e)
 
     all_scored.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
-    top3 = all_scored[:3]
+    pick_limit = DAILY_PICK_TOP_K
+    market_ctx = get_market_context()
+    if market_ctx and market_ctx.should_conservative(datetime.now().strftime("%Y-%m-%d")):
+        pick_limit = 1
+    top3 = all_scored[:pick_limit]
 
-    logger.info("daily_top3: %d종목 스코어링 → TOP3 선정", len(all_scored))
+    logger.info("daily_top3: %d종목 스코어링 → TOP%d 선정", len(all_scored), pick_limit)
     for i, s in enumerate(top3):
         flags = ", ".join(s.get("risk_flags", [])) or "없음"
         logger.info("  %d. [%s] #%d %s — %d점 (%s) 위험:%s",
@@ -429,7 +611,7 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
 
     # ── 순위 보너스 (0~20점) ──
     rank = stock_info.get("rank", 99)
-    rank_bonus = {1: 20, 3: 15, 4: 5, 5: 5}.get(rank, 0)
+    rank_bonus = RANK_PULLBACK_BONUS.get(rank, 0)
     score += rank_bonus
 
     # ── 과열 감점 ──
@@ -442,14 +624,24 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
         score -= 5
         risk_flags.append("급락")
 
+    score, regime = _apply_regime_adjustment(score, risk_flags)
+    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags)
+    if market_ctx_info["blocked"]:
+        return None
+
     # ── 확신도 등급 ──
     conviction = _conviction_from_score(score)
 
     rank_info = RANK_TIMING.get(rank, {})
+    meta = _merged_company_context(stock_info, price)
 
     return {
         "code": code,
         "name": stock_info.get("name", code),
+        "sector": meta["sector"],
+        "industry": meta["industry"],
+        "company_brief": meta["company_brief"],
+        "holder_tag": meta["holder_tag"],
         "current_price": price,
         "signal_type": "+".join(tech) if tech else "",
         "ma5_gap": round(ma5_gap, 1),
@@ -466,6 +658,10 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
         "expected_wr": rank_info.get("exp_wr", 0),
         "expected_ret": rank_info.get("exp_ret", 0),
         "rank_note": rank_info.get("note", ""),
+        "market_regime": regime,
+        "event_warning": market_ctx_info["event_warning"],
+        "calendar_adj": market_ctx_info["event_adj"],
+        "holder_penalty": market_ctx_info["holder_penalty"],
         "risk_flags": risk_flags,
         "dart_risk": "",
         "dart_note": "",
@@ -535,6 +731,7 @@ def _check_single(code: str, stock_info: dict, api,
 
     # ── 확신도 점수 (0~100) ──
     score = 0
+    risk_flags = []
 
     # 기술적 조건 수 (최대 40)
     score += min(40, len(tech) * 10)
@@ -545,12 +742,18 @@ def _check_single(code: str, stock_info: dict, api,
 
     # 순위 보너스 (최대 20)
     rank = stock_info.get("rank", 99)
-    rank_bonus = {1: 20, 3: 15, 4: 5, 5: 5}.get(rank, 0)  # 2위: 0
+    rank_bonus = RANK_PULLBACK_BONUS.get(rank, 0)
     score += rank_bonus
 
     # 과열 감점
     if stock_info.get("overheat"):
         score -= 15
+        risk_flags.append("과열")
+
+    score, regime = _apply_regime_adjustment(score, risk_flags)
+    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags)
+    if market_ctx_info["blocked"]:
+        return None
 
     # ── 등급 결정 ──
     conviction = _conviction_from_score(score)
@@ -560,10 +763,15 @@ def _check_single(code: str, stock_info: dict, api,
         return None
 
     rank_info = RANK_TIMING.get(rank, {})
+    meta = _merged_company_context(stock_info, price)
 
     return {
         "code": code,
         "name": stock_info.get("name", code),
+        "sector": meta["sector"],
+        "industry": meta["industry"],
+        "company_brief": meta["company_brief"],
+        "holder_tag": meta["holder_tag"],
         "current_price": price,
         "signal_type": "+".join(tech),
         "ma5_gap": round(ma5_gap, 1),
@@ -577,6 +785,11 @@ def _check_single(code: str, stock_info: dict, api,
         "expected_wr": rank_info.get("exp_wr", 0),
         "expected_ret": rank_info.get("exp_ret", 0),
         "rank_note": rank_info.get("note", ""),
+        "market_regime": regime,
+        "event_warning": market_ctx_info["event_warning"],
+        "calendar_adj": market_ctx_info["event_adj"],
+        "holder_penalty": market_ctx_info["holder_penalty"],
+        "risk_flags": risk_flags,
     }
 
 
