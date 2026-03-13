@@ -92,6 +92,7 @@ EVENT_SCORE_ADJ = {
     "seasonal": 0.0,
     "seasonal_yearend": 0.0,
     "seasonal_newyear": 0.0,
+    "geopolitical": -2.0,
     "geopolitical_tariff": -2.0,
 }
 

@@ -316,6 +316,7 @@ def check_pullback() -> list[dict]:
 
     api = KiwoomAPI(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_BASE_URL, API_DELAY)
     api.ensure_token()
+    today = datetime.now().strftime("%Y-%m-%d")
 
     signals = []
     checked = set()
@@ -340,7 +341,7 @@ def check_pullback() -> list[dict]:
                 continue
 
             try:
-                result = _check_single(code, stock, api, days_elapsed, sweet_spot)
+                result = _check_single(code, stock, api, days_elapsed, sweet_spot, today)
                 if result:
                     result["watchlist_date"] = created
                     result["rank"] = rank
@@ -387,6 +388,7 @@ def daily_top3() -> list[dict]:
 
     api = KiwoomAPI(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_BASE_URL, API_DELAY)
     api.ensure_token()
+    today = datetime.now().strftime("%Y-%m-%d")
 
     all_scored = []
     checked = set()
@@ -415,7 +417,7 @@ def daily_top3() -> list[dict]:
                     continue
 
                 # ② 기술적 스코어링 (OHLCV + 현재가)
-                result = _score_stock(code, stock, cur, days_elapsed, sweet_spot)
+                result = _score_stock(code, stock, cur, days_elapsed, sweet_spot, today)
                 if not result:
                     continue
 
@@ -459,7 +461,7 @@ def daily_top3() -> list[dict]:
     all_scored.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
     pick_limit = DAILY_PICK_TOP_K
     market_ctx = get_market_context()
-    if market_ctx and market_ctx.should_conservative(datetime.now().strftime("%Y-%m-%d")):
+    if market_ctx and market_ctx.should_conservative(today):
         pick_limit = 1
     top3 = all_scored[:pick_limit]
 
@@ -492,8 +494,14 @@ def _check_news(stock_name: str) -> dict:
         return {"risk": "확인불가", "summary": "뉴스 체크 실패"}
 
 
-def _score_stock(code: str, stock_info: dict, cur_price: dict,
-                  days_elapsed: int, sweet_spot: int) -> dict | None:
+def _score_stock(
+    code: str,
+    stock_info: dict,
+    cur_price: dict,
+    days_elapsed: int,
+    sweet_spot: int,
+    date_str: str | None = None,
+) -> dict | None:
     """
     하이브리드 스코어링: OHLCV(과거) + API(현재가).
     15:00 호출이므로 CSV는 어제까지, 현재가는 API에서.
@@ -624,8 +632,8 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
         score -= 5
         risk_flags.append("급락")
 
-    score, regime = _apply_regime_adjustment(score, risk_flags)
-    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags)
+    score, regime = _apply_regime_adjustment(score, risk_flags, date_str)
+    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags, date_str)
     if market_ctx_info["blocked"]:
         return None
 
@@ -670,8 +678,14 @@ def _score_stock(code: str, stock_info: dict, cur_price: dict,
     }
 
 
-def _check_single(code: str, stock_info: dict, api,
-                   days_elapsed: int, sweet_spot: int) -> dict | None:
+def _check_single(
+    code: str,
+    stock_info: dict,
+    api,
+    days_elapsed: int,
+    sweet_spot: int,
+    date_str: str | None = None,
+) -> dict | None:
     """개별 종목 눌림목 조건 체크 (순위+타이밍 반영 확신도)"""
     code = code.strip().zfill(6)
 
@@ -750,8 +764,8 @@ def _check_single(code: str, stock_info: dict, api,
         score -= 15
         risk_flags.append("과열")
 
-    score, regime = _apply_regime_adjustment(score, risk_flags)
-    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags)
+    score, regime = _apply_regime_adjustment(score, risk_flags, date_str)
+    score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags, date_str)
     if market_ctx_info["blocked"]:
         return None
 

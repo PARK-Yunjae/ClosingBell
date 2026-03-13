@@ -19,7 +19,7 @@ from config import ANALYSIS_DIR, ANALYSIS_KEEP_LATEST
 
 
 RAW_DIR_NAMES = {"backtest", "datasets", "logs", "performance", "watchlist"}
-RAW_FILE_NAMES = {"recent_factor_dataset.csv", "v36_simulation.csv"}
+RAW_FILE_NAMES = {"recent_factor_dataset.csv", "v36_simulation.csv", "holder_analysis.csv"}
 
 
 def _walk_size(path: Path) -> tuple[int, int]:
@@ -62,12 +62,31 @@ def _raw_targets(root: Path) -> list[Path]:
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        if path.name not in RAW_FILE_NAMES and not path.name.endswith("_dataset.csv"):
+        if (
+            path.name not in RAW_FILE_NAMES
+            and not path.name.endswith("_dataset.csv")
+            and path.suffix.lower() != ".csv"
+        ):
             continue
         if any(parent in path.parents for parent in raw_dirs):
             continue
         targets.append(path)
     return targets
+
+
+def _prune_empty_dirs(root: Path) -> list[Path]:
+    removed: list[Path] = []
+    dirs = sorted(
+        [root, *[path for path in root.rglob("*") if path.is_dir()]],
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for path in dirs:
+        if any(path.iterdir()):
+            continue
+        path.rmdir()
+        removed.append(path)
+    return removed
 
 
 def main() -> None:
@@ -100,6 +119,7 @@ def main() -> None:
         "targets": [_format_entry(path) for path in targets],
         "trim_targets": [],
         "trimmed": [],
+        "pruned_dirs": [],
         "removed": [],
     }
 
@@ -114,6 +134,10 @@ def main() -> None:
                 if path.exists():
                     summary["trimmed"].append(_format_entry(path))
                     _delete_entry(path)
+            for path in entries:
+                if path.is_dir() and path.exists():
+                    for pruned in _prune_empty_dirs(path):
+                        summary["pruned_dirs"].append(_format_entry(pruned))
 
     if args.delete:
         for path in targets:

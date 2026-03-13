@@ -58,6 +58,27 @@ logging.basicConfig(
 logger = logging.getLogger("closingbell")
 
 
+def run_local_replay(as_of: str | None = None, created: str = ""):
+    """Run local watchlist replay without external API calls."""
+    from tools.analysis.local_watchlist_replay import run_local_watchlist_replay
+
+    replay_date = as_of or datetime.now().strftime("%Y-%m-%d")
+    report_path, payload = run_local_watchlist_replay(
+        as_of=replay_date,
+        created=created,
+    )
+    logger.info("로컬 리플레이 완료: %s", report_path)
+    summary = payload.get("summary", {})
+    logger.info(
+        "감시목록 %d | 후보 %d | 차단 %d | 상위 %d",
+        summary.get("watchlists", 0),
+        summary.get("replayed", 0),
+        summary.get("blocked", 0),
+        summary.get("picked", 0),
+    )
+    return report_path, payload
+
+
 # ══════════════════════════════════════════════
 # 15:00 — 감시 종목 스캔 → TOP3 웹훅
 # ══════════════════════════════════════════════
@@ -305,6 +326,9 @@ def main():
     parser.add_argument("--weekly", action="store_true", help="수동 주간 갱신")
     parser.add_argument("--backtest", action="store_true", help="간단 백테스트")
     parser.add_argument("--days", type=int, default=30, help="백테스트 기간")
+    parser.add_argument("--local-replay", action="store_true", help="API 없이 활성 워치리스트 로컬 리플레이")
+    parser.add_argument("--replay-date", default="", help="로컬 리플레이 기준일 (YYYY-MM-DD)")
+    parser.add_argument("--watchlist-date", default="", help="특정 watchlist created 날짜만 리플레이")
     args = parser.parse_args()
 
     if args.preflight:
@@ -339,6 +363,13 @@ def main():
         screener = Screener(api)
         result = screener.run_backtest(args.days) if hasattr(screener, 'run_backtest') else {}
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    elif args.local_replay:
+        report_path, payload = run_local_replay(
+            as_of=args.replay_date or None,
+            created=args.watchlist_date,
+        )
+        print(report_path.read_text(encoding="utf-8"))
+        print(json.dumps(payload.get("summary", {}), ensure_ascii=False, indent=2))
     else:
         run_scheduler()
 
