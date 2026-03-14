@@ -27,6 +27,7 @@ from config import (
     RANK1_SWEET_SPOT, RANK1_WINDOW_START, RANK1_WINDOW_END,
     RANK2_SWEET_SPOT, RANK2_WINDOW_START, RANK2_WINDOW_END,
     RANK3_SWEET_SPOT, RANK3_WINDOW_START, RANK3_WINDOW_END,
+    SUPPLY_CAUTION_PENALTY,
 )
 from storage import (
     load_active_watchlists as load_active_watchlists_db,
@@ -181,7 +182,7 @@ def make_action_label(pick: dict) -> dict:
         }
 
     # 주의 종목 (뉴스/DART 주의 or 과열)
-    caution_flags = {"DART주의", "과열", "급락", "약세장"}
+    caution_flags = {"DART주의", "과열", "급락", "약세장", "수급주의"}
     active_cautions = caution_flags & set(flags)
     if news_risk == "주의":
         active_cautions.add("뉴스주의")
@@ -601,6 +602,17 @@ def daily_top3() -> list[dict]:
                 elif news_info["risk"] == "주의":
                     result["conviction_score"] -= BUY_NEWS_CAUTION_PENALTY
 
+                # ⑤ 수급 체크 (공매도·대차·신용·투자자·체결강도)
+                supply_info = _check_supply(code, api)
+                result["supply"] = supply_info
+                result["supply_line"] = supply_info.get("summary_line", "")
+                supply_score = supply_info.get("total_score", 0)
+
+                # 수급 주의 시 감점
+                if supply_score <= -3:
+                    result["conviction_score"] -= SUPPLY_CAUTION_PENALTY
+                    result["risk_flags"] = result.get("risk_flags", []) + ["수급주의"]
+
                 # 등급 재계산 (감점 반영)
                 s = result["conviction_score"]
                 result["conviction"] = _conviction_from_score(s)
@@ -623,6 +635,58 @@ def daily_top3() -> list[dict]:
     if market_ctx and market_ctx.should_conservative(today):
         pick_limit = 1
     top3 = all_scored[:pick_limit]
+
+    # ⑦ 테마 강도 (TOP3에만 — API 3회)
+    for pick in top3:
+        try:
+            themes = api.get_stock_themes(pick["code"])
+            if themes:
+                # 가장 강한 테마 표시
+                best = max(themes, key=lambda t: t["change_rate"])
+                pick["theme_name"] = best["name"]
+                pick["theme_change"] = best["change_rate"]
+                pick["theme_count"] = len(themes)
+                if best["change_rate"] > 0:
+                    pick["theme_line"] = (
+                        f"🔥 {best['name']} ({best['change_rate']:+.1f}%)"
+                        + (f" 외 {len(themes)-1}개 테마" if len(themes) > 1 else "")
+                    )
+                else:
+                    pick["theme_line"] = (
+                        f"📊 {best['name']} ({best['change_rate']:+.1f}%)"
+                        + (f" 외 {len(themes)-1}개 테마" if len(themes) > 1 else "")
+                    )
+            else:
+                pick["theme_line"] = ""
+        except Exception as e:
+            logger.debug("테마 조회 실패 [%s]: %s", pick.get("name"), e)
+            pick["theme_line"] = ""
+
+    # 시장 전체 핫 테마 (1회 호출)
+    try:
+        hot_themes = api.get_theme_groups(sort="3", period="1")[:3]
+        market_theme_text = " | ".join(
+            f"{t['name']}({t['change_rate']:+.1f}%)" for t in hot_themes
+        )
+        for pick in top3:
+            pick["market_themes"] = market_theme_text
+    except Exception:
+        pass
+
+    # ⑧ 외신 + 유튜브 (TOP3에만 — API 절약)
+    for pick in top3:
+        name = pick.get("name", "")
+        products = pick.get("main_products", "")
+
+        # 외신
+        foreign = _check_foreign_news(name, products)
+        pick["foreign_news_note"] = foreign.get("note", "")
+        pick["foreign_news_score"] = foreign.get("score", 0)
+
+        # 유튜브
+        yt = _check_youtube(name, products)
+        pick["youtube_note"] = yt.get("note", "")
+        pick["youtube_score"] = yt.get("score", 0)
 
     logger.info("daily_top3: %d종목 스코어링 → TOP%d 선정", len(all_scored), pick_limit)
     for i, s in enumerate(top3):
@@ -651,6 +715,35 @@ def _check_news(stock_name: str) -> dict:
         return check_stock_news(stock_name)
     except Exception:
         return {"risk": "확인불가", "summary": "뉴스 체크 실패"}
+
+
+def _check_supply(code: str, api) -> dict:
+    """수급 종합 체크 (공매도·대차·신용·투자자·체결강도)"""
+    try:
+        from supply_checker import check_supply
+        return check_supply(code, api)
+    except Exception:
+        return {"summary_line": "", "total_score": 0}
+
+
+def _check_foreign_news(stock_name: str, products: str = "") -> dict:
+    """외신 체크 (NewsAPI)"""
+    try:
+        from foreign_news_checker import check_foreign_news
+        # 종목명 → 영문 변환은 향후 매핑 사전으로 개선
+        # 지금은 종목명 그대로 전달 (영문명이 있는 종목만 작동)
+        return check_foreign_news(stock_name, products=products)
+    except Exception:
+        return {"signal": "중립", "note": "", "hits": 0, "score": 0}
+
+
+def _check_youtube(stock_name: str, products: str = "") -> dict:
+    """유튜브 체크 (YouTube Data API)"""
+    try:
+        from youtube_checker import check_youtube
+        return check_youtube(stock_name, products=products)
+    except Exception:
+        return {"signal": "중립", "note": "", "video_count": 0, "score": 0}
 
 
 def _score_stock(

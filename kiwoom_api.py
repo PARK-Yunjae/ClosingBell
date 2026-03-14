@@ -521,6 +521,31 @@ class KiwoomAPI:
             })
         return result
 
+    def get_stock_themes(self, code: str) -> list[dict]:
+        """
+        ka90001(종목검색): 특정 종목이 속한 테마 목록 + 오늘 등락률.
+        qry_tp="2"로 종목코드 기준 검색.
+        """
+        data = self._post("/api/dostk/thme", "ka90001", {
+            "qry_tp": "2",            # 종목검색
+            "stk_cd": code,
+            "date_tp": "1",
+            "thema_nm": "",
+            "flu_pl_amt_tp": "3",     # 등락률순
+            "stex_tp": "3",
+        })
+
+        result = []
+        for item in data.get("thema_grp", []):
+            result.append({
+                "code": item.get("thema_grp_cd", ""),
+                "name": item.get("thema_nm", ""),
+                "change_rate": float(item.get("flu_rt", "0")),
+                "rising_count": int(item.get("rising_stk_num", "0")),
+                "falling_count": int(item.get("fall_stk_num", "0")),
+            })
+        return result
+
     def get_theme_stocks(self, theme_code: str) -> list[dict]:
         """ka90002: 테마구성종목"""
         data = self._post("/api/dostk/thme", "ka90002", {
@@ -540,45 +565,125 @@ class KiwoomAPI:
         return result
 
     # ──────────────────────────────────────────────
-    # 투자자 동향 (Phase 2)
+    # 수급 분석 API (재차거시 — 거·시 강화)
     # ──────────────────────────────────────────────
-    def get_investor_trend(self, code: str) -> dict:
-        """ka10059: 종목별투자자기관별 (외인/기관/개인 순매수)"""
-        data = self._post("/api/dostk/stkinfo", "ka10059", {
-            "stk_cd": code,
-            "dt": "1",
-            "indc_tp": "0",
-        })
-        # 응답 구조에 따라 파싱 (추후 보완)
-        return data
-
-    def get_daily_prices_with_investors(self, code: str, date: str = "") -> list[dict]:
+    def get_short_selling(self, code: str, days: int = 5) -> list[dict]:
         """
-        ka10086: 일별주가 (투자자별 순매수 포함)
-        외인/기관/개인 순매수 + 신용비율까지 한방에
+        ka10014: 공매도추이요청
+        최근 N일 공매도량·매매비중 반환.
         """
-        if not date:
-            date = datetime.now().strftime("%Y%m%d")
+        end = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=days + 10)).strftime("%Y%m%d")
 
-        data = self._post("/api/dostk/mrkcond", "ka10086", {
+        data = self._post("/api/dostk/shsa", "ka10014", {
             "stk_cd": code,
-            "qry_dt": date,
-            "indc_tp": "0",  # 수량 기준
+            "tm_tp": "1",
+            "strt_dt": start,
+            "end_dt": end,
         })
 
         result = []
-        for item in data.get("daly_stkpc", []):
+        for item in data.get("shrts_trnsn", [])[:days]:
             result.append({
-                "date": item.get("date", ""),
-                "open": abs(int(item.get("open_pric", "0").replace("+", "").replace("-", "").replace(",", ""))),
-                "high": abs(int(item.get("high_pric", "0").replace("+", "").replace("-", "").replace(",", ""))),
-                "low": abs(int(item.get("low_pric", "0").replace("+", "").replace("-", "").replace(",", ""))),
-                "close": abs(int(item.get("close_pric", "0").replace("+", "").replace("-", "").replace(",", ""))),
-                "volume": int(item.get("trde_qty", "0").replace(",", "")),
-                "foreign_net": item.get("for_netprps", "0"),
-                "inst_net": item.get("orgn_netprps", "0"),
-                "individual_net": item.get("ind_netprps", "0"),
-                "foreign_ratio": item.get("for_rt", "0"),
-                "credit_ratio": item.get("crd_remn_rt", "0"),
+                "date": item.get("dt", ""),
+                "short_qty": int(item.get("shrts_qty", "0").replace(",", "")),
+                "trade_qty": int(item.get("trde_qty", "0").replace(",", "")),
+                "short_ratio": float(item.get("trde_wght", "0")
+                                     .replace("+", "").replace(",", "") or "0"),
+                "short_value": int(item.get("shrts_trde_prica", "0").replace(",", "")),
+            })
+        return result
+
+    def get_stock_lending(self, code: str, days: int = 5) -> list[dict]:
+        """
+        ka20068: 대차거래추이요청(종목별)
+        대차잔고 증감 추이 반환.
+        """
+        end = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=days + 10)).strftime("%Y%m%d")
+
+        data = self._post("/api/dostk/slb", "ka20068", {
+            "strt_dt": start,
+            "end_dt": end,
+            "all_tp": "0",
+            "stk_cd": code,
+        })
+
+        result = []
+        for item in data.get("dbrt_trde_trnsn", [])[:days]:
+            result.append({
+                "date": item.get("dt", ""),
+                "lend_qty": int(item.get("dbrt_trde_cntrcnt", "0").replace(",", "")),
+                "return_qty": int(item.get("dbrt_trde_rpy", "0").replace(",", "")),
+                "change": int(item.get("dbrt_trde_irds", "0").replace(",", "")),
+                "balance": int(item.get("rmnd", "0").replace(",", "")),
+            })
+        return result
+
+    def get_credit_trend(self, code: str) -> list[dict]:
+        """
+        ka10013: 신용매매동향요청 (융자)
+        신용잔고·잔고율 추이 반환.
+        """
+        dt = datetime.now().strftime("%Y%m%d")
+
+        data = self._post("/api/dostk/stkinfo", "ka10013", {
+            "stk_cd": code,
+            "dt": dt,
+            "qry_tp": "1",  # 융자
+        })
+
+        result = []
+        for item in data.get("crd_trde_trend", [])[:10]:
+            result.append({
+                "date": item.get("dt", ""),
+                "new": int(item.get("new", "0").replace(",", "") or "0"),
+                "repay": int(item.get("rpya", "0").replace(",", "") or "0"),
+                "balance": int(item.get("remn", "0").replace(",", "") or "0"),
+                "balance_ratio": float(item.get("remn_rt", "0").replace(",", "") or "0"),
+            })
+        return result
+
+    def get_investor_trend(self, code: str, days: int = 5) -> list[dict]:
+        """
+        ka10059: 종목별투자자기관별요청
+        외인·기관·개인 순매수 일별 추이 반환.
+        """
+        dt = datetime.now().strftime("%Y%m%d")
+
+        data = self._post("/api/dostk/stkinfo", "ka10059", {
+            "dt": dt,
+            "stk_cd": code,
+            "amt_qty_tp": "2",   # 수량
+            "trde_tp": "0",      # 순매수
+            "unit_tp": "1",      # 단주
+        })
+
+        result = []
+        for item in data.get("stk_invsr_orgn", [])[:days]:
+            result.append({
+                "date": item.get("dt", ""),
+                "individual": int(item.get("ind_invsr", "0").replace(",", "") or "0"),
+                "foreign": int(item.get("frgnr_invsr", "0").replace(",", "") or "0"),
+                "institution": int(item.get("orgn", "0").replace(",", "") or "0"),
+            })
+        return result
+
+    def get_execution_strength(self, code: str) -> list[dict]:
+        """
+        ka10047: 체결강도추이일별요청
+        매수세 vs 매도세 강도 반환.
+        """
+        data = self._post("/api/dostk/mrkcond", "ka10047", {
+            "stk_cd": code,
+        })
+
+        result = []
+        for item in data.get("cntr_str_daly", [])[:5]:
+            result.append({
+                "date": item.get("dt", ""),
+                "strength": float(item.get("cntr_str", "0") or "0"),
+                "strength_5d": float(item.get("cntr_str_5min", "0") or "0"),
+                "strength_20d": float(item.get("cntr_str_20min", "0") or "0"),
             })
         return result

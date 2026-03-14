@@ -1,5 +1,5 @@
 """
-ClosingBell v3.7.1 점검 스크립트
+ClosingBell v3.8 점검 스크립트
 =================================
 로컬에서 실행: python tools/healthcheck.py
 
@@ -20,7 +20,7 @@ def section(title):
 
 def main():
     print("=" * 50)
-    print("  ClosingBell v3.7.1 점검")
+    print("  ClosingBell v3.8 점검")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 50)
 
@@ -34,6 +34,8 @@ def main():
             NAVER_CLIENT_ID, DART_API_KEY,
             OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, MAJOR_HOLDER_CSV,
             BUY_NEWS_CAUTION_PENALTY,
+            SUPPLY_CHECK_ENABLED, SUPPLY_SHORT_INCREASE_THRESH,
+            SUPPLY_CREDIT_HOT_RATIO, SUPPLY_CAUTION_PENALTY,
         )
         print(f"  키움 API: {'✅ 설정됨' if KIWOOM_APPKEY else '❌ 없음'}")
         print(f"  Discord: {'✅ 설정됨' if DISCORD_WEBHOOK_URL else '❌ 없음'}")
@@ -41,6 +43,10 @@ def main():
         print(f"  네이버 뉴스: {'✅ 설정됨' if NAVER_CLIENT_ID else '⚠️ 없음'}")
         print(f"  DART: {'✅ 설정됨' if DART_API_KEY else '⚠️ 없음'}")
         print(f"  뉴스 주의 감점: {BUY_NEWS_CAUTION_PENALTY}점 {'✅' if BUY_NEWS_CAUTION_PENALTY >= 5 else '⚠️ 3→5 반영 안됨'}")
+        print(f"  수급 체커: {'✅ 활성' if SUPPLY_CHECK_ENABLED else '⚠️ 비활성'}"
+              f" | 공매도>{SUPPLY_SHORT_INCREASE_THRESH}% 주의"
+              f" | 신용>{SUPPLY_CREDIT_HOT_RATIO}% 과열"
+              f" | 감점 {SUPPLY_CAUTION_PENALTY}점")
     except Exception as e:
         print(f"  ❌ config 로드 실패: {e}")
         return
@@ -254,6 +260,9 @@ def main():
             "risk_flags": [], "rank_note": "빠른 반등형",
             "market_regime": "chaotic",
             "event_warning": "FOMC(점도표)",
+            "supply_line": "✅ 외인·기관 동반 순매수",
+            "theme_line": "🔥 원전 (+3.2%) 외 2개 테마",
+            "market_themes": "원전(+3.2%) | 2차전지(+1.8%) | 반도체(+1.5%)",
             "action": {"label": "🟢 매수 적기", "detail": "D+2 최적 타이밍", "color": "green"},
         }
         n = Notifier()
@@ -270,6 +279,41 @@ def main():
 
     except Exception as e:
         print(f"  ❌ 웹훅 포맷 테스트 실패: {e}")
+
+    # ══════════════════════════════════════
+    # 8. 수급 체커 모듈 확인
+    # ══════════════════════════════════════
+    section("8. 수급 체커 모듈 확인")
+    try:
+        from supply_checker import check_supply, _empty_result, _build_summary_line
+        from kiwoom_api import KiwoomAPI
+
+        # API 메서드 존재 확인
+        methods = ['get_short_selling', 'get_stock_lending', 'get_credit_trend',
+                   'get_investor_trend', 'get_execution_strength']
+        for m in methods:
+            assert hasattr(KiwoomAPI, m), f"Missing: {m}"
+        print(f"  ✅ kiwoom_api: 수급 API 5개 메서드 확인")
+
+        # 빈 결과 생성 테스트
+        empty = _empty_result()
+        assert "summary_line" in empty
+        assert "total_score" in empty
+        print(f"  ✅ supply_checker: 모듈 로드 OK")
+
+        # 요약 라인 생성 테스트
+        mock = {
+            "short_selling": {"signal": "주의", "note": "공매도 비중 8.5% (3일 증가)", "score": -2},
+            "loan": {"signal": "주의", "note": "대차잔고 4일 연속 증가", "score": -2},
+            "credit": {"signal": "양호", "note": "신용 과열 없음", "score": 0},
+            "investor": {"signal": "양호", "note": "외인·기관 동반 순매수", "score": 2},
+            "strength": {"signal": "중립", "note": "체결강도 105%", "score": 0},
+        }
+        line = _build_summary_line(mock)
+        print(f"  시뮬레이션: {line}")
+
+    except Exception as e:
+        print(f"  ❌ 수급 체커 확인 실패: {e}")
 
     print(f"\n{'=' * 50}")
     print(f"  점검 완료!")

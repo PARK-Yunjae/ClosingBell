@@ -247,14 +247,21 @@ class Notifier:
         )
         risk_text = ", ".join(f"{n}" for n, _ in common_risks.most_common(3)) if common_risks else "없음"
 
+        # 시장 핫 테마 (있으면)
+        market_themes = _safe(picks[0].get("market_themes") if picks else "", "")
+
+        fields = [
+            _field("평균 확신", _score(avg), True),
+            _field("주의사항", risk_text, True),
+        ]
+        if market_themes and market_themes != "-":
+            fields.append(_field("🔥 오늘의 테마", market_themes, False))
+
         return {
             "title": f"🎯 클로징벨 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
             "description": "\n".join(lines),
             "color": _pick_color(picks),
-            "fields": [
-                _field("평균 확신", _score(avg), True),
-                _field("주의사항", risk_text, True),
-            ],
+            "fields": fields,
             "timestamp": _utc_now_iso(),
         }
 
@@ -307,6 +314,26 @@ class Notifier:
         if event_warning and event_warning != "-":
             desc_lines.append(f"📅 {event_warning}")
 
+        # 📊 수급 한줄 (공매도·대차·투자자 등)
+        supply_line = _safe(pick.get("supply_line"), "")
+        if supply_line and supply_line != "-":
+            desc_lines.append(f"💹 {supply_line}")
+
+        # 🔥 테마 강도 (종목이 속한 테마)
+        theme_line = _safe(pick.get("theme_line"), "")
+        if theme_line and theme_line != "-":
+            desc_lines.append(theme_line)
+
+        # 🌍 외신 (있으면)
+        foreign_note = _safe(pick.get("foreign_news_note"), "")
+        if foreign_note and foreign_note != "-":
+            desc_lines.append(f"🌍 {foreign_note}")
+
+        # 📺 유튜브 (있으면)
+        youtube_note = _safe(pick.get("youtube_note"), "")
+        if youtube_note and youtube_note != "-":
+            desc_lines.append(youtube_note)
+
         # 가격 + 추적
         price_lines = [
             f"현재가 {_won(pick.get('current_price'))}",
@@ -350,6 +377,7 @@ class Notifier:
             "대주주투매": "⚠️ 대주주 매도",
             "저지분소형주": "소형주 (저지분)",
             "정치위기TOP1만": "🏛️ 정치 위기 모드",
+            "수급주의": "💹 수급 악화",
         }
         risk_flags = pick.get("risk_flags", [])
         if risk_flags:
