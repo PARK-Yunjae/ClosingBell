@@ -1,5 +1,10 @@
 """
-Discord notifications for ClosingBell.
+Discord notifications for ClosingBell v3.7
+==========================================
+읽기 쉬운 한국어 웹훅 — "그래서 사?"에 바로 답하는 구조.
+
+변경 이력:
+  v3.7.1 — 한줄 액션 라벨 추가, 용어 한국어화, D+1 감점 표시
 """
 
 from __future__ import annotations
@@ -12,94 +17,119 @@ from pathlib import Path
 
 import requests
 
-from config import DASHBOARD_URL, DISCORD_WEBHOOK_URL
+from config import (
+    DISCORD_PICK_TOP_N,
+    DISCORD_SCREEN_TOP_N,
+    DISCORD_WEBHOOK_URL,
+    NOTIFIER_RECENT_SESSIONS,
+)
 from storage import save_notification_event
 
 logger = logging.getLogger("closingbell")
 TRACKING_PATH = Path(__file__).parent / "data" / "performance" / "tracking.json"
 
-ACTION_LABEL = {
-    "매수관심": "매수관심",
-    "관망": "관망",
-    "주의": "주의",
+# ════════════════════════════════════════════
+# 용어 매핑 — 시스템 용어 → 사람이 읽는 말
+# ════════════════════════════════════════════
+REGIME_KR = {
+    "rising": "상승세",
+    "chaotic": "혼조세 (변동 큼)",
+    "weak": "약세",
+    "mixed": "보통",
+    "unknown": "-",
 }
-ACTION_ICON = {
-    "매수관심": "🟢",
-    "관망": "🟡",
-    "주의": "🔴",
+
+SIGNAL_KR = {
+    "MA5터치": "5일선 근접",
+    "거래량감소": "거래량 줄어듦",
+    "BB하단": "볼린저 하단 근접",
+    "가격조정": "가격 눌림",
+    "깊은조정": "큰 폭 하락",
+    "CCI냉각": "과열 해소",
+    "RSI과매도": "과매도 구간",
 }
-RISK_ICON = {
-    "정상": "🟢",
-    "양호": "🟢",
-    "보통": "🟡",
-    "주의": "🟠",
-    "위험": "🔴",
-    "확인불가": "⚪",
+
+RANK_NOTE_KR = {
+    "빠른 반등형": "빠른 반등형 — 눌림목 오면 바로 진입",
+    "느린 회복형": "느린 회복형 — 며칠 기다렸다 진입",
+    "깊은 조정 후 반등형": "깊은 조정형 — 충분히 빠진 후 진입",
 }
-GRADE_COLOR = {
-    "A": 0x0F9D58,
-    "B": 0x1A73E8,
-    "C": 0x7F8C8D,
-}
+
+GRADE_EMOJI = {"A": "🥇", "B": "🥈", "C": "🥉"}
+GRADE_LABEL = {"A": "강력", "B": "보통", "C": "약함"}
+ACTION_ICON = {"매수관심": "🟢", "관망": "🟡", "주의": "🔴"}
+RISK_ICON = {"정상": "🟢", "양호": "🟢", "보통": "🟡", "주의": "🟠", "위험": "🔴", "확인불가": "⚪"}
+GRADE_COLOR = {"A": 0x0F9D58, "B": 0x1A73E8, "C": 0x7F8C8D}
+ACTION_COLOR = {"green": 0x0F9D58, "yellow": 0xF1C40F, "red": 0xE74C3C}
+
 SUMMARY_COLOR = 0x143A52
 WARNING_COLOR = 0xE67E22
 ERROR_COLOR = 0xC0392B
 NEUTRAL_COLOR = 0x7F8C8D
 
 
+# ════════════════════════════════════════════
+# 유틸리티
+# ════════════════════════════════════════════
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _safe_text(value, fallback: str = "-") -> str:
+def _safe(value, fallback: str = "-") -> str:
     text = str(value).strip() if value is not None else ""
     return text if text else fallback
 
 
 def _clip(text: str, limit: int = 300) -> str:
-    text = _safe_text(text, "")
+    text = _safe(text, "")
     if len(text) <= limit:
         return text or "-"
     return f"{text[: limit - 1].rstrip()}…"
 
 
-def _fmt_won(value) -> str:
+def _won(value) -> str:
     try:
         return f"{int(round(float(value))):,}원"
     except Exception:
         return "-"
 
 
-def _fmt_score(value) -> str:
+def _score(value) -> str:
     try:
         num = float(value)
-        return f"{num:.1f}" if num % 1 else f"{int(num)}"
+        return f"{num:.0f}점" if num == int(num) else f"{num:.1f}점"
     except Exception:
         return "-"
 
 
-def _fmt_pct(value, digits: int = 1) -> str:
+def _pct(value, digits: int = 1) -> str:
     try:
         return f"{float(value):+.{digits}f}%"
     except Exception:
         return "-"
 
 
-def _fmt_wr(value) -> str:
-    try:
-        return f"{float(value):.0f}%"
-    except Exception:
-        return "-"
+def _signal_kr(raw: str) -> str:
+    """시스템 시그널 -> 사람이 읽는 말"""
+    if not raw or raw == "-":
+        return "조건 재확인"
+    parts = raw.split("+")
+    return " + ".join(SIGNAL_KR.get(p.strip(), p.strip()) for p in parts)
 
 
-def _risk_line(label: str, level: str, detail: str = "") -> str:
-    icon = RISK_ICON.get(level, "⚪")
-    if detail:
-        return f"{label}: {icon} {level} ({_clip(detail, 80)})"
-    return f"{label}: {icon} {level}"
+def _regime_kr(raw: str) -> str:
+    return REGIME_KR.get(raw, raw or "-")
+
+
+def _field(name: str, value: str, inline: bool = False) -> dict:
+    return {"name": name, "value": _clip(value, 1000), "inline": inline}
 
 
 def _pick_color(picks: list[dict]) -> int:
+    for p in picks:
+        action = p.get("action", {})
+        if action.get("color") == "green":
+            return ACTION_COLOR["green"]
     if any(p.get("conviction") == "A" for p in picks):
         return GRADE_COLOR["A"]
     if any(p.get("conviction") == "B" for p in picks):
@@ -107,34 +137,14 @@ def _pick_color(picks: list[dict]) -> int:
     return GRADE_COLOR["C"]
 
 
-def _field(name: str, value: str, inline: bool = False) -> dict:
-    return {"name": name, "value": _clip(value, 1000), "inline": inline}
-
-
-def _company_lines(payload: dict) -> list[str]:
-    lines: list[str] = []
-    sector = _safe_text(payload.get("sector"), "")
-    industry = _safe_text(payload.get("industry"), "")
-    brief = _safe_text(payload.get("company_brief"), "")
-    holder_tag = _safe_text(payload.get("holder_tag"), "")
-
-    if sector and sector != "-":
-        lines.append(f"🏭 업종 {sector}")
-    if industry and industry != "-":
-        lines.append(f"🧩 사업 {industry}")
-    elif brief and brief != "-":
-        lines.append(f"📋 {brief}")
-    if holder_tag and holder_tag != "-":
-        lines.append(f"👤 {holder_tag}")
-    return lines
-
-
+# ════════════════════════════════════════════
+# Notifier 클래스
+# ════════════════════════════════════════════
 class Notifier:
-    """Send Discord webhook notifications."""
+    """Discord 웹훅 알림 발송."""
 
     def __init__(self):
         self.url = DISCORD_WEBHOOK_URL
-        self.dashboard_url = DASHBOARD_URL
 
     def _send(
         self,
@@ -162,33 +172,25 @@ class Notifier:
 
         try:
             response = requests.post(self.url, json=payload, timeout=10)
-            if response.status_code not in (200, 204):
+            status = "sent" if response.status_code in (200, 204) else "failed"
+            if status == "failed":
                 logger.warning("Discord webhook failed: %s %s", response.status_code, response.text[:200])
-                save_notification_event(
-                    event_type,
-                    payload,
-                    status="failed",
-                    ref_date=ref_date,
-                    response_code=response.status_code,
-                )
-            else:
-                save_notification_event(
-                    event_type,
-                    payload,
-                    status="sent",
-                    ref_date=ref_date,
-                    response_code=response.status_code,
-                )
+            save_notification_event(
+                event_type, payload,
+                status=status, ref_date=ref_date,
+                response_code=response.status_code,
+            )
         except Exception as exc:
             logger.warning("Discord webhook error: %s", exc)
             save_notification_event(
-                event_type,
-                {**payload, "error": str(exc)},
-                status="error",
-                ref_date=ref_date,
+                event_type, {**payload, "error": str(exc)},
+                status="error", ref_date=ref_date,
             )
 
-    def _recent_screen_snapshot(self, sessions: int = 20) -> str:
+    # ─────────────────────────────────────
+    # 최근 성과 스냅샷
+    # ─────────────────────────────────────
+    def _recent_screen_snapshot(self, sessions: int = NOTIFIER_RECENT_SESSIONS) -> str:
         if not TRACKING_PATH.exists():
             return ""
         try:
@@ -202,8 +204,7 @@ class Notifier:
             return ""
 
         unique_dates = sorted({row["rec_date"] for row in d1_rows}, reverse=True)[:sessions]
-        date_set = set(unique_dates)
-        rows = [row for row in d1_rows if row["rec_date"] in date_set]
+        rows = [row for row in d1_rows if row["rec_date"] in set(unique_dates)]
         if not rows:
             return ""
 
@@ -211,220 +212,284 @@ class Notifier:
         win_rate = (wins / len(rows)) * 100 if rows else 0
         avg_return = sum(float(row.get("return_pct", 0) or 0) for row in rows) / len(rows)
         return (
-            f"최근 {len(unique_dates)}거래일 스크리닝 D+1: "
-            f"{wins}/{len(rows)}승 ({win_rate:.1f}%) | 평균 {_fmt_pct(avg_return, 2)}"
+            f"최근 {len(unique_dates)}일 실적: "
+            f"{wins}/{len(rows)}승 ({win_rate:.1f}%) | 평균수익 {_pct(avg_return, 2)}"
         )
 
-    def _common_risks(self, picks: list[dict]) -> str:
-        counter = Counter(
-            flag
-            for pick in picks
-            for flag in pick.get("risk_flags", [])
-            if str(flag).strip()
-        )
-        if not counter:
-            return "없음"
-        return ", ".join(f"{name} x{count}" for name, count in counter.most_common(3))
-
+    # ═══════════════════════════════════════
+    # 일일 매수 추천 (15:00 웹훅)
+    # ═══════════════════════════════════════
     def _daily_pick_summary_embed(self, picks: list[dict]) -> dict:
         grade_counts = Counter(p.get("conviction", "C") for p in picks)
-        avg_score = sum(float(p.get("conviction_score", 0) or 0) for p in picks) / max(len(picks), 1)
+        avg = sum(float(p.get("conviction_score", 0) or 0) for p in picks) / max(len(picks), 1)
         top = picks[0]
         recent = self._recent_screen_snapshot()
 
+        # 상단 — 1순위 액션 라벨
+        top_action = top.get("action", {})
+        action_line = f"{top_action.get('label', '관심')} — {top_action.get('detail', '')}"
+
         lines = [
-            f"매수 후보 `{len(picks)}개` | A `{grade_counts['A']}` / B `{grade_counts['B']}` / C `{grade_counts['C']}`",
-            f"상단 후보 `{top.get('name', '-')}` | 확신점수 `{_fmt_score(top.get('conviction_score'))}` | 감시 D+{top.get('days_elapsed', '-')}",
-            f"공통 리스크 `{self._common_risks(picks)}`",
-            f"[대시보드]({self.dashboard_url})",
+            action_line,
+            "",
+            f"후보 {len(picks)}개 | "
+            f"A {grade_counts.get('A', 0)}건 / B {grade_counts.get('B', 0)}건 / C {grade_counts.get('C', 0)}건",
+            f"1순위 {top.get('name', '-')} | 확신 {_score(top.get('conviction_score'))} | D+{top.get('days_elapsed', '-')}일째 추적",
         ]
         if recent:
-            lines.insert(3, recent)
+            lines.append(f"📊 {recent}")
+
+        # 공통 리스크
+        common_risks = Counter(
+            flag for pick in picks
+            for flag in pick.get("risk_flags", [])
+            if str(flag).strip()
+        )
+        risk_text = ", ".join(f"{n}" for n, _ in common_risks.most_common(3)) if common_risks else "없음"
 
         return {
-            "title": f"클로징벨 | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+            "title": f"🎯 클로징벨 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
             "description": "\n".join(lines),
             "color": _pick_color(picks),
             "fields": [
-                _field("평균 확신점수", _fmt_score(avg_score), True),
-                _field("대표 신호", _safe_text(top.get("signal_type"), "조건 재확인"), True),
-                _field("권장 메모", "A등급 우선, C등급은 관망 보조로 해석", False),
+                _field("평균 확신", _score(avg), True),
+                _field("주의사항", risk_text, True),
             ],
             "timestamp": _utc_now_iso(),
         }
 
     def _daily_pick_embed(self, order: int, pick: dict) -> dict:
-        name = _safe_text(pick.get("name", pick.get("code")))
-        code = _safe_text(pick.get("code"), "")
-        conviction = _safe_text(pick.get("conviction"), "C")
-        signal_type = _safe_text(pick.get("signal_type"), "조건 재확인")
-        watchlist_date = _safe_text(pick.get("watchlist_date"), "-")
-        sweet_spot = pick.get("sweet_spot_day", "-")
-        in_window = "예" if pick.get("in_window") else "아니오"
-        risk_flags = ", ".join(pick.get("risk_flags", [])) or "없음"
-        market_regime = _safe_text(pick.get("market_regime"), "")
-        news_summary = _clip(pick.get("news_summary", "") or "", 120)
-        note_parts = [
-            _safe_text(pick.get("rank_note"), ""),
-            f"시장 레짐: {market_regime}" if market_regime and market_regime != "-" else "",
-            _safe_text(pick.get("event_warning"), ""),
-            news_summary if news_summary != "-" else "",
-        ]
-        note = "\n".join(part for part in note_parts if part) or "-"
-        company_lines = _company_lines(pick)
+        name = _safe(pick.get("name", pick.get("code")))
+        code = _safe(pick.get("code"), "")
+        conv = _safe(pick.get("conviction"), "C")
+        days = pick.get("days_elapsed", 0)
+        sweet = pick.get("sweet_spot_day", "-")
+
+        # ★ 한줄 액션 (가장 중요한 정보)
+        action = pick.get("action", {})
+        action_line = f"{action.get('label', '관심')} {action.get('detail', '')}"
+
+        # 시그널 한국어
+        signal_kr = _signal_kr(pick.get("signal_type", ""))
+
+        # 기업 정보 (업종 + 제품 + 대주주)
+        company_parts = []
+        sector = _safe(pick.get("sector"), "")
+        industry = _safe(pick.get("industry"), "")
+        main_products = _safe(pick.get("main_products"), "")
+        holder_tag = _safe(pick.get("holder_tag"), "")
+        if sector and sector != "-":
+            company_parts.append(f"🏭 {sector}")
+        if industry and industry != "-" and industry != sector:
+            company_parts.append(f"· {industry}")
+
         desc_lines = [
-            signal_type,
-            f"스크리닝 #{pick.get('rank', '-')} | 감시 D+{pick.get('days_elapsed', '-')} | 스위트스팟 D+{sweet_spot}",
-            *company_lines,
+            action_line,
+            "",
+            f"📍 {signal_kr}",
         ]
+        if company_parts:
+            desc_lines.append(" ".join(company_parts))
+        if main_products and main_products != "-":
+            desc_lines.append(f"🔧 주요 제품: {_clip(main_products, 60)}")
+        if holder_tag and holder_tag != "-":
+            desc_lines.append(f"👤 {holder_tag}")
+
+        # 📰 핵심 뉴스 한줄 (항상 표시)
+        news_highlight = _safe(pick.get("news_highlight"), "")
+        if news_highlight and news_highlight != "-":
+            desc_lines.append(f"📰 {news_highlight}")
+        else:
+            desc_lines.append("📰 관련 뉴스 없음")
+
+        # 📅 캘린더 이벤트 (있으면 상단에)
+        event_warning = _safe(pick.get("event_warning"), "")
+        if event_warning and event_warning != "-":
+            desc_lines.append(f"📅 {event_warning}")
+
+        # 가격 + 추적
+        price_lines = [
+            f"현재가 {_won(pick.get('current_price'))}",
+            f"스크리닝 이후 {_pct(pick.get('price_change_from_screen'))}",
+        ]
+
+        # 판단 (쉬운 말)
+        timing_text = f"D+{days}일째" + (f" (최적 D+{sweet})" if days != sweet else " 최적 타이밍")
+        judge_lines = [
+            f"확신 {_score(pick.get('conviction_score'))} ({GRADE_LABEL.get(conv, conv)})",
+            f"추적 {timing_text}",
+        ]
+
+        # 리스크 (간결하게)
+        risk_parts = []
+        dart_risk = _safe(pick.get("dart_risk"), "확인불가")
+        dart_note = _safe(pick.get("dart_note"), "")
+        news_risk = _safe(pick.get("news_risk"), "확인불가")
+        news_summary = _clip(pick.get("news_summary", "") or "", 100)
+
+        risk_parts.append(
+            f"공시 {RISK_ICON.get(dart_risk, '⚪')} {dart_risk}"
+            + (f" ({dart_note})" if dart_note and dart_note != "-" else "")
+        )
+        risk_parts.append(
+            f"뉴스 {RISK_ICON.get(news_risk, '⚪')} {news_risk}"
+            + (f" ({news_summary})" if news_summary and news_summary != "-" else "")
+        )
+
+        # 리스크 플래그 번역
+        FLAG_KR = {
+            "D+1이른진입": "⏳ 아직 이르다",
+            "과열": "🔥 과열 상태",
+            "급락": "📉 급락 주의",
+            "DART위험": "",
+            "DART주의": "",
+            "뉴스위험": "",
+            "약세장": "📉 시장 약세",
+            "상승장보수": "📈 상승장 보수 접근",
+            "이벤트주의": "📅 이벤트 주의",
+            "대주주투매": "⚠️ 대주주 매도",
+            "저지분소형주": "소형주 (저지분)",
+            "정치위기TOP1만": "🏛️ 정치 위기 모드",
+        }
+        risk_flags = pick.get("risk_flags", [])
+        if risk_flags:
+            readable = [FLAG_KR.get(f, f) for f in risk_flags if FLAG_KR.get(f, f)]
+            if readable:
+                risk_parts.append("⚠️ " + " | ".join(readable))
+
+        # 참고 메모 (패턴 + 시장)
+        memo_parts = []
+        rank_note = pick.get("rank_note", "")
+        if rank_note:
+            memo_parts.append(RANK_NOTE_KR.get(rank_note, rank_note))
+        regime = pick.get("market_regime", "")
+        if regime and regime != "-":
+            memo_parts.append(f"시장: {_regime_kr(regime)}")
+
+        color = ACTION_COLOR.get(action.get("color", "yellow"), GRADE_COLOR.get(conv, GRADE_COLOR["C"]))
 
         embed = {
-            "title": f"#{order} [{conviction}] {name} ({code})",
-            "description": "\n".join(line for line in desc_lines if line),
-            "color": GRADE_COLOR.get(conviction, GRADE_COLOR["C"]),
+            "title": f"#{order} [{conv}] {name} ({code})",
+            "description": "\n".join(desc_lines),
+            "color": color,
             "fields": [
-                _field(
-                    "진입 정보",
-                    "\n".join(
-                        [
-                            f"현재가 {_fmt_won(pick.get('current_price'))}",
-                            f"스크리닝 대비 {_fmt_pct(pick.get('price_change_from_screen'))}",
-                            f"감시 시작 {watchlist_date}",
-                        ]
-                    ),
-                    True,
-                ),
-                _field(
-                    "기대치",
-                    "\n".join(
-                        [
-                            f"확신점수 {_fmt_score(pick.get('conviction_score'))}",
-                            f"예상 승률 {_fmt_wr(pick.get('expected_wr'))}",
-                            f"예상 수익 {_fmt_pct(pick.get('expected_ret'))}",
-                            f"윈도우 진입 {in_window}",
-                        ]
-                    ),
-                    True,
-                ),
-                _field(
-                    "리스크",
-                    "\n".join(
-                        [
-                            _risk_line("DART", _safe_text(pick.get("dart_risk"), "확인불가"), pick.get("dart_note", "")),
-                            _risk_line("뉴스", _safe_text(pick.get("news_risk"), "확인불가"), pick.get("news_summary", "")),
-                            f"리스크 플래그: {risk_flags}",
-                        ]
-                    ),
-                    False,
-                ),
-                _field("메모", note, False),
+                _field("💰 가격", "\n".join(price_lines), True),
+                _field("📊 판단", "\n".join(judge_lines), True),
+                _field("🛡️ 리스크", "\n".join(risk_parts), False),
             ],
-            "footer": {"text": f"대시보드: {self.dashboard_url}"},
             "timestamp": _utc_now_iso(),
         }
+        if memo_parts:
+            embed["fields"].append(_field("💡 참고", "\n".join(memo_parts), False))
+
         return embed
 
+    # ═══════════════════════════════════════
+    # 장마감 스크리닝 (15:40 웹훅)
+    # ═══════════════════════════════════════
     def _screen_summary_embed(self, result: dict) -> dict:
         market = result.get("market", {})
         themes = result.get("theme_summary", [])[:3]
         prev_returns = result.get("prev_returns", [])[:3]
 
-        market_text = "\n".join(
-            [
-                f"코스피 {_fmt_score(market.get('kospi'))} ({_fmt_pct(market.get('kospi_change'))})",
-                f"나스닥 {_fmt_pct(market.get('nasdaq_change'))}",
-                "미국 약세 경고" if market.get("nasdaq_warning") else "미국 약세 경고 없음",
-            ]
-        )
+        market_lines = [
+            f"코스피 {_safe(market.get('kospi'))} ({_pct(market.get('kospi_change'))})",
+            f"나스닥 {_pct(market.get('nasdaq_change'))}",
+        ]
+        if market.get("nasdaq_warning"):
+            market_lines.append("⚠️ 미국 약세 경고")
+
         theme_text = "\n".join(
-            f"{item.get('name', '-')} {_fmt_pct(item.get('change_rate'))}" for item in themes
+            f"{item.get('name', '-')} {_pct(item.get('change_rate'))}" for item in themes
         ) or "-"
+
         prev_text = "\n".join(
-            f"{item.get('name', '-')} {_fmt_pct(item.get('return_pct'))}" for item in prev_returns
+            f"{item.get('name', '-')} {_pct(item.get('return_pct'))}" for item in prev_returns
         ) or "-"
 
         return {
-            "title": f"클로징벨 | 장마감 스크리닝 ({result.get('date', '-')})",
+            "title": f"📋 클로징벨 스크리닝 ({result.get('date', '-')})",
             "description": (
-                f"유니버스 `{result.get('universe_count', 0)}개` | "
-                f"관심종목 `{len(result.get('top', []))}개`\n"
-                f"[대시보드]({self.dashboard_url})"
+                f"유니버스 {result.get('universe_count', 0)}종목 | "
+                f"관심 {len(result.get('top', []))}종목"
             ),
             "color": WARNING_COLOR if market.get("nasdaq_warning") else SUMMARY_COLOR,
             "fields": [
-                _field("시장 요약", market_text, True),
-                _field("주도 테마", theme_text, True),
-                _field("전일 추천 추적", prev_text, False),
+                _field("📈 시장", "\n".join(market_lines), True),
+                _field("🔥 테마", theme_text, True),
+                _field("📊 전일 추천 결과", prev_text, False),
             ],
             "timestamp": _utc_now_iso(),
         }
 
     def _screen_stock_embed(self, order: int, stock: dict) -> dict:
-        action = _safe_text(stock.get("ai_action"), "관망")
+        action = _safe(stock.get("ai_action"), "관망")
         action_icon = ACTION_ICON.get(action, "🟡")
-        risk = _safe_text(stock.get("ai_risk"), "보통")
+        risk = _safe(stock.get("ai_risk"), "보통")
 
-        extra_line = "\n".join(_company_lines(stock))
+        company_parts = []
+        sector = _safe(stock.get("sector"), "")
+        industry = _safe(stock.get("industry"), "")
+        holder_tag = _safe(stock.get("holder_tag"), "")
+        if sector and sector != "-":
+            company_parts.append(f"🏭 {sector}")
+        if industry and industry != "-" and industry != sector:
+            company_parts.append(f"· {industry}")
+        if holder_tag and holder_tag != "-":
+            company_parts.append(f"👤 {holder_tag}")
+
+        desc_lines = [
+            f"{action_icon} {action} | 리스크 {RISK_ICON.get(risk, '⚪')} {risk}",
+            f"점수 {_score(stock.get('score'))} | 거래 신호 {_safe(stock.get('vp_tag'), '-')}",
+        ]
+        if company_parts:
+            desc_lines.append(" ".join(company_parts))
 
         broker_bits = [stock.get("broker_signal", ""), stock.get("broker_top_buy", "")]
         broker_text = " | ".join(bit for bit in broker_bits if str(bit).strip()) or "-"
-        indicators = [
-            f"CCI {_fmt_score(stock.get('cci'))}",
-            f"RSI {_fmt_score(stock.get('rsi'))}",
-            f"MA20 괴리 {_fmt_pct(stock.get('ma20_gap'))}",
-        ]
-
-        desc = (
-            f"{action_icon} {ACTION_LABEL.get(action, action)} | "
-            f"AI 리스크 {RISK_ICON.get(risk, '⚪')} {risk}\n"
-            f"점수 {_fmt_score(stock.get('score'))} | 거래대금 신호 {_safe_text(stock.get('vp_tag'), '-')}"
-        )
-        if extra_line:
-            desc += f"\n{extra_line}"
 
         return {
             "title": f"#{order} {stock.get('name', '-')} ({stock.get('code', '-')})",
-            "description": desc,
+            "description": "\n".join(desc_lines),
             "color": WARNING_COLOR if stock.get("overheat") else SUMMARY_COLOR,
             "fields": [
                 _field(
-                    "가격",
-                    "\n".join(
-                        [
-                            f"현재가 {_fmt_won(stock.get('price'))}",
-                            f"등락률 {_fmt_pct(stock.get('change_rate'))}",
-                            f"거래량 배수 {_fmt_score(stock.get('vol_ratio'))}",
-                        ]
-                    ),
+                    "💰 가격",
+                    "\n".join([
+                        f"현재가 {_won(stock.get('price'))}",
+                        f"등락률 {_pct(stock.get('change_rate'))}",
+                        f"거래량 x{_safe(stock.get('vol_ratio'), '-')}",
+                    ]),
                     True,
                 ),
                 _field("수급", broker_text, True),
                 _field(
-                    "지표",
-                    "\n".join(indicators),
-                    True,
+                    "📊 지표",
+                    f"CCI {_safe(stock.get('cci'))} | RSI {_safe(stock.get('rsi'))} | MA20 {_pct(stock.get('ma20_gap'))}",
+                    False,
                 ),
                 _field(
-                    "DART / AI 요약",
-                    "\n".join(
-                        [
-                            _risk_line("DART", _safe_text(stock.get("dart_risk"), "확인불가"), stock.get("dart_note", "")),
-                            _clip(stock.get("ai_summary", "") or "", 180),
-                        ]
-                    ),
+                    "🛡️ 공시/뉴스",
+                    "\n".join([
+                        f"공시 {RISK_ICON.get(_safe(stock.get('dart_risk')), '⚪')} {_safe(stock.get('dart_risk'), '확인불가')}"
+                        + (f" ({_clip(stock.get('dart_note', ''), 80)})" if stock.get("dart_note") else ""),
+                        _clip(stock.get("ai_summary", "") or "", 150),
+                    ]),
                     False,
                 ),
             ],
-            "footer": {"text": f"대시보드: {self.dashboard_url}"},
             "timestamp": _utc_now_iso(),
         }
 
+    # ═══════════════════════════════════════
+    # 공개 메서드
+    # ═══════════════════════════════════════
     def send_recommendation(self, result: dict) -> None:
         if result.get("skipped"):
-            reason = _safe_text(result.get("reason"), "사유 없음")
+            reason = _safe(result.get("reason"), "사유 없음")
             embed = {
-                "title": f"클로징벨 | 장마감 스크리닝 건너뜀 ({result.get('date', '-')})",
-                "description": f"사유: {reason}\n[대시보드]({self.dashboard_url})",
+                "title": f"📋 클로징벨 스크리닝 건너뜀 ({result.get('date', '-')})",
+                "description": f"사유: {reason}",
                 "color": WARNING_COLOR,
                 "timestamp": _utc_now_iso(),
             }
@@ -433,7 +498,6 @@ class Notifier:
 
         top = result.get("top", [])
         embeds = [self._screen_summary_embed(result)]
-        # v3.6: 이벤트 경고
         event_warning = result.get("market", {}).get("event_warning", "")
         if event_warning:
             embeds.append({
@@ -442,17 +506,17 @@ class Notifier:
                 "color": WARNING_COLOR,
                 "timestamp": _utc_now_iso(),
             })
-        embeds.extend(self._screen_stock_embed(idx, stock) for idx, stock in enumerate(top[:5], start=1))
+        embeds.extend(
+            self._screen_stock_embed(idx, stock)
+            for idx, stock in enumerate(top[:DISCORD_SCREEN_TOP_N], start=1)
+        )
         self._send(embeds=embeds, event_type="screen_recommendation", ref_date=result.get("date"))
 
     def send_daily_picks(self, picks: list[dict], pick_date: str | None = None) -> None:
         if not picks:
             embed = {
-                "title": f"클로징벨 | 일일 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
-                "description": (
-                    "오늘은 활성 워치리스트에서 매수 조건을 만족한 종목이 없습니다.\n"
-                    f"[대시보드]({self.dashboard_url})"
-                ),
+                "title": f"🎯 클로징벨 매수 추천 ({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+                "description": "오늘은 매수 조건을 만족한 종목이 없습니다.\n관망하는 것도 전략입니다.",
                 "color": NEUTRAL_COLOR,
                 "timestamp": _utc_now_iso(),
             }
@@ -460,7 +524,10 @@ class Notifier:
             return
 
         embeds = [self._daily_pick_summary_embed(picks)]
-        embeds.extend(self._daily_pick_embed(idx, pick) for idx, pick in enumerate(picks[:5], start=1))
+        embeds.extend(
+            self._daily_pick_embed(idx, pick)
+            for idx, pick in enumerate(picks[:DISCORD_PICK_TOP_N], start=1)
+        )
         self._send(embeds=embeds, event_type="daily_picks", ref_date=pick_date)
 
     def send_shutdown(self, message: str = "") -> None:
@@ -474,26 +541,28 @@ class Notifier:
         if not signals:
             return
 
-        title = f"클로징벨 | 눌림목 진입 신호 ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        title = f"🔔 클로징벨 눌림목 신호 ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
         summary = {
             "title": title,
             "description": (
-                f"신호 `{len(signals)}개` 감지 | "
-                f"A `{sum(1 for s in signals if s.get('conviction') == 'A')}` / "
-                f"B `{sum(1 for s in signals if s.get('conviction') == 'B')}` / "
-                f"C `{sum(1 for s in signals if s.get('conviction') == 'C')}`\n"
-                f"[대시보드]({self.dashboard_url})"
+                f"신호 {len(signals)}개 감지 | "
+                f"A {sum(1 for s in signals if s.get('conviction') == 'A')}건 / "
+                f"B {sum(1 for s in signals if s.get('conviction') == 'B')}건 / "
+                f"C {sum(1 for s in signals if s.get('conviction') == 'C')}건"
             ),
             "color": _pick_color(signals),
             "timestamp": _utc_now_iso(),
         }
         embeds = [summary]
-        embeds.extend(self._daily_pick_embed(idx, signal) for idx, signal in enumerate(signals[:5], start=1))
+        embeds.extend(
+            self._daily_pick_embed(idx, signal)
+            for idx, signal in enumerate(signals[:DISCORD_PICK_TOP_N], start=1)
+        )
         self._send(embeds=embeds, event_type="pullback_signals", ref_date=datetime.now().strftime("%Y-%m-%d"))
 
     def send_error(self, error_msg: str) -> None:
         embed = {
-            "title": "클로징벨 | 오류",
+            "title": "⚠️ 클로징벨 오류",
             "description": _clip(error_msg, 1500),
             "color": ERROR_COLOR,
             "timestamp": _utc_now_iso(),

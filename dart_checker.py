@@ -1,5 +1,5 @@
 """
-ClosingBell v3.5 — DART 공시 체크
+ClosingBell v3.7 DART disclosure checker
 ====================================
 DART OpenAPI로 최근 공시 확인.
 종목코드(6자리) → DART 고유번호(8자리) 매핑 포함.

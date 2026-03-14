@@ -1,18 +1,10 @@
-﻿"""
-ClosingBell v3.5 — 눌림목 모니터 (순위별 타이밍 최적화)
-======================================================
-백테스트 데이터 기반 순위별 최적 진입 타이밍:
+"""
+ClosingBell v3.7 watchlist monitor.
 
-  1위: D+1 눌림목 진입 → D+2 승률 75%, 평균 +3.9%  ← 빠르게 잡아야
-  2위: 전 구간 약세 → 우선순위 낮음 (참고용)
-  3위: D+2~D+3 눌림목 진입 → D+3 승률 71%, 평균 +8.0%  ← 기다려야
-
-15:00 디스코드 웹훅 발송.
-웹훅에 확신도(A/B/C) 표시 → A등급만 매수 권장.
-
-사용법:
-    python watchlist_monitor.py              # 워치리스트 체크
-    python watchlist_monitor.py --status     # 현재 상태
+Runtime-only watchlist logic:
+- store and evaluate ranks 1, 2, 3 only
+- remove ranks 4 and 5 from both persistence and pick flow
+- send the 15:00 Discord pick based on live watchlist checks
 """
 import logging
 import pandas as pd
@@ -22,7 +14,7 @@ from functools import lru_cache
 
 from config import (
     KIWOOM_BASE_URL, KIWOOM_APPKEY, KIWOOM_SECRETKEY, API_DELAY,
-    GLOBAL_CSV, OHLCV_DIR, WATCHLIST_DIR, WATCHLIST_MAX_DAYS, WATCHLIST_MAX_STOCKS,
+    GLOBAL_CSV, OHLCV_DIR, WATCHLIST_MAX_DAYS, WATCHLIST_MAX_STOCKS,
     PULLBACK_MA5_GAP, PULLBACK_VOL_DECLINE, PULLBACK_BB_LOWER,
     DAILY_PICK_TOP_K,
     BUY_A_MIN_SCORE, BUY_B_MIN_SCORE,
@@ -31,12 +23,13 @@ from config import (
     BUY_REGIME_CHAOTIC_BONUS, BUY_REGIME_RISING_PENALTY, BUY_REGIME_WEAK_PENALTY,
     REGIME_CHAOTIC_NASDAQ_ABS, REGIME_EVENT_HIGH_IMPACT,
     RANK1_PULLBACK_BONUS, RANK2_PULLBACK_BONUS, RANK3_PULLBACK_BONUS,
-    RANK4_PULLBACK_BONUS, RANK5_PULLBACK_BONUS,
+    WATCHLIST_ALLOWED_RANKS,
+    RANK1_SWEET_SPOT, RANK1_WINDOW_START, RANK1_WINDOW_END,
+    RANK2_SWEET_SPOT, RANK2_WINDOW_START, RANK2_WINDOW_END,
+    RANK3_SWEET_SPOT, RANK3_WINDOW_START, RANK3_WINDOW_END,
 )
 from storage import (
     load_active_watchlists as load_active_watchlists_db,
-    prune_legacy_json,
-    save_legacy_json,
     save_watchlist_payload,
 )
 from trading_calendar import add_trading_days, trading_days_since
@@ -50,23 +43,95 @@ except Exception:
 logger = logging.getLogger("closingbell")
 
 # ──────────────────────────────────────────────
-# 순위별 최적 타이밍 윈도우 (백테스트 18일 224건 기반)
+# Rank timing windows loaded from .env-backed config.
 # ──────────────────────────────────────────────
 RANK_TIMING = {
-    1: {"sweet_spot": 1, "window": (1, 2), "exp_wr": 75, "exp_ret": 3.9,
-        "note": "빠른 반등형 — D+1 눌림목이 최적"},
-    2: {"sweet_spot": 4, "window": (3, 5), "exp_wr": 64, "exp_ret": -0.6,
-        "note": "느린 회복형 — 우선순위 낮음"},
-    3: {"sweet_spot": 3, "window": (2, 4), "exp_wr": 71, "exp_ret": 8.0,
-        "note": "깊은 조정 후 급반등 — 기다려야 큰 수익"},
+    1: {
+        "sweet_spot": RANK1_SWEET_SPOT,
+        "window": (RANK1_WINDOW_START, RANK1_WINDOW_END),
+        "note": "빠른 반등형",
+    },
+    2: {
+        "sweet_spot": RANK2_SWEET_SPOT,
+        "window": (RANK2_WINDOW_START, RANK2_WINDOW_END),
+        "note": "느린 회복형",
+    },
+    3: {
+        "sweet_spot": RANK3_SWEET_SPOT,
+        "window": (RANK3_WINDOW_START, RANK3_WINDOW_END),
+        "note": "깊은 조정 후 반등형",
+    },
 }
 RANK_PULLBACK_BONUS = {
     1: RANK1_PULLBACK_BONUS,
     2: RANK2_PULLBACK_BONUS,
     3: RANK3_PULLBACK_BONUS,
-    4: RANK4_PULLBACK_BONUS,
-    5: RANK5_PULLBACK_BONUS,
 }
+DEFAULT_TIMING_RANK = max(RANK_TIMING)
+
+
+def _is_allowed_rank(rank: int) -> bool:
+    try:
+        return int(rank) in WATCHLIST_ALLOWED_RANKS
+    except (TypeError, ValueError):
+        return False
+
+
+def _rank_timing(rank: int) -> dict:
+    return RANK_TIMING.get(rank, RANK_TIMING[DEFAULT_TIMING_RANK])
+
+
+def _load_recent_ohlcv(code: str, tail: int = 30) -> pd.DataFrame | None:
+    csv_path = OHLCV_DIR / f"{code.strip().zfill(6)}.csv"
+    if not csv_path.exists():
+        return None
+    df = pd.read_csv(csv_path)
+    df.columns = [c.lower() for c in df.columns]
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").tail(tail)
+    if len(df) < 20:
+        return None
+    return df
+
+
+def _calc_pullback_snapshot(df: pd.DataFrame, price: float, volume: float, entry_price: float) -> dict:
+    recent_closes = list(df["close"].tail(4).values) + [price]
+    ma5 = np.mean(recent_closes)
+    ma5_gap = abs((price / ma5 - 1) * 100) if ma5 > 0 else 999
+
+    vol_ma20 = df["volume"].tail(20).mean()
+    vol_decline = volume / vol_ma20 if vol_ma20 > 0 else 1.0
+
+    recent_20 = list(df["close"].tail(19).values) + [price]
+    bb_mid = np.mean(recent_20)
+    bb_std = np.std(recent_20)
+    bb_lower = bb_mid - 2 * bb_std
+    bb_upper = bb_mid + 2 * bb_std
+    bb_position = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper > bb_lower else 0.5
+
+    price_change = (price / entry_price - 1) * 100 if entry_price > 0 else 0
+    return {
+        "ma5_gap": ma5_gap,
+        "vol_decline": vol_decline,
+        "bb_position": bb_position,
+        "price_change": price_change,
+    }
+
+
+def _calc_rsi_cci(df: pd.DataFrame) -> tuple[float, float]:
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    sma_tp = tp.rolling(14).mean()
+    mad = tp.rolling(14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    cci_series = (tp - sma_tp) / (0.015 * mad)
+    cci_now = float(cci_series.iloc[-1]) if pd.notna(cci_series.iloc[-1]) else 0
+
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi_series = 100 - (100 / (1 + rs))
+    rsi_now = float(rsi_series.iloc[-1]) if pd.notna(rsi_series.iloc[-1]) else 50
+    return cci_now, rsi_now
 
 
 def _conviction_from_score(score: float) -> str:
@@ -75,6 +140,89 @@ def _conviction_from_score(score: float) -> str:
     if score >= BUY_B_MIN_SCORE:
         return "B"
     return "C"
+
+
+def make_action_label(pick: dict) -> dict:
+    """
+    종목 데이터로부터 한줄 액션 라벨 + 색상을 생성.
+    웹훅 상단에 표시할 결론 문구.
+    Returns: {"label": str, "detail": str, "color": "green"|"yellow"|"red"}
+    """
+    days = pick.get("days_elapsed", 0)
+    conv = pick.get("conviction", "C")
+    score = pick.get("conviction_score", 0)
+    flags = pick.get("risk_flags", [])
+    news_risk = pick.get("news_risk", "")
+    dart_risk = pick.get("dart_risk", "")
+    in_window = pick.get("in_window", False)
+
+    # 위험 종목
+    danger_flags = {"DART위험", "뉴스위험", "대주주투매"}
+    if danger_flags & set(flags):
+        reasons = []
+        if "DART위험" in flags or dart_risk == "위험":
+            reasons.append("공시 위험")
+        if "뉴스위험" in flags or news_risk == "위험":
+            reasons.append("악재 뉴스")
+        if "대주주투매" in flags:
+            reasons.append("대주주 매도")
+        return {
+            "label": "⛔ 진입 비추",
+            "detail": " + ".join(reasons),
+            "color": "red",
+        }
+
+    # D+1 이르다
+    if days <= 1:
+        return {
+            "label": "⏳ 아직 이르다",
+            "detail": f"포착 당일 — D+2~3 눌림목 기다리기",
+            "color": "yellow",
+        }
+
+    # 주의 종목 (뉴스/DART 주의 or 과열)
+    caution_flags = {"DART주의", "과열", "급락", "약세장"}
+    active_cautions = caution_flags & set(flags)
+    if news_risk == "주의":
+        active_cautions.add("뉴스주의")
+
+    # 매수 적기
+    if in_window and conv in ("A", "B") and not active_cautions:
+        sweet = pick.get("sweet_spot_day", 2)
+        if days == sweet:
+            return {
+                "label": "🟢 매수 적기",
+                "detail": f"D+{days} 최적 타이밍 진입 구간",
+                "color": "green",
+            }
+        return {
+            "label": "🟢 매수 고려",
+            "detail": f"D+{days} 진입 가능 구간 (최적 D+{sweet})",
+            "color": "green",
+        }
+
+    # 관심 (주의사항 있거나 C등급)
+    if active_cautions:
+        caution_text = ", ".join(sorted(active_cautions))
+        return {
+            "label": "🟡 주의하며 관심",
+            "detail": caution_text,
+            "color": "yellow",
+        }
+
+    # 윈도우 밖이거나 C등급
+    if not in_window:
+        return {
+            "label": "⏸️ 타이밍 대기",
+            "detail": f"D+{days} — 아직 감시 윈도우 밖",
+            "color": "yellow",
+        }
+
+    return {
+        "label": "🟡 관심 종목",
+        "detail": f"C등급 — 보조 참고용",
+        "color": "yellow",
+    }
 
 
 def _company_context(code: str, price: float = 0) -> dict:
@@ -86,6 +234,7 @@ def _company_context(code: str, price: float = 0) -> dict:
         "sector": ctx.get("sector", ""),
         "industry": ctx.get("industry", ""),
         "company_brief": ctx.get("brief", ""),
+        "main_products": ctx.get("main_products", ""),
         "holder_tag": ctx.get("holder_tag", ""),
     }
 
@@ -97,6 +246,7 @@ def _merged_company_context(stock_info: dict, price: float = 0) -> dict:
         "sector": stock_info.get("sector") or context.get("sector", ""),
         "industry": stock_info.get("industry") or context.get("industry", ""),
         "company_brief": stock_info.get("company_brief") or context.get("company_brief", ""),
+        "main_products": stock_info.get("main_products") or context.get("main_products", ""),
         "holder_tag": stock_info.get("holder_tag") or context.get("holder_tag", ""),
     }
 
@@ -230,7 +380,7 @@ def save_watchlist(result: dict):
     market_ctx = get_market_context()
     if market_ctx and market_ctx.should_conservative(today):
         limit = 1
-    top = result.get("all_scored", [])[:limit]
+    top = [stock for stock in result.get("all_scored", []) if _is_allowed_rank(stock.get("rank", 99))][:limit]
 
     if not top:
         return
@@ -243,7 +393,7 @@ def save_watchlist(result: dict):
 
     for stock in top:
         rank = stock.get("rank", 99)
-        timing = RANK_TIMING.get(rank, RANK_TIMING[3])
+        timing = _rank_timing(rank)
         meta = _merged_company_context(stock, stock.get("price", 0))
 
         watchlist["stocks"].append({
@@ -263,6 +413,7 @@ def save_watchlist(result: dict):
             "sector": meta["sector"],
             "industry": meta["industry"],
             "company_brief": meta["company_brief"],
+            "main_products": meta["main_products"],
             "holder_tag": meta["holder_tag"],
             "triggered": False,
             "trigger_date": None,
@@ -272,8 +423,6 @@ def save_watchlist(result: dict):
         })
 
     save_watchlist_payload(watchlist)
-    save_legacy_json(WATCHLIST_DIR / f"{today}.json", watchlist)
-    prune_legacy_json(WATCHLIST_DIR)
     logger.info("워치리스트 저장: %d종목 (%s)", len(watchlist["stocks"]), today)
 
 
@@ -288,9 +437,11 @@ def load_active_watchlists() -> list[dict]:
         for stock in data.get("stocks", []):
             if stock.get("triggered"):
                 continue
+            if not _is_allowed_rank(stock.get("rank", 99)):
+                continue
             meta = _merged_company_context(stock, stock.get("entry_price", 0))
             if not stock.get("rank_note"):
-                stock["rank_note"] = RANK_TIMING.get(stock.get("rank", 99), RANK_TIMING[3]).get("note", "")
+                stock["rank_note"] = _rank_timing(stock.get("rank", 99)).get("note", "")
             for key, value in meta.items():
                 if not stock.get(key):
                     stock[key] = value
@@ -332,6 +483,8 @@ def check_pullback() -> list[dict]:
             checked.add(code)
 
             rank = stock.get("rank", 99)
+            if not _is_allowed_rank(rank):
+                continue
             window_start = stock.get("window_start", 1)
             window_end = stock.get("window_end", 5)
             sweet_spot = stock.get("sweet_spot_day", 2)
@@ -407,6 +560,8 @@ def daily_top3() -> list[dict]:
             checked.add(code)
 
             rank = stock.get("rank", 99)
+            if not _is_allowed_rank(rank):
+                continue
             sweet_spot = stock.get("sweet_spot_day", 2)
 
             try:
@@ -438,6 +593,7 @@ def daily_top3() -> list[dict]:
                 news_info = _check_news(stock.get("name", ""))
                 result["news_risk"] = news_info["risk"]
                 result["news_summary"] = news_info["summary"]
+                result["news_highlight"] = news_info.get("highlight", "")
 
                 if news_info["risk"] == "위험":
                     result["conviction_score"] -= BUY_NEWS_DANGER_PENALTY
@@ -453,6 +609,9 @@ def daily_top3() -> list[dict]:
                 result["rank"] = rank
                 result["days_elapsed"] = days_elapsed
                 result["original_score"] = stock["score"]
+
+                # 액션 라벨 재생성 (DART/뉴스 감점 반영)
+                result["action"] = make_action_label(result)
                 all_scored.append(result)
 
             except Exception as e:
@@ -507,57 +666,19 @@ def _score_stock(
     15:00 호출이므로 CSV는 어제까지, 현재가는 API에서.
     """
     code = code.strip().zfill(6)
-
-    csv_path = OHLCV_DIR / f"{code}.csv"
-    if not csv_path.exists():
-        return None
-
-    df = pd.read_csv(csv_path)
-    df.columns = [c.lower() for c in df.columns]
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").tail(30)
-
-    if len(df) < 20:
+    df = _load_recent_ohlcv(code)
+    if df is None:
         return None
 
     price = cur_price["price"]
     volume = cur_price.get("volume", 0)
-
-    # MA5 (CSV 최근 4일 + 오늘 현재가)
-    recent_closes = list(df["close"].tail(4).values) + [price]
-    ma5 = np.mean(recent_closes)
-    ma5_gap = abs((price / ma5 - 1) * 100) if ma5 > 0 else 999
-
-    # 거래량 감소율
-    vol_ma20 = df["volume"].tail(20).mean()
-    vol_decline = volume / vol_ma20 if vol_ma20 > 0 else 1.0
-
-    # 볼린저밴드 (CSV 19일 + 오늘)
-    recent_20 = list(df["close"].tail(19).values) + [price]
-    bb_mid = np.mean(recent_20)
-    bb_std = np.std(recent_20)
-    bb_lower = bb_mid - 2 * bb_std
-    bb_upper = bb_mid + 2 * bb_std
-    bb_position = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper > bb_lower else 0.5
-
-    # 스크리닝 대비 가격 변동
     entry_price = stock_info.get("entry_price", price)
-    price_change = (price / entry_price - 1) * 100 if entry_price > 0 else 0
-
-    # CCI (14일)
-    tp = (df["high"] + df["low"] + df["close"]) / 3
-    sma_tp = tp.rolling(14).mean()
-    mad = tp.rolling(14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    cci_series = (tp - sma_tp) / (0.015 * mad)
-    cci_now = float(cci_series.iloc[-1]) if pd.notna(cci_series.iloc[-1]) else 0
-
-    # RSI (14일)
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean()
-    rs = gain / loss.replace(0, np.nan)
-    rsi_series = 100 - (100 / (1 + rs))
-    rsi_now = float(rsi_series.iloc[-1]) if pd.notna(rsi_series.iloc[-1]) else 50
+    snapshot = _calc_pullback_snapshot(df, price, volume, entry_price)
+    ma5_gap = snapshot["ma5_gap"]
+    vol_decline = snapshot["vol_decline"]
+    bb_position = snapshot["bb_position"]
+    price_change = snapshot["price_change"]
+    cci_now, rsi_now = _calc_rsi_cci(df)
 
     # ── 기술적 조건 점수화 ──
     tech = []
@@ -617,6 +738,11 @@ def _score_stock(
     else:
         score += 0
 
+    # ── D+1 명시적 감점 (백테스트: 42% vs D+2~3: 71~75%) ──
+    if days_elapsed <= 1:
+        score -= 8
+        risk_flags.append("D+1이른진입")
+
     # ── 순위 보너스 (0~20점) ──
     rank = stock_info.get("rank", 99)
     rank_bonus = RANK_PULLBACK_BONUS.get(rank, 0)
@@ -640,15 +766,16 @@ def _score_stock(
     # ── 확신도 등급 ──
     conviction = _conviction_from_score(score)
 
-    rank_info = RANK_TIMING.get(rank, {})
+    rank_info = _rank_timing(rank)
     meta = _merged_company_context(stock_info, price)
 
-    return {
+    result = {
         "code": code,
         "name": stock_info.get("name", code),
         "sector": meta["sector"],
         "industry": meta["industry"],
         "company_brief": meta["company_brief"],
+        "main_products": meta["main_products"],
         "holder_tag": meta["holder_tag"],
         "current_price": price,
         "signal_type": "+".join(tech) if tech else "",
@@ -663,8 +790,6 @@ def _score_stock(
         "in_window": in_window,
         "cci": round(cci_now, 1),
         "rsi": round(rsi_now, 1),
-        "expected_wr": rank_info.get("exp_wr", 0),
-        "expected_ret": rank_info.get("exp_ret", 0),
         "rank_note": rank_info.get("note", ""),
         "market_regime": regime,
         "event_warning": market_ctx_info["event_warning"],
@@ -676,6 +801,8 @@ def _score_stock(
         "news_risk": "",
         "news_summary": "",
     }
+    result["action"] = make_action_label(result)
+    return result
 
 
 def _check_single(
@@ -688,17 +815,8 @@ def _check_single(
 ) -> dict | None:
     """개별 종목 눌림목 조건 체크 (순위+타이밍 반영 확신도)"""
     code = code.strip().zfill(6)
-
-    csv_path = OHLCV_DIR / f"{code}.csv"
-    if not csv_path.exists():
-        return None
-
-    df = pd.read_csv(csv_path)
-    df.columns = [c.lower() for c in df.columns]
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").tail(30)
-
-    if len(df) < 20:
+    df = _load_recent_ohlcv(code)
+    if df is None:
         return None
 
     cur = api.get_current_price(code)
@@ -707,27 +825,12 @@ def _check_single(
 
     price = cur["price"]
     volume = cur["volume"]
-
-    # MA5
-    prices = list(df["close"].values) + [price]
-    ma5 = np.mean(prices[-5:])
-    ma5_gap = abs((price / ma5 - 1) * 100) if ma5 > 0 else 999
-
-    # 거래량 감소율
-    vol_ma20 = df["volume"].tail(20).mean()
-    vol_decline = volume / vol_ma20 if vol_ma20 > 0 else 1.0
-
-    # 볼린저밴드
-    close_20 = list(df["close"].values[-19:]) + [price]
-    bb_mid = np.mean(close_20)
-    bb_std = np.std(close_20)
-    bb_lower = bb_mid - 2 * bb_std
-    bb_upper = bb_mid + 2 * bb_std
-    bb_position = (price - bb_lower) / (bb_upper - bb_lower) if bb_upper > bb_lower else 0.5
-
-    # 스크리닝 대비 가격 변동
     entry_price = stock_info.get("entry_price", price)
-    price_change = (price / entry_price - 1) * 100 if entry_price > 0 else 0
+    snapshot = _calc_pullback_snapshot(df, price, volume, entry_price)
+    ma5_gap = snapshot["ma5_gap"]
+    vol_decline = snapshot["vol_decline"]
+    bb_position = snapshot["bb_position"]
+    price_change = snapshot["price_change"]
 
     # ── 기술적 조건 ──
     tech = []
@@ -776,7 +879,7 @@ def _check_single(
     if conviction == "C" and len(tech) < 2:
         return None
 
-    rank_info = RANK_TIMING.get(rank, {})
+    rank_info = _rank_timing(rank)
     meta = _merged_company_context(stock_info, price)
 
     return {
@@ -796,8 +899,6 @@ def _check_single(
         "conviction": conviction,
         "conviction_score": score,
         "sweet_spot_day": sweet_spot,
-        "expected_wr": rank_info.get("exp_wr", 0),
-        "expected_ret": rank_info.get("exp_ret", 0),
         "rank_note": rank_info.get("note", ""),
         "market_regime": regime,
         "event_warning": market_ctx_info["event_warning"],
@@ -829,7 +930,7 @@ def show_status():
 
         for s in wl["stocks"]:
             rank = s.get("rank", "?")
-            timing = RANK_TIMING.get(rank, {})
+            timing = _rank_timing(rank)
             sweet = s.get("sweet_spot_day", "?")
             w_start = s.get("window_start", "?")
             w_end = s.get("window_end", "?")
@@ -868,7 +969,7 @@ if __name__ == "__main__":
             emoji = {"A": "***", "B": "**", "C": "*"}.get(conv, "")
             print(f"[{conv}] #{sig['rank']} {sig['name']} "
                   f"-- {sig['signal_type']} "
-                  f"(D+{sig['days_elapsed']}, WR {sig['expected_wr']}%)")
+                  f"(D+{sig['days_elapsed']})")
 
 
 

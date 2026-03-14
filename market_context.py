@@ -1,5 +1,5 @@
 """
-ClosingBell v3.6 — 시장 컨텍스트 (캘린더 + 지분 변동 + 기업 정보)
+ClosingBell v3.7 market context helper
 ================================================================
 screener, watchlist_monitor, notifier에서 공통으로 사용하는
 시장 이벤트/대주주 변동/기업 설명 데이터를 제공.
@@ -21,6 +21,7 @@ from functools import lru_cache
 import pandas as pd
 
 from config import (
+    COMPANY_PROFILE_CSV,
     FOMC_PENALTY,
     HOLDER_DUMP_THRESHOLD,
     HOLDER_LOW_PENALTY,
@@ -43,7 +44,151 @@ HOLDER_CSV = MAJOR_HOLDER_CSV
 # JSON 파일이 없을 때 사용하는 기본 이벤트 (날짜가 고정인 것만)
 # 실제 운영에서는 data/reference/market_calendar.json을 사용
 DEFAULT_EVENTS = [
-    # 2025 FOMC
+    # ══════════════════════════════════════
+    # 2026 FOMC (8회) — 결정일 기준
+    # ══════════════════════════════════════
+    {"date": "2026-01-28", "type": "fomc", "name": "FOMC", "impact": "high"},
+    {"date": "2026-03-18", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
+    {"date": "2026-05-06", "type": "fomc", "name": "FOMC", "impact": "high"},
+    {"date": "2026-06-17", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
+    {"date": "2026-07-29", "type": "fomc", "name": "FOMC", "impact": "high"},
+    {"date": "2026-09-16", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
+    {"date": "2026-10-28", "type": "fomc", "name": "FOMC", "impact": "high"},
+    {"date": "2026-12-09", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
+
+    # ══════════════════════════════════════
+    # 2026 KRX 옵션만기일 (매월 둘째 목요일)
+    # ══════════════════════════════════════
+    {"date": "2026-01-08", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-02-12", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-03-12", "type": "quad_witching", "name": "선물옵션 동시만기(쿼드러플)", "impact": "high"},
+    {"date": "2026-04-09", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-05-14", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-06-11", "type": "quad_witching", "name": "선물옵션 동시만기(쿼드러플)", "impact": "high"},
+    {"date": "2026-07-09", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-08-13", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-09-10", "type": "quad_witching", "name": "선물옵션 동시만기(쿼드러플)", "impact": "high"},
+    {"date": "2026-10-08", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-11-12", "type": "options_expiry", "name": "옵션만기일", "impact": "medium"},
+    {"date": "2026-12-10", "type": "quad_witching", "name": "선물옵션 동시만기(쿼드러플)", "impact": "high"},
+
+    # ══════════════════════════════════════
+    # 2026 한국은행 금통위 (연 8회, 추정)
+    # ══════════════════════════════════════
+    {"date": "2026-01-16", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-02-27", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-04-09", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-05-28", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-07-09", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-08-27", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-10-15", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+    {"date": "2026-11-26", "type": "bok", "name": "한은 금통위", "impact": "medium"},
+
+    # ══════════════════════════════════════
+    # 실적 시즌 / 공시 마감
+    # ══════════════════════════════════════
+    {"date": "2026-03-31", "type": "audit", "name": "사업보고서 마감", "impact": "high"},
+    {"date": "2026-05-15", "type": "earnings_deadline", "name": "1분기 보고서 마감", "impact": "medium"},
+    {"date": "2026-08-14", "type": "earnings_deadline", "name": "반기 보고서 마감", "impact": "medium"},
+    {"date": "2026-11-16", "type": "earnings_deadline", "name": "3분기 보고서 마감", "impact": "medium"},
+
+    # 실적 시즌 시작 (대형주 실적 발표 집중)
+    {"date": "2026-01-26", "type": "earnings", "name": "4Q 어닝시즌 시작", "impact": "medium"},
+    {"date": "2026-04-27", "type": "earnings", "name": "1Q 어닝시즌 시작", "impact": "medium"},
+    {"date": "2026-07-27", "type": "earnings", "name": "2Q 어닝시즌 시작", "impact": "medium"},
+    {"date": "2026-10-26", "type": "earnings", "name": "3Q 어닝시즌 시작", "impact": "medium"},
+
+    # ══════════════════════════════════════
+    # MSCI 리밸런싱 (2월/5월/8월/11월 말)
+    # ══════════════════════════════════════
+    {"date": "2026-02-27", "type": "msci", "name": "MSCI 리밸런싱", "impact": "medium"},
+    {"date": "2026-05-29", "type": "msci", "name": "MSCI 리밸런싱", "impact": "medium"},
+    {"date": "2026-08-28", "type": "msci", "name": "MSCI 리밸런싱", "impact": "medium"},
+    {"date": "2026-11-27", "type": "msci", "name": "MSCI 리밸런싱", "impact": "medium"},
+
+    # ══════════════════════════════════════
+    # 연말연시 / 계절적
+    # ══════════════════════════════════════
+    {"date": "2026-12-28", "type": "seasonal_yearend", "name": "연말 대주주 양도세 매도", "impact": "high"},
+    {"date": "2026-12-29", "type": "seasonal_yearend", "name": "연말 대주주 양도세 매도", "impact": "high"},
+    {"date": "2026-12-30", "type": "seasonal_yearend", "name": "연말 대주주 양도세 매도(마지막)", "impact": "high"},
+    {"date": "2026-01-05", "type": "seasonal_newyear", "name": "신년 개장", "impact": "low"},
+
+    # ══════════════════════════════════════
+    # 배당락 (보통 12월 마지막 거래일 -2~3일)
+    # ══════════════════════════════════════
+    {"date": "2026-12-28", "type": "ex_dividend", "name": "배당락 예상일", "impact": "medium"},
+
+    # ══════════════════════════════════════
+    # 2026 국내 정치 / 선거
+    # ══════════════════════════════════════
+    {"date": "2026-05-23", "type": "political_election", "name": "지방선거 사전투표(1일차)", "impact": "medium"},
+    {"date": "2026-05-24", "type": "political_election", "name": "지방선거 사전투표(2일차)", "impact": "medium"},
+    {"date": "2026-06-03", "type": "political_election", "name": "제9회 지방선거(휴장)", "impact": "high"},
+    # 선거 전후 정치 불확실성 구간
+    {"date": "2026-06-02", "type": "political", "name": "지방선거 전일 불확실성", "impact": "medium"},
+    {"date": "2026-06-04", "type": "political", "name": "지방선거 결과 반영일", "impact": "medium"},
+
+    # ══════════════════════════════════════
+    # 2026 한국 공휴일 (휴장일 전후 매매 변동성)
+    # ══════════════════════════════════════
+    # 설 연휴 (2/16~18, 월~수)
+    {"date": "2026-02-13", "type": "holiday_pre", "name": "설 연휴 전 마지막 거래일", "impact": "medium"},
+    {"date": "2026-02-19", "type": "holiday_post", "name": "설 연휴 후 첫 거래일", "impact": "medium"},
+    # 어린이날+대체휴일 (5/5 화)
+    {"date": "2026-05-04", "type": "holiday_pre", "name": "어린이날 연휴 전일", "impact": "low"},
+    # 현충일 (6/6 토 → 대체휴일 없음)
+    # 광복절 (8/15 토 → 대체휴일 8/17 월)
+    {"date": "2026-08-14", "type": "holiday_pre", "name": "광복절 연휴 전 마지막 거래일", "impact": "low"},
+    # 추석 연휴 (9/24~26, 목~토 + 대체 9/28 월)
+    {"date": "2026-09-23", "type": "holiday_pre", "name": "추석 연휴 전 마지막 거래일", "impact": "medium"},
+    {"date": "2026-09-29", "type": "holiday_post", "name": "추석 연휴 후 첫 거래일", "impact": "medium"},
+    # 개천절 (10/3 토)
+    # 한글날 (10/9 금)
+    {"date": "2026-10-08", "type": "holiday_pre", "name": "한글날 연휴 전일", "impact": "low"},
+    # 크리스마스 (12/25 금)
+    {"date": "2026-12-24", "type": "holiday_pre", "name": "크리스마스 이브(반일매매 가능)", "impact": "low"},
+
+    # ══════════════════════════════════════
+    # 2026 미국 / 글로벌 비시장 이벤트
+    # ══════════════════════════════════════
+    # 미국 중간선거 (11/3 화)
+    {"date": "2026-11-03", "type": "us_election", "name": "미국 중간선거", "impact": "high"},
+    {"date": "2026-11-02", "type": "us_election", "name": "미국 중간선거 전일", "impact": "medium"},
+    {"date": "2026-11-04", "type": "us_election", "name": "미국 중간선거 결과 반영", "impact": "high"},
+    # 미국 CPI 발표 (매월 둘째 주, 추정)
+    {"date": "2026-03-11", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-04-14", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-05-12", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-06-10", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-07-14", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-08-12", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-09-15", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-10-13", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-11-10", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    {"date": "2026-12-10", "type": "us_cpi", "name": "미국 CPI 발표", "impact": "medium"},
+    # 미국 고용보고서 (매월 첫째 금, 추정)
+    {"date": "2026-04-03", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-05-08", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-06-05", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-07-02", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-08-07", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-09-04", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-10-02", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-11-06", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    {"date": "2026-12-04", "type": "us_jobs", "name": "미국 고용보고서", "impact": "medium"},
+    # 잭슨홀 심포지엄 (8월 넷째 주)
+    {"date": "2026-08-27", "type": "jackson_hole", "name": "잭슨홀 심포지엄", "impact": "high"},
+    {"date": "2026-08-28", "type": "jackson_hole", "name": "잭슨홀 심포지엄(2일차)", "impact": "high"},
+
+    # ══════════════════════════════════════
+    # 관세/무역 (트럼프 관세 정책 — 수동 업데이트 필요)
+    # ══════════════════════════════════════
+    # 날짜 미확정 이벤트는 확인 시 수동 추가
+
+    # ══════════════════════════════════════
+    # 2025 잔여 (이미 지난 것도 기록용 보존)
+    # ══════════════════════════════════════
     {"date": "2025-03-19", "type": "fomc", "name": "FOMC", "impact": "high"},
     {"date": "2025-05-07", "type": "fomc", "name": "FOMC", "impact": "high"},
     {"date": "2025-06-18", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
@@ -51,15 +196,7 @@ DEFAULT_EVENTS = [
     {"date": "2025-09-17", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
     {"date": "2025-10-29", "type": "fomc", "name": "FOMC", "impact": "high"},
     {"date": "2025-12-10", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
-    # 2026 FOMC
-    {"date": "2026-01-28", "type": "fomc", "name": "FOMC", "impact": "high"},
-    {"date": "2026-03-18", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
-    {"date": "2026-05-06", "type": "fomc", "name": "FOMC", "impact": "high"},
-    {"date": "2026-06-17", "type": "fomc", "name": "FOMC(점도표)", "impact": "high"},
-    # 감사보고서 마감
     {"date": "2025-03-31", "type": "audit", "name": "사업보고서 마감", "impact": "high"},
-    {"date": "2026-03-31", "type": "audit", "name": "사업보고서 마감", "impact": "high"},
-    # 정치 (수동 추가 필요 — 예측 불가)
     {"date": "2025-06-03", "type": "political_election", "name": "지방선거", "impact": "high"},
 ]
 
@@ -79,21 +216,29 @@ def _political_crisis_adjustment() -> float:
 EVENT_SCORE_ADJ = {
     "fomc": -float(FOMC_PENALTY),
     "political": _political_crisis_adjustment(),
-    "political_critical": _political_crisis_adjustment(),   # 스크리닝 스킵 (보수모드)
+    "political_critical": _political_crisis_adjustment(),
     "political_election": -2.0,
-    "earnings": -3.0,
-    "earnings_deadline": -3.0,
-    "audit": -1.0,
-    "quad_witching": 0.0,         # 중립
-    "options_expiry": 0.0,        # 오히려 좋지만 가산점은 아직 안 줌
-    "bok": -1.0,
-    "bok": -1.0,
-    "msci": -1.0,
+    "earnings": -1.0,              # 어닝시즌 시작
+    "earnings_deadline": -3.0,     # 보고서 마감
+    "audit": -1.0,                 # 사업보고서 마감
+    "quad_witching": -2.0,         # 선물옵션 동시만기 — 변동성 큼
+    "options_expiry": -1.0,        # 월간 옵션만기
+    "bok": -1.0,                   # 한은 금통위
+    "msci": -1.0,                  # MSCI 리밸런싱
     "seasonal": 0.0,
-    "seasonal_yearend": 0.0,
+    "seasonal_yearend": -3.0,      # 연말 양도세 매도
     "seasonal_newyear": 0.0,
+    "ex_dividend": -1.0,           # 배당락
     "geopolitical": -2.0,
     "geopolitical_tariff": -2.0,
+    # 비시장 국내 이벤트
+    "holiday_pre": -1.0,          # 연휴 전 — 물량 줄고 변동성
+    "holiday_post": -1.0,         # 연휴 후 — 갭 리스크
+    # 미국/글로벌
+    "us_election": -2.0,          # 미국 선거
+    "us_cpi": -1.0,               # CPI 발표
+    "us_jobs": -1.0,              # 고용보고서
+    "jackson_hole": -2.0,         # 잭슨홀
 }
 
 
@@ -191,14 +336,15 @@ class MarketContext:
             self._holder_level = latest.set_index("code")["total_pct"].to_dict()
 
             # 변동율 (2개년 필요)
-            years = sorted(h["year"].unique())
-            if len(years) >= 2:
-                old_yr, new_yr = years[-2], years[-1]
-                h_old = h[h["year"] == old_yr].set_index("code")["total_pct"]
-                h_new = h[h["year"] == new_yr].set_index("code")["total_pct"]
-                both = pd.DataFrame({"old": h_old, "new": h_new}).dropna()
-                both["chg"] = both["new"] - both["old"]
-                self._holder_change = both["chg"].to_dict()
+            holder_change = {}
+            for code, group in h.sort_values(["code", "year"]).groupby("code"):
+                latest_two = group.tail(2)
+                if len(latest_two) < 2:
+                    continue
+                old_val = float(latest_two.iloc[0]["total_pct"])
+                new_val = float(latest_two.iloc[1]["total_pct"])
+                holder_change[code] = new_val - old_val
+            self._holder_change = holder_change
 
             logger.info("지분 데이터: %d종목 수준, %d종목 변동",
                         len(self._holder_level), len(self._holder_change))
@@ -287,7 +433,8 @@ class MarketContext:
     # ──────────────────────────────────────────
     def _load_company_info(self):
         try:
-            df = pd.read_csv(MAPPING_CSV, dtype={"code": str}, encoding="utf-8-sig")
+            source_path = COMPANY_PROFILE_CSV if COMPANY_PROFILE_CSV.exists() else MAPPING_CSV
+            df = pd.read_csv(source_path, dtype={"code": str}, encoding="utf-8-sig")
             df["code"] = df["code"].str.zfill(6)
             for _, row in df.iterrows():
                 code = row["code"]
@@ -296,6 +443,8 @@ class MarketContext:
                     "market": row.get("market", ""),
                     "sector": row.get("sector", ""),
                     "industry": row.get("industry", ""),
+                    "company_brief": row.get("company_brief", ""),
+                    "main_products": row.get("main_products", ""),
                 }
             logger.debug("기업정보: %d종목", len(self._company_info))
         except Exception as e:
@@ -305,6 +454,9 @@ class MarketContext:
         """업종 | 세부업종 형태의 간략 설명"""
         code = code.strip().zfill(6)
         info = self._company_info.get(code, {})
+        brief = info.get("company_brief", "")
+        if brief:
+            return brief
         sector = info.get("sector", "")
         industry = info.get("industry", "")
         if sector and industry:
@@ -326,6 +478,7 @@ class MarketContext:
             "brief": self.get_company_brief(code),
             "sector": info.get("sector", ""),
             "industry": info.get("industry", ""),
+            "main_products": info.get("main_products", ""),
             "holder_pct": self.get_holder_level(code),
             "holder_change": self.get_holder_change(code),
             "holder_tag": self.holder_tag(code, price),

@@ -1,5 +1,5 @@
 """
-ClosingBell v3.5 — 키움 REST API 클라이언트
+ClosingBell v3.7 Kiwoom REST API client
 ==========================================
 KIS API를 대체하는 키움 REST API 래퍼.
 기존 screener.py와 동일한 인터페이스를 제공하면서

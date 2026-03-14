@@ -1,327 +1,337 @@
 """
-ClosingBell v3.5 — FDR 데이터 갱신
-=================================
-FinanceDataReader로 OHLCV + 글로벌 지수를 최신 거래일까지 갱신.
-키움 API 없이 동작 (주말/공휴일에도 실행 가능).
-
-사용법:
-    python fdr_update.py                    # 전체 갱신 (최근 30일분만 추가)
-    python fdr_update.py --check            # 갱신 상태만 확인
-    python fdr_update.py --code 005930      # 특정 종목만
-    python fdr_update.py --global-only      # 글로벌 지수만
-    python fdr_update.py --full             # 전체 종목 강제 갱신 (느림, 1~2시간)
+FDR-based market data refresh for ClosingBell.
 """
+
+from __future__ import annotations
+
 import argparse
 import logging
 import time
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import DATA_DIR, GLOBAL_CSV, MAPPING_CSV, OHLCV_DIR
+import numpy as np
+import pandas as pd
+
+from config import GLOBAL_CSV, MAPPING_CSV, OHLCV_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("fdr_update")
 
-# ── 설정 ──
 GLOBAL_DIR = GLOBAL_CSV.parent
+GLOBAL_START_DATE = "2016-01-01"
+GLOBAL_SPECS = {
+    "kospi": {
+        "symbols": ["KS11"],
+        "close_col": "kospi_close",
+        "change_col": "kospi_change_pct",
+    },
+    "kosdaq": {
+        "symbols": ["KQ11"],
+        "close_col": "kosdaq_close",
+        "change_col": "kosdaq_change_pct",
+    },
+    "nasdaq": {
+        "symbols": ["IXIC"],
+        "close_col": "nasdaq_close",
+        "change_col": "nasdaq_change_pct",
+    },
+    "sp500": {
+        "symbols": ["US500"],
+        "close_col": "sp500_close",
+        "change_col": "sp500_change_pct",
+    },
+    "dow": {
+        "symbols": ["DJI"],
+        "close_col": "dow_close",
+        "change_col": "dow_change_pct",
+    },
+    "usdkrw": {
+        "symbols": ["USD/KRW"],
+        "close_col": "usdkrw_close",
+        "change_col": "usdkrw_change_pct",
+    },
+    "vix": {
+        "symbols": ["VIX"],
+        "close_col": "vix_close",
+        "change_col": "vix_change_pct",
+    },
+    "dff": {
+        "symbols": ["FRED:DFF", "DFF"],
+        "close_col": "dff_close",
+        "change_col": "dff_change_pct",
+    },
+    "t10y2y": {
+        "symbols": ["FRED:T10Y2Y", "T10Y2Y"],
+        "close_col": "t10y2y_close",
+        "change_col": "t10y2y_change_pct",
+    },
+}
 
 
-def check_status():
-    """현재 데이터 상태 확인"""
-    print("=" * 60)
-    print("📊 데이터 상태 확인")
-    print("=" * 60)
-
-    # OHLCV 샘플 확인 (삼성전자 + 랜덤 5개)
-    sample_codes = ["005930"]
-    csv_files = list(OHLCV_DIR.glob("*.csv"))
-    print(f"\nOHLCV 파일 수: {len(csv_files)}개")
-
-    import random
-    if len(csv_files) > 5:
-        extras = random.sample(csv_files, 5)
-        sample_codes += [f.stem for f in extras]
-
-    for code in sample_codes:
-        path = OHLCV_DIR / f"{code}.csv"
-        if not path.exists():
-            print(f"  {code}: 파일 없음")
-            continue
-        df = pd.read_csv(path)
-        df.columns = [c.lower() for c in df.columns]
-        if "date" not in df.columns:
-            print(f"  {code}: date 컬럼 없음 ({list(df.columns)})")
-            continue
-        df["date"] = pd.to_datetime(df["date"])
-        last_date = df["date"].max().strftime("%Y-%m-%d")
-        first_date = df["date"].min().strftime("%Y-%m-%d")
-        print(f"  {code}: {first_date} ~ {last_date} ({len(df)}일)")
-
-    # 글로벌 지수
-    global_csv = GLOBAL_DIR / "global_merged.csv"
-    if global_csv.exists():
-        gdf = pd.read_csv(global_csv)
-        gdf.columns = [c.strip().lower() for c in gdf.columns]
-        date_col = "date"
-        if date_col in gdf.columns:
-            gdf[date_col] = pd.to_datetime(gdf[date_col])
-            print(f"\n글로벌 지수: {gdf[date_col].min().strftime('%Y-%m-%d')} ~ "
-                  f"{gdf[date_col].max().strftime('%Y-%m-%d')} ({len(gdf)}일)")
-            # 각 지수별 마지막 유효 날짜
-            for col in ["kospi_close", "nasdaq_close", "sp500_close", "usdkrw_close"]:
-                if col in gdf.columns:
-                    valid = gdf.dropna(subset=[col])
-                    last = valid[date_col].max().strftime("%Y-%m-%d") if len(valid) > 0 else "없음"
-                    empty_count = len(gdf) - len(valid)
-                    status = f"⚠️ {empty_count}일 빈값" if empty_count > 0 else "✅"
-                    print(f"  {col}: ~{last} {status}")
-    else:
-        print("\n글로벌 지수: 파일 없음")
-
-    print(f"\n오늘: {datetime.now().strftime('%Y-%m-%d')} "
-          f"({'주말' if datetime.now().weekday() >= 5 else '평일'})")
-    print("=" * 60)
+def _load_global_merged() -> pd.DataFrame:
+    if not GLOBAL_CSV.exists():
+        return pd.DataFrame(columns=["date"])
+    frame = pd.read_csv(GLOBAL_CSV)
+    if frame.empty:
+        return pd.DataFrame(columns=["date"])
+    frame.columns = [str(col).strip().lower() for col in frame.columns]
+    if "date" not in frame.columns:
+        raise ValueError("global_merged.csv missing date column")
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    return frame
 
 
-def update_global():
-    """글로벌 지수 갱신 (코스피, 코스닥, 나스닥, S&P500, 다우, 환율)"""
+def _fetch_series(symbols: list[str], start: str, end: str) -> pd.DataFrame:
     import FinanceDataReader as fdr
 
-    logger.info("글로벌 지수 갱신 시작...")
-    GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-    global_csv = GLOBAL_DIR / "global_merged.csv"
+    last_error: Exception | None = None
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    for symbol in symbols:
+        try:
+            data = fdr.DataReader(symbol, start, end)
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                data = data.copy()
+                data.index = pd.to_datetime(data.index, errors="coerce")
+                data = data[(data.index >= start_ts) & (data.index <= end_ts)]
+                return data.copy()
+        except Exception as exc:
+            last_error = exc
+            time.sleep(1.0)
+    if last_error:
+        raise RuntimeError(last_error)
+    return pd.DataFrame()
 
-    # 기존 데이터 로드
-    if global_csv.exists():
-        existing = pd.read_csv(global_csv)
-        existing.columns = [c.strip().lower() for c in existing.columns]
-        existing["date"] = pd.to_datetime(existing["date"])
-        logger.info("기존 글로벌: %d일, 컬럼: %s", len(existing), list(existing.columns))
 
-        # 나스닥이 비어있는 마지막 유효 날짜 확인
-        nasdaq_valid = existing.dropna(subset=["nasdaq_close"])
-        if len(nasdaq_valid) > 0:
-            nasdaq_last = nasdaq_valid["date"].max()
-            logger.info("나스닥 마지막 유효: %s", nasdaq_last.strftime("%Y-%m-%d"))
-        else:
-            nasdaq_last = existing["date"].min()
+def _append_global_series(frame: pd.DataFrame, spec: dict, data: pd.DataFrame) -> pd.DataFrame:
+    if data.empty:
+        return frame
 
-        kospi_last = existing["date"].max()
-        logger.info("코스피 마지막: %s", kospi_last.strftime("%Y-%m-%d"))
+    close_col = spec["close_col"]
+    change_col = spec["change_col"]
+    value_col = None
+    for candidate in ["Close", "Adj Close", "close", "adj close"]:
+        if candidate in data.columns:
+            value_col = candidate
+            break
+    if value_col is None:
+        numeric_cols = [col for col in data.columns if pd.api.types.is_numeric_dtype(data[col])]
+        if not numeric_cols:
+            raise ValueError(f"no numeric value column found: {list(data.columns)}")
+        value_col = numeric_cols[0]
+
+    series = pd.DataFrame(
+        {
+            "date": pd.to_datetime(data.index),
+            close_col: pd.to_numeric(data[value_col], errors="coerce"),
+        }
+    )
+    series[change_col] = series[close_col].pct_change() * 100
+
+    merged = frame.merge(series, on="date", how="outer", suffixes=("", "_new"))
+    for col in [close_col, change_col]:
+        new_col = f"{col}_new"
+        if new_col in merged.columns:
+            if col not in merged.columns:
+                merged[col] = np.nan
+            merged[col] = merged[col].where(merged[col].notna(), merged[new_col])
+            merged[col] = merged[new_col].where(merged[new_col].notna(), merged[col])
+            merged = merged.drop(columns=[new_col])
+    return merged
+
+
+def check_status() -> None:
+    """Print a concise status summary for OHLCV and global data."""
+    print("=" * 60)
+    print("  FDR Data Status")
+    print("=" * 60)
+
+    csv_files = sorted(OHLCV_DIR.glob("*.csv"))
+    print(f"OHLCV files: {len(csv_files)}")
+    small_files = [path for path in csv_files if path.stat().st_size < 1024]
+    if small_files:
+        print(f"Small OHLCV files (<1KB): {len(small_files)}")
+        for path in small_files[:10]:
+            print(f"  - {path.name} ({path.stat().st_size} bytes)")
+
+    sample_path = OHLCV_DIR / "005930.csv"
+    if sample_path.exists():
+        sample = pd.read_csv(sample_path)
+        sample.columns = [str(col).strip().lower() for col in sample.columns]
+        sample["date"] = pd.to_datetime(sample["date"], errors="coerce")
+        sample = sample.dropna(subset=["date"])
+        if not sample.empty:
+            print(
+                "Samsung sample: "
+                f"{sample['date'].min().strftime('%Y-%m-%d')} -> "
+                f"{sample['date'].max().strftime('%Y-%m-%d')} "
+                f"({len(sample)} rows)"
+            )
+
+    if GLOBAL_CSV.exists():
+        global_df = _load_global_merged()
+        if not global_df.empty:
+            print(
+                "Global merged: "
+                f"{global_df['date'].min().strftime('%Y-%m-%d')} -> "
+                f"{global_df['date'].max().strftime('%Y-%m-%d')} "
+                f"({len(global_df)} rows)"
+            )
+            cols = [col for col in global_df.columns if col != "date"]
+            print(f"Global columns: {', '.join(cols)}")
     else:
-        existing = None
-        nasdaq_last = pd.Timestamp("2016-01-01")
-        kospi_last = pd.Timestamp("2016-01-01")
+        print("global_merged.csv: missing")
+
+    print("=" * 60)
+
+
+def update_global() -> bool:
+    """Refresh merged global market series."""
+    logger.info("Refreshing global_merged.csv")
+    GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+
+    frame = _load_global_merged()
+    if frame.empty:
+        frame = pd.DataFrame(columns=["date"])
 
     end = datetime.now().strftime("%Y-%m-%d")
+    updated_any = False
 
-    # 각 지수별로 빈 구간 채우기
-    symbols = {
-        "kospi": ("KS11", "kospi_close", "kospi_change_pct"),
-        "kosdaq": ("KQ11", "kosdaq_close", "kosdaq_change_pct"),
-        "nasdaq": ("IXIC", "nasdaq_close", "nasdaq_change_pct"),
-        "sp500": ("US500", "sp500_close", "sp500_change_pct"),
-        "dow": ("DJI", "dow_close", "dow_change_pct"),
-        "usdkrw": ("USD/KRW", "usdkrw_close", "usdkrw_change_pct"),
-    }
+    for name, spec in GLOBAL_SPECS.items():
+        close_col = spec["close_col"]
+        if close_col in frame.columns and frame[close_col].notna().any():
+            start = (frame.loc[frame[close_col].notna(), "date"].max() + timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            start = GLOBAL_START_DATE
 
-    updates = {}
-    for name, (symbol, close_col, chg_col) in symbols.items():
-        try:
-            # 해당 지수의 빈 데이터 시작점 찾기
-            if existing is not None and close_col in existing.columns:
-                valid = existing.dropna(subset=[close_col])
-                start_from = (valid["date"].max() + timedelta(days=1)).strftime("%Y-%m-%d") if len(valid) > 0 else "2016-01-01"
-            else:
-                start_from = "2016-01-01"
-
-            data = None
-            for retry in range(3):
-                try:
-                    data = fdr.DataReader(symbol, start_from, end)
-                    if data is not None and len(data) > 0:
-                        break
-                except Exception as retry_err:
-                    err_str = str(retry_err)
-                    if "LOGOUT" in err_str or "session" in err_str.lower():
-                        logger.debug("%s LOGOUT 재시도 %d/3", name, retry + 1)
-                        time.sleep(2)
-                        import importlib
-                        importlib.reload(fdr)
-                        continue
-                    raise
-
-            if data is not None and len(data) > 0:
-                updates[name] = {
-                    "dates": data.index,
-                    "close": data["Close"].values,
-                    "change": data["Close"].pct_change().values * 100,
-                }
-                logger.info("%s: %d일 신규 (%s~)", name, len(data), start_from)
-            else:
-                logger.info("%s: 새 데이터 없음", name)
-        except Exception as e:
-            logger.warning("%s 조회 실패: %s", name, e)
-
-    if not updates:
-        logger.info("갱신할 데이터 없음")
-        return
-
-    # 기존 데이터에 업데이트 머지
-    if existing is not None:
-        result = existing.copy()
-    else:
-        result = pd.DataFrame(columns=["date"])
-
-    for name, (symbol, close_col, chg_col) in symbols.items():
-        if name not in updates:
+        if pd.Timestamp(start) > pd.Timestamp(end):
+            logger.info("%s: already up to date", name)
             continue
-        upd = updates[name]
-        for i, dt in enumerate(upd["dates"]):
-            dt_str = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)[:10]
-            mask = result["date"] == pd.Timestamp(dt_str)
 
-            if mask.any():
-                # 기존 행 업데이트 (빈 값만)
-                idx = result.index[mask][0]
-                if pd.isna(result.at[idx, close_col]) if close_col in result.columns else True:
-                    if close_col not in result.columns:
-                        result[close_col] = np.nan
-                    result.at[idx, close_col] = upd["close"][i]
-                if pd.isna(result.at[idx, chg_col]) if chg_col in result.columns else True:
-                    if chg_col not in result.columns:
-                        result[chg_col] = np.nan
-                    result.at[idx, chg_col] = round(upd["change"][i], 2) if not np.isnan(upd["change"][i]) else np.nan
-            else:
-                # 새 행 추가
-                new_row = {"date": pd.Timestamp(dt_str)}
-                new_row[close_col] = upd["close"][i]
-                new_row[chg_col] = round(upd["change"][i], 2) if not np.isnan(upd["change"][i]) else np.nan
-                result = pd.concat([result, pd.DataFrame([new_row])], ignore_index=True)
+        try:
+            data = _fetch_series(spec["symbols"], start, end)
+            if data.empty:
+                logger.info("%s: no new rows", name)
+                continue
+            frame = _append_global_series(frame, spec, data)
+            logger.info("%s: appended %d rows from %s", name, len(data), start)
+            updated_any = True
+            time.sleep(0.25)
+        except Exception as exc:
+            logger.warning("%s refresh failed: %s", name, exc)
 
-    result = result.sort_values("date").reset_index(drop=True)
-    result["date"] = result["date"].dt.strftime("%Y-%m-%d") if hasattr(result["date"].iloc[0], "strftime") else result["date"]
-    result.to_csv(global_csv, index=False)
-    logger.info("글로벌 갱신 완료: %d일", len(result))
+    if not frame.empty:
+        frame = frame.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+        frame = frame[frame["date"] >= pd.Timestamp(GLOBAL_START_DATE)].reset_index(drop=True)
+        for column in frame.columns:
+            if column == "date":
+                continue
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
+        frame.to_csv(GLOBAL_CSV, index=False, encoding="utf-8-sig")
+        logger.info("global_merged.csv saved: %d rows", len(frame))
+
+    return updated_any or GLOBAL_CSV.exists()
 
 
-def update_ohlcv_single(code: str, force_days: int = 30):
-    """
-    개별 종목 OHLCV 갱신
-    기존 CSV에 최근 데이터만 추가 (전체 다운 안 함)
-    """
+def update_ohlcv_single(code: str) -> int:
+    """Refresh a single OHLCV CSV incrementally."""
     import FinanceDataReader as fdr
 
-    code = code.strip().zfill(6)
+    code = str(code).strip().zfill(6)
     path = OHLCV_DIR / f"{code}.csv"
 
-    # 기존 데이터 로드
     if path.exists():
-        df = pd.read_csv(path)
-        # 컬럼 통일 (소문자)
-        df.columns = [c.lower() for c in df.columns]
-        df["date"] = pd.to_datetime(df["date"])
-        last_date = df["date"].max()
-        start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        current = pd.read_csv(path)
+        current.columns = [str(col).strip().lower() for col in current.columns]
+        current["date"] = pd.to_datetime(current["date"], errors="coerce")
+        current = current.dropna(subset=["date"])
+        start = (current["date"].max() + timedelta(days=1)).strftime("%Y-%m-%d") if not current.empty else GLOBAL_START_DATE
     else:
-        df = pd.DataFrame()
-        start = (datetime.now() - timedelta(days=365 * 10)).strftime("%Y-%m-%d")
+        current = pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+        start = GLOBAL_START_DATE
 
     end = datetime.now().strftime("%Y-%m-%d")
-
+    if pd.Timestamp(start) > pd.Timestamp(end):
+        return 0
     try:
-        new_data = fdr.DataReader(code, start, end)
-        if new_data is None or len(new_data) == 0:
+        fresh = fdr.DataReader(code, start, end)
+        if fresh is None or fresh.empty:
             return 0
-
-        new_df = pd.DataFrame({
-            "date": new_data.index,
-            "open": new_data["Open"].values,
-            "high": new_data["High"].values,
-            "low": new_data["Low"].values,
-            "close": new_data["Close"].values,
-            "volume": new_data["Volume"].values,
-        })
-
-        if len(df) > 0:
-            existing_dates = set(df["date"].dt.strftime("%Y-%m-%d"))
-            new_rows = new_df[~new_df["date"].dt.strftime("%Y-%m-%d").isin(existing_dates)]
-            if len(new_rows) > 0:
-                combined = pd.concat([df, new_rows], ignore_index=True)
-            else:
-                return 0
-        else:
-            combined = new_df
-
-        combined = combined.sort_values("date").reset_index(drop=True)
-        # 소문자 컬럼으로 저장 (v3 호환)
-        combined.to_csv(path, index=False)
-        return len(new_rows) if len(df) > 0 else len(combined)
-
     except Exception:
         return -1
 
+    incoming = pd.DataFrame(
+        {
+            "date": pd.to_datetime(fresh.index),
+            "open": pd.to_numeric(fresh["Open"], errors="coerce"),
+            "high": pd.to_numeric(fresh["High"], errors="coerce"),
+            "low": pd.to_numeric(fresh["Low"], errors="coerce"),
+            "close": pd.to_numeric(fresh["Close"], errors="coerce"),
+            "volume": pd.to_numeric(fresh["Volume"], errors="coerce"),
+        }
+    )
+    incoming = incoming.dropna(subset=["date"]).sort_values("date")
 
-def update_ohlcv_all(full: bool = False):
-    """
-    전체 OHLCV 갱신 (스마트 스킵)
-    1) 삼성전자로 최신 거래일 확인
-    2) 각 종목 CSV의 마지막 날짜와 비교
-    3) 이미 최신이면 FDR 호출 없이 스킵 → ~3분 소요
-    """
-    import FinanceDataReader as fdr
-
-    # stock_mapping에서 종목 코드 로드
-    if MAPPING_CSV.exists():
-        mapping = pd.read_csv(MAPPING_CSV, dtype={"code": str})
-        mapping["code"] = mapping["code"].str.zfill(6)
-        codes = mapping["code"].tolist()
-        logger.info("stock_mapping: %d종목", len(codes))
+    if not current.empty:
+        combined = pd.concat([current, incoming], ignore_index=True)
+        combined = combined.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+        added = max(0, len(combined) - len(current))
     else:
-        codes = [f.stem for f in OHLCV_DIR.glob("*.csv") if not f.stem.startswith("INDEX")]
-        logger.info("CSV 파일 기반: %d종목", len(codes))
+        combined = incoming.reset_index(drop=True)
+        added = len(combined)
 
-    # 1) 삼성전자로 최신 거래일 확인
+    if added == 0:
+        return 0
+
+    OHLCV_DIR.mkdir(parents=True, exist_ok=True)
+    combined["date"] = pd.to_datetime(combined["date"]).dt.strftime("%Y-%m-%d")
+    combined.to_csv(path, index=False, encoding="utf-8-sig")
+    return added
+
+
+def update_ohlcv_all(full: bool = False) -> None:
+    """Refresh all OHLCV files with smart skip."""
+    if MAPPING_CSV.exists():
+        mapping = pd.read_csv(MAPPING_CSV, dtype={"code": str}, encoding="utf-8-sig")
+        mapping["code"] = mapping["code"].astype(str).str.zfill(6)
+        codes = mapping["code"].tolist()
+    else:
+        codes = [path.stem for path in OHLCV_DIR.glob("*.csv")]
+
+    logger.info("Refreshing OHLCV universe: %d codes", len(codes))
+    updated = 0
+    skipped = 0
+    failed = 0
+
     latest_trading_day = None
     try:
-        ref = update_ohlcv_single("005930")
-        sample_path = OHLCV_DIR / "005930.csv"
-        if sample_path.exists():
-            sdf = pd.read_csv(sample_path)
-            sdf.columns = [c.lower() for c in sdf.columns]
-            sdf["date"] = pd.to_datetime(sdf["date"])
-            latest_trading_day = sdf["date"].max().strftime("%Y-%m-%d")
-            logger.info("최신 거래일: %s (삼성전자 기준)", latest_trading_day)
+        update_ohlcv_single("005930")
+        sample = pd.read_csv(OHLCV_DIR / "005930.csv")
+        sample.columns = [str(col).strip().lower() for col in sample.columns]
+        sample["date"] = pd.to_datetime(sample["date"], errors="coerce")
+        latest_trading_day = sample["date"].max().strftime("%Y-%m-%d")
+        logger.info("Latest trading day inferred from 005930: %s", latest_trading_day)
     except Exception:
-        pass
+        logger.warning("Could not infer latest trading day from 005930")
 
-    updated = 0
-    failed = 0
-    skipped = 0
-    total = len(codes)
-
-    for i, code in enumerate(codes):
+    for index, code in enumerate(codes, start=1):
         if code == "005930":
             skipped += 1
             continue
 
-        # 스마트 스킵: CSV 마지막 날짜가 최신 거래일이면 FDR 호출 안 함
-        if latest_trading_day and not full:
-            csv_path = OHLCV_DIR / f"{code.strip().zfill(6)}.csv"
-            if csv_path.exists():
-                try:
-                    peek = pd.read_csv(csv_path, usecols=[0], nrows=0)
-                    date_col = peek.columns[0]
-                    tail = pd.read_csv(csv_path, usecols=[date_col]).iloc[-1][date_col]
-                    if str(tail)[:10] >= latest_trading_day:
-                        skipped += 1
-                        continue
-                except Exception:
-                    pass
+        csv_path = OHLCV_DIR / f"{code}.csv"
+        if latest_trading_day and not full and csv_path.exists():
+            try:
+                tail = pd.read_csv(csv_path, usecols=["date"]).iloc[-1]["date"]
+                if str(tail)[:10] >= latest_trading_day:
+                    skipped += 1
+                    continue
+            except Exception:
+                pass
 
-        # FDR 갱신 필요
         result = update_ohlcv_single(code)
         if result > 0:
             updated += 1
@@ -330,28 +340,26 @@ def update_ohlcv_all(full: bool = False):
         else:
             failed += 1
 
-        # 진행률 (200개마다)
-        if (i + 1) % 200 == 0 or i == total - 1:
-            logger.info("진행: %d/%d (갱신 %d, 스킵 %d, 실패 %d)",
-                         i + 1, total, updated, skipped, failed)
+        if index % 200 == 0 or index == len(codes):
+            logger.info(
+                "OHLCV progress: %d/%d updated=%d skipped=%d failed=%d",
+                index,
+                len(codes),
+                updated,
+                skipped,
+                failed,
+            )
+        time.sleep(0.15)
 
-        time.sleep(0.2)
-
-    logger.info("=" * 50)
-    logger.info("OHLCV 갱신 완료!")
-    logger.info("  갱신: %d종목", updated)
-    logger.info("  스킵(이미 최신): %d종목", skipped)
-    logger.info("  실패: %d종목", failed)
-    if latest_trading_day:
-        logger.info("  최신 거래일: %s", latest_trading_day)
+    logger.info("OHLCV refresh done: updated=%d skipped=%d failed=%d", updated, skipped, failed)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="ClosingBell v3.5 — FDR 데이터 갱신")
-    parser.add_argument("--check", action="store_true", help="갱신 상태만 확인")
-    parser.add_argument("--global-only", action="store_true", help="글로벌 지수만 갱신")
-    parser.add_argument("--code", type=str, default="", help="특정 종목만 갱신")
-    parser.add_argument("--full", action="store_true", help="전체 종목 강제 갱신")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ClosingBell FDR data refresh")
+    parser.add_argument("--check", action="store_true", help="Print current status only")
+    parser.add_argument("--global-only", action="store_true", help="Refresh global_merged.csv only")
+    parser.add_argument("--code", type=str, default="", help="Refresh one stock code only")
+    parser.add_argument("--full", action="store_true", help="Force OHLCV update without smart skip")
     args = parser.parse_args()
 
     if args.check:
@@ -365,14 +373,13 @@ def main():
     if args.code:
         result = update_ohlcv_single(args.code)
         if result > 0:
-            logger.info("%s: %d일 추가", args.code, result)
+            logger.info("%s: added %d rows", args.code, result)
         elif result == 0:
-            logger.info("%s: 이미 최신", args.code)
+            logger.info("%s: already up to date", args.code)
         else:
-            logger.error("%s: 갱신 실패", args.code)
+            logger.error("%s: refresh failed", args.code)
         return
 
-    # 전체 갱신: 글로벌 먼저 → OHLCV
     update_global()
     update_ohlcv_all(full=args.full)
 

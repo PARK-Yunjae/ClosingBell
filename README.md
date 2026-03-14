@@ -1,340 +1,119 @@
-# ClosingBell v3.5.1
+# ClosingBell v3.7
 
-**한국 주식 종가매매 눌림목 추천 시스템**
+한국 주식 종가 스크리닝과 15:00 감시종목 재평가를 위한 실운영 전용 프로젝트입니다.
 
-매일 15시, 디스코드로 "오늘 뭘 사면 승률이 가장 높은지" 알려주는 봇.
-스크리닝 당일 매수(D+1 승률 42%)가 아닌, 눌림목 진입(D+2~3 승률 71~75%)을 추천.
+대시보드, 백필, 시뮬, 리페어, 로컬 리플레이 경로는 제거했고, 현재는 스케줄러와 Discord 알림, SQLite 저장, 외부 데이터 갱신만 유지합니다.
 
+## 운영 흐름
 
-## 핵심 아이디어
-
-```
-기존 방식:  스크리닝 → 바로 매수 → D+1 승률 42%, 평균 -0.96%  ❌
-v3.5 방식:  스크리닝 → 워치리스트 → 눌림목 대기 → 매수 신호    ✅
-
-  1위 종목 D+2 진입: 승률 75%, 평균 +3.9%
-  3위 종목 D+3 진입: 승률 71%, 평균 +8.0%
-```
-
-
-## 동작 흐름
-
-### 매일 (자동)
-
-```
-15:00  🎯 디스코드 웹훅 — 매수 후보 TOP3
-       워치리스트 전 종목을 키움 API 현재가로 스코어링
-       + DART 공시 변동 체크
-       + 네이버 뉴스 + Gemini AI 위험 요약
-       → 확신도 A/B/C 등급 매겨서 TOP3 발송
-
-15:40  🔇 스크리닝 (조용히, 웹훅 없음)
-       키움 API 거래량/거래대금 상위 → 유니버스 확보
-       → 9지표 점수 계산 + AI 분석
-       → TOP3 워치리스트 저장 (D+5까지 감시)
-
-       ↓ 스크리닝 완료 후 순차 실행 ↓
-
-       ① OHLCV 전체 2,782종목 갱신 (~3분, 스마트 스킵)
-       ② 글로벌 지수 갱신 (코스피/코스닥/나스닥/S&P500/다우/환율)
-       ③ 성과 추적 D+1~D+5 수익률 기록
-       ④ Git push → Streamlit Cloud 반영
-       ⑤ 프로세스 자동 종료
+```text
+15:00  활성 watchlist 재평가 -> TOP3 Discord 알림
+15:40  장마감 스크리닝 -> watchlist 저장
+       -> OHLCV 갱신
+       -> 글로벌 지수 갱신
+       -> 성과 추적
+       -> 주간 meta 갱신
+       -> 월간 finstate 갱신
 ```
 
-### 월요일 (자동, ③과 ④ 사이에 추가)
+## 현재 정책
 
-```
-       ④ stock_mapping 갱신 (신규상장/상폐 반영)
-       ⑤ meta 갱신 (관리종목, 시총 스냅샷)
-```
+- watchlist 저장과 추천은 rank `1,2,3`만 사용합니다.
+- rank `4,5`는 저장과 추천에서 모두 제외합니다.
+- 백테스트 숫자 문구와 대시보드 링크 같은 표시성 요소는 제거했습니다.
+- 실데이터는 `SQLite + OHLCV CSV + runtime meta CSV/JSON`으로 유지합니다.
 
-### 매월 초 월요일 (자동, 위에 추가)
+## 주요 파일
 
-```
-       ⑥ 재무제표 갱신 (DART 공시)
-```
-
-
-## 디스코드 웹훅 예시
-
-```
-🎯 ClosingBell — 매수 후보 (03/10 15:00)
-
-🎯 오늘의 매수 후보 TOP3
-
-⚡ A등급 1건: HPSP ← 매수 우선
-
-🥇 🟢 [A] 03-06 #1 HPSP (67점)
-  💰 43,500원 (-9.1%) | D+1 ★
-  📍 MA5터치+깊은조정
-  📊 기대승률 75% / +3.9%
-  📋 공시: 정상(양호) ✅ | 뉴스: 특이사항 없음 ✅
-  💡 빠른 반등형 — D+1 눌림목이 최적
-
-🥈 🟡 [B] 03-04 #3 미래생명자원 (53점)
-  💰 3,470원 (+2.4%) | D+3 ★
-  📊 기대승률 71% / +8.0%
-  📋 공시: 정상(양호) ✅ | 뉴스: 특이사항 없음 ✅
-  💡 깊은 조정 후 급반등 — 기다려야 큰 수익
-
-🥉 🟡 [B] 03-05 #1 팬오션 (44점)
-  💰 5,000원 (-11.7%) | D+2
-  📍 깊은조정
-  📋 공시: 정상(양호) ✅ | 뉴스: 부정적 뉴스 다수 ⚠️
-  ⚠️ 급락
-
-A등급만 매수 권장 | B는 관망
+```text
+main.py                scheduler entrypoint
+config.py              .env-based runtime config
+screener.py            end-of-day screener
+watchlist_monitor.py   active watchlist evaluation and TOP3 pick
+notifier.py            Discord webhook notifier
+performance_tracker.py outcome tracking
+fdr_update.py          OHLCV and global market updater
+weekly_update.py       stock mapping, meta, holder, finstate updater
+storage.py             SQLite persistence
 ```
 
+## 필수 환경변수
 
-## 확신도 점수 (100점 만점)
-
-### 기술적 조건 (최대 50점)
-
-| 항목 | 점수 | 조건 |
-|------|------|------|
-| MA5 터치 | +15 | 이격 ±1.5% 이내 |
-| 거래량 감소 | +10 | 20일 평균 50% 이하 |
-| 볼린저밴드 하단 | +10 | 하위 30% |
-| 가격 조정 | +5 | 스크리닝 대비 -5% 이상 |
-| CCI 냉각 | +5 | 스크리닝 때 CCI의 70% 이하로 하락 |
-| RSI 과매도 | +5 | RSI < 40 |
-
-### 타이밍 (최대 30점)
-
-| 상황 | 점수 | 설명 |
-|------|------|------|
-| sweet spot 정확 일치 | +30 | 1위→D+1, 3위→D+3 |
-| ±1일 | +22 | |
-| 윈도우 내 | +15 | |
-| 윈도우 전 | +5 | 아직 이름 |
-| 윈도우 후 | 0 | 만료 |
-
-### 순위 보너스 (최대 20점)
-
-| 순위 | 보너스 | 백테스트 근거 |
-|------|--------|--------------|
-| 1위 | +20 | D+2 승률 75%, +3.9% |
-| 3위 | +15 | D+3 승률 71%, +8.0% |
-| 4~5위 | +5 | |
-| 2위 | 0 | 전 구간 약세 |
-
-### 위험 감점
-
-| 항목 | 감점 | 조건 |
-|------|------|------|
-| 과열 | -15 | CCI>200 & RSI>80 & 이격>15% 동시 |
-| DART 위험 | -10 | 유상증자, 관리종목 등 |
-| 급락 | -5 | 스크리닝 대비 -10% 이상 |
-| 뉴스 위험 | -10 | 상폐, 횡령 등 키워드 |
-
-### 등급
-
-| 등급 | 점수 | 행동 |
-|------|------|------|
-| **A** | 60+ | 매수 권장 |
-| **B** | 40~59 | 관망 또는 소량 |
-| **C** | ~39 | 무시 |
-| A 없음 | — | "오늘은 관망" 메시지 |
-
-
-## 스크리닝 점수 (9지표, 100점)
-
-장마감 후 유니버스에서 TOP3를 선정하는 점수.
-
-| 지표 | 배점 | 설명 |
-|------|------|------|
-| CCI(14) | 22 | 최적 구간 180~220, 종형분포 |
-| MA20 이격도 | 18 | 최적 2~8% |
-| 등락률 | 15 | 최적 2~8% |
-| CCI 기울기 | 10 | 최근 4일 연속 상승 수 |
-| MA20 기울기 | 10 | 최근 4일 연속 상승 수 |
-| RSI(14) | 5 | 최적 50~70 |
-| 매물대 | 10 | 위 매물이 적을수록 고점 |
-| 거래원 | 5 | 외국계 매수, 비주류 매집 패턴 |
-| 거래량 폭발 | 5 | 당일/20일평균 비율 2~5배 최적 |
-
-과열 복합 감점: CCI>200 & RSI>80 & 이격>15% → -8점
-
-보수 모드: 코스피 MA20 이격 -10% 이하 → TOP1, -3%~-10% → TOP2
-
-
-## 파일 구조
-
-```
-ClosingBell/
-├── main.py                  스케줄러 + CLI (301줄)
-├── config.py                설정 + .env 로드 (173줄)
-├── screener.py              9지표 스크리닝 엔진 (646줄)
-├── watchlist_monitor.py     워치리스트 + daily TOP3 (665줄)
-├── enricher.py              거래원 + DART + AI 분석 (161줄)
-├── ai_analyzer.py           Gemini AI 위험도 판단 (161줄)
-├── dart_checker.py          DART 전자공시 체크 (111줄)
-├── news_checker.py          네이버 뉴스 + Gemini 요약 (143줄)
-├── notifier.py              디스코드 웹훅 (314줄)
-├── kiwoom_api.py            키움 REST API 래퍼 (584줄)
-├── data_updater.py          유니버스 OHLCV 갱신 (136줄)
-├── fdr_update.py            전체 OHLCV + 글로벌 갱신 (381줄)
-├── performance_tracker.py   D+1~D+5 성과 추적 (300줄)
-├── weekly_update.py         주간/월간 데이터 갱신 (233줄)
-├── health_check.py          시스템 헬스체크 (376줄)
-├── auto_tuner.py            지표 최적 구간 자동 튜닝 (333줄)
-├── backfill.py              과거 데이터 백필 (476줄)
-├── backfill_watchlist.py    기존 로그 → 워치리스트 변환 (123줄)
-├── .env                     API 키 + 스케줄 설정
-├── .env.example             설정 템플릿
-├── requirements.txt         Python 패키지
-├── run_schedule.bat         Windows 작업 스케줄러용
-├── .streamlit/
-│   └── config.toml          Streamlit runOnSave 설정
-├── dashboard/
-│   └── app.py               Streamlit 대시보드 (489줄)
-└── data/
-    ├── logs/                 일별 스크리닝 결과 JSON
-    ├── watchlist/            감시 종목 JSON (D+5)
-    ├── performance/          성과 추적 데이터
-    └── closingbell.log       실행 로그
+```env
+KIWOOM_APPKEY=
+KIWOOM_SECRETKEY=
+DISCORD_WEBHOOK_URL=
 ```
 
-**총 19파일, ~6,100줄**
+## 선택 환경변수
 
+```env
+GEMINI_API_KEY=
+DART_API_KEY=
+NAVER_CLIENT_ID=
+NAVER_CLIENT_SECRET=
+```
 
-## 데이터 갱신 주기
+## 자주 조정하는 운영값
 
-| 데이터 | 주기 | 방법 | 소요 |
-|--------|------|------|------|
-| OHLCV 2,782종목 | 매일 자동 | FDR 스마트 스킵 | ~3분 |
-| 글로벌 지수 6개 | 매일 자동 | FDR | ~10초 |
-| 성과 추적 | 매일 자동 | OHLCV 기반 | ~5초 |
-| stock_mapping | 월요일 자동 | FDR StockListing | ~1분 |
-| meta (관리종목, 시총) | 월요일 자동 | FDR/KRX | ~1분 |
-| 재무제표 (finstate) | 매월 초 월요일 자동 | DART API | ~30분 |
+```env
+SCHEDULE_DAILY_PICK=15:00
+SCHEDULE_SCREEN=15:40
+WATCHLIST_MAX_STOCKS=3
+WATCHLIST_ALLOWED_RANKS=1,2,3
+DAILY_PICK_TOP_K=3
+DISCORD_SCREEN_TOP_N=3
+DISCORD_PICK_TOP_N=3
+RANK1_SWEET_SPOT=1
+RANK2_SWEET_SPOT=2
+RANK3_SWEET_SPOT=2
+```
 
-스마트 스킵: 삼성전자 최신일 기준으로 각 CSV 마지막 날짜 비교, 이미 최신이면 FDR 호출 없이 패스.
-
-
-## 외부 API
-
-| API | 용도 | 비용 | 필수 |
-|-----|------|------|------|
-| 키움 REST API | 현재가, 거래량, 거래원, 지수 | 무료 | ✅ |
-| Gemini AI | 종목 위험도 판단, 뉴스 요약 | 무료 | 없으면 룰 기반 fallback |
-| DART | 전자공시 (유상증자, 관리종목 등) | 무료 | 없으면 스킵 |
-| 네이버 뉴스 | 종목별 최근 뉴스 수집 | 무료 (일 25,000건) | 없으면 키워드 판단 |
-| Discord Webhook | 매수 후보 알림 | 무료 | ✅ |
-| FinanceDataReader | OHLCV, 지수, 종목 리스트 | 무료 | ✅ |
-
-
-## 설치 및 실행
-
-### 1. 환경 설정
+## 실행
 
 ```bash
 cd C:\Coding\ClosingBell
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-### 2. .env 설정
-
-```env
-# 필수
-KIWOOM_APPKEY=키움에서발급
-KIWOOM_SECRETKEY=키움에서발급
-DISCORD_WEBHOOK_URL=디스코드채널웹훅URL
-
-# 권장
-GEMINI_API_KEY=구글AI스튜디오에서발급
-DART_API_KEY=DART에서발급
-
-# 선택 (있으면 뉴스 정확도 향상)
-NAVER_CLIENT_ID=네이버개발자센터
-NAVER_CLIENT_SECRET=네이버개발자센터
-
-# 스케줄 (기본값 사용 시 생략 가능)
-SCHEDULE_DAILY_PICK=15:00
-SCHEDULE_SCREEN=15:40
-```
-
-### 3. 최초 실행
-
-```bash
-# 기존 로그가 있으면 워치리스트 변환
-python backfill_watchlist.py
-
-# 전체 시스템 검증
-python main.py --preflight
-
-# TOP3 웹훅 테스트
-python main.py --pick
-
-# 스케줄러 시작 (매일 자동)
 python main.py
 ```
 
-### 4. CLI 명령어
+## 운영 점검 명령
 
-| 명령어 | 설명 |
-|--------|------|
-| `python main.py` | 스케줄러 모드 (15:00 웹훅 + 15:40 파이프라인) |
-| `python main.py --pick` | 즉시 TOP3 선정 + 디스코드 발송 |
-| `python main.py --once` | 즉시 스크리닝 (웹훅 없음) |
-| `python main.py --preflight` | 전체 파이프라인 검증 |
-| `python main.py --weekly` | 수동 주간 갱신 |
-| `python health_check.py --data` | 데이터 상태 확인 |
-| `python performance_tracker.py --report` | 성과 리포트 |
-| `python performance_tracker.py --rebuild` | 성과 전체 재계산 |
-| `python watchlist_monitor.py --status` | 워치리스트 현황 |
-| `python fdr_update.py --check` | OHLCV 갱신 상태 확인 |
-| `python fdr_update.py` | OHLCV 전체 수동 갱신 |
-| `python weekly_update.py --check` | 주간 데이터 상태 |
+```bash
+python main.py --pick
+python main.py --once
+python main.py --weekly
+python watchlist_monitor.py --status
+python performance_tracker.py --report
+python fdr_update.py --check
+python weekly_update.py --check
+```
 
+## 저장 위치
 
-## 백테스트 결과 (18일, 224건)
+- screening, watchlist, buy-pick, notify log: `data/closingbell.db`
+- performance tracking: `data/performance/tracking.json`
+- DART corp map cache: `data/dart_corp_map.json`
+- market calendar cache: `data/reference/market_calendar.json`
+- OHLCV source: `C:/Coding/data/ohlcv`
+- global merged source: `C:/Coding/data/global/global_merged.csv`
+- runtime meta source: `C:/Coding/data/meta/*`
 
-### 순위별 × 기간별 승률
+## 제거된 항목
 
-|  | D+1 | D+2 | D+3 | D+4 | D+5 |
-|--|-----|-----|-----|-----|-----|
-| **1위** | 44% / -0.6% | **75% / +3.9%** | 60% / +4.7% | 67% / +3.6% | 62% / +5.3% |
-| **2위** | 44% / -0.1% | 56% / -1.2% | 47% / -1.8% | 64% / -0.6% | 62% / +1.9% |
-| **3위** | 39% / -2.2% | 53% / +3.7% | **71% / +8.0%** | 58% / +8.5% | 50% / +6.2% |
+- Streamlit dashboard
+- Git push automation
+- preflight import path
+- backfill / repair / simulate / local replay scripts
+- file-based legacy watchlist logs
 
-D+1(즉시 매수)은 전 순위 마이너스. 눌림목 진입이 구조적으로 유리.
+## 기본 검증
 
-
-## 순위별 타이밍 윈도우
-
-| 순위 | sweet spot | 감시 윈도우 | 특성 |
-|------|-----------|------------|------|
-| 1위 | D+1 | D+1~D+2 | 빠른 반등형 — 빨리 잡아야 |
-| 2위 | D+4 | D+3~D+5 | 느린 회복형 — 우선순위 낮음 |
-| 3위 | D+3 | D+2~D+4 | 깊은 조정 후 급반등 — 기다려야 큰 수익 |
-
-
-## 변경 이력
-
-### v3.5.1 (2026-03-09)
-- **우선주 필터**: 코드 끝자리 판별 제거 → 이름 기반("우","우B","우C")만 사용
-- **워치리스트 중복**: 최신 워치리스트 우선 (reverse=True)
-- **워치리스트 만료**: 캘린더 5일 → 거래일 5일 기준
-- **DART 공시**: corp_code 매핑 구축 (corpCode.xml → 자동 다운로드 + 7일 캐시)
-- **Git push**: returncode 검증 + 구체적 에러 로깅
-- **대시보드**: v3.5 구조 반영 (매수 후보, 워치리스트, 성과 매트릭스)
-
-### v3.5 (2026-03-09)
-- 2단계 아키텍처 (스크리닝 → 워치리스트 → 눌림목 TOP3)
-- 15:00 디스코드 매수 후보 웹훅 (API 현재가 + DART + 네이버 뉴스 + Gemini)
-- 9지표 점수제 (100점) + 과열 감점
-- 확신도 A/B/C 등급 (타이밍 윈도우 + 순위 보너스)
-- 전체 OHLCV 2,782종목 스마트 스킵 갱신
-- 월요일 자동 stock_mapping + meta / 매월 초 재무제표
-- 네이버 뉴스 API + Gemini 위험 요약
-- 성과 추적 D+1~D+5
-
-### v3 (2026-02 ~ 03)
-- 키움 REST API 기반 스크리닝
-- 8지표 점수제, TOP3 디스코드 웹훅
-- Streamlit 대시보드
+```bash
+python -m py_compile main.py watchlist_monitor.py notifier.py screener.py performance_tracker.py weekly_update.py fdr_update.py
+python main.py --help
+python weekly_update.py --check
+python fdr_update.py --check
+```

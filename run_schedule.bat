@@ -2,7 +2,7 @@
 chcp 65001 >nul
 
 echo ============================================
-echo ClosingBell v3.5 Scheduler
+echo ClosingBell v3.7 Scheduler
 echo ============================================
 
 cd /d %~dp0

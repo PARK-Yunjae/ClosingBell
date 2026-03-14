@@ -1,15 +1,12 @@
 """
-ClosingBell v3.6 — 스크리닝 + 9지표 점수 계산 + 시장 컨텍스트
+ClosingBell v3.7 — 스크리닝 + 9지표 점수 계산 + 시장 컨텍스트
 =============================================================
 키움 REST API 기반 / 유니버스 전체 분석 / 매물대+거래원+AI 통합
-v3.6: 대주주 투매 필터, 캘린더 이벤트 감점, 기업정보 표시
 """
 import logging
-import json
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from collections import defaultdict
 from config import (
     CCI_PERIOD, RSI_PERIOD,
@@ -26,14 +23,14 @@ from config import (
     MIN_PRICE, MAX_PRICE,
     MIN_CHANGE_RATE, MAX_CHANGE_RATE,
     NASDAQ_DROP_THRESHOLD, NASDAQ_PENALTY,
-    OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV, LOG_DIR,
+    OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV,
     MIN_TRADING_VALUE,
     EXCLUDE_NAMES, ETF_KEYWORDS, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
     API_DELAY,
 )
 from kiwoom_api import KiwoomAPI
 
-# v3.6: 시장 컨텍스트 (캘린더+지분+기업정보)
+# Shared market context: calendar, holder changes, and company profile.
 try:
     from market_context import get_market_context
 except Exception:
@@ -44,7 +41,7 @@ logger = logging.getLogger("closingbell")
 
 
 class Screener:
-    """종가매매 스크리닝 엔진 v3.5"""
+    """ClosingBell end-of-day screening engine."""
 
     def __init__(self, api: KiwoomAPI):
         self.api = api
@@ -73,7 +70,7 @@ class Screener:
         market = self.get_market_status()
         market_ctx = get_market_context()
 
-        # v3.6: 캘린더 이벤트 체크
+        # Apply calendar-based market adjustments when available.
         if market_ctx:
             today_ctx = market_ctx.today_context(today)
             market["event_warning"] = today_ctx["event_warning"]
@@ -166,7 +163,7 @@ class Screener:
             top_n = max(1, TOP_N_CONSERVATIVE - 1)  # 나스닥 급락: 1개
             logger.info("나스닥 급락 → 보수 모드 (TOP%d)", top_n)
         elif market_ctx and market_ctx.should_conservative(today):
-            top_n = 1  # v3.6: 정치위기 → TOP1만
+            top_n = 1
             logger.info("⚠️ 정치위기 → 보수 모드 (TOP1)")
         elif kospi_ma20 and kospi_ma20 > 0:
             kospi_gap = (market.get("kospi", 0) / kospi_ma20 - 1) * 100
@@ -190,9 +187,6 @@ class Screener:
         # 주도테마 조회
         theme_stats = self._get_themes()
 
-        # 전일 추천 수익률
-        prev_returns = self._calc_prev_returns()
-
         return {
             "date": today,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -202,7 +196,7 @@ class Screener:
             "all_scored": [self._stock_summary(s, i + 1) for i, s in enumerate(scored)],
             "sector_summary": sector_stats,
             "theme_summary": theme_stats,
-            "prev_returns": prev_returns,
+            "prev_returns": [],
         }
 
     # ──────────────────────────────────────────────
@@ -455,7 +449,7 @@ class Screener:
                                 VOL_BURST_OPTIMAL[0], VOL_BURST_OPTIMAL[1],
                                 1.0, VOL_BURST_ZERO_HIGH, SCORE_VOLUME_BURST)
 
-        # v3.6: 캘린더 이벤트 감점 (FOMC 등)
+        # Apply market-context score adjustments when available.
         market_ctx = get_market_context()
         if market_ctx:
             score_ctx = market_ctx.stock_score_context(
@@ -467,7 +461,7 @@ class Screener:
             stock["holder_penalty"] = score_ctx["holder_penalty"]
             stock["market_flags"] = score_ctx["flags"]
 
-        # v3.6: 잡주(≤1만) + 저지분(<30%) 감점
+        # Score already includes market-context penalties when available.
         return round(score, 1)
 
     # ──────────────────────────────────────────────
@@ -537,39 +531,6 @@ class Screener:
         result.sort(key=lambda x: x["avg_change"], reverse=True)
         return result
 
-    def _calc_prev_returns(self) -> list[dict]:
-        today = datetime.now().strftime("%Y-%m-%d")
-        log_files = sorted(LOG_DIR.glob("*.json"))
-        prev_log = None
-        for lf in reversed(log_files):
-            if lf.stem != today:
-                prev_log = lf
-                break
-        if not prev_log:
-            return []
-        try:
-            prev_data = json.loads(prev_log.read_text(encoding="utf-8"))
-            if prev_data.get("skipped"):
-                return []
-            results = []
-            for stock in prev_data.get("top", []):
-                try:
-                    cur = self.api.get_current_price(stock["code"])
-                    buy_price = stock["price"]
-                    if buy_price > 0 and cur["price"] > 0:
-                        ret = (cur["price"] / buy_price - 1) * 100
-                        results.append({
-                            "date": prev_log.stem, "code": stock["code"],
-                            "name": stock.get("name", ""), "rank": stock.get("rank", 0),
-                            "buy_price": buy_price, "today_price": cur["price"],
-                            "return_pct": round(ret, 2),
-                        })
-                except Exception:
-                    pass
-            return results
-        except Exception:
-            return []
-
     # ──────────────────────────────────────────────
     # OHLCV 로드
     # ──────────────────────────────────────────────
@@ -615,7 +576,7 @@ class Screener:
             info = self.stock_map.get(code, {})
             if "ETF" in info.get("market", "").upper() or "ETF" in name.upper():
                 return True
-        # v3.6: 대주주 투매 종목 제외 (지분 -10%p 이상 감소)
+        # Skip names flagged by major-holder dumping checks.
         market_ctx = get_market_context()
         if market_ctx and market_ctx.is_dumping(code):
             logger.debug("투매 제외 [%s] %s", code, name)
@@ -660,7 +621,7 @@ class Screener:
             "ai_action": stock.get("ai_action", ""),
             "ai_risk": stock.get("ai_risk", ""),
             "ai_summary": stock.get("ai_summary", ""),
-            # v3.6: 기업정보 + 지분
+            # Company profile and holder data come from runtime meta files.
             "company_brief": market_ctx.get_company_brief(code) if market_ctx else info.get("sector", ""),
             "holder_tag": market_ctx.holder_tag(code, stock.get("price", 0)) if market_ctx else "",
             "holder_pct": market_ctx.get_holder_level(code) if market_ctx else None,

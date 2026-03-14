@@ -1,8 +1,8 @@
 """
 ClosingBell runtime storage.
 
-JSON 파일 수를 줄이기 위해 운영 데이터는 SQLite에 gzip 압축 저장한다.
-기존 호출부는 dict/list 형태를 유지하고, 저장 계층만 교체한다.
+Operational data is stored in SQLite so the scheduler, Discord notifier,
+watchlist persistence, and buy-pick tracking all share one source of truth.
 """
 
 from __future__ import annotations
@@ -10,19 +10,9 @@ from __future__ import annotations
 import gzip
 import json
 import sqlite3
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Iterable
+from datetime import datetime
 
-from config import (
-    APP_DB_PATH,
-    ARCHIVE_DIR,
-    BACKTEST_DIR,
-    LEGACY_JSON_RETENTION_DAYS,
-    LOG_DIR,
-    SAVE_LEGACY_JSON,
-    WATCHLIST_DIR,
-)
+from config import APP_DB_PATH
 
 
 def _now_iso() -> str:
@@ -92,13 +82,6 @@ def init_storage() -> None:
                 sent_at TEXT NOT NULL,
                 status TEXT NOT NULL,
                 response_code INTEGER,
-                payload BLOB NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS backtest_datasets (
-                dataset_name TEXT PRIMARY KEY,
-                updated_at TEXT NOT NULL,
-                item_count INTEGER NOT NULL,
                 payload BLOB NOT NULL
             );
             """
@@ -403,226 +386,3 @@ def iter_notification_events(
             }
         )
     return events
-
-
-def _dataset_count(data: dict | list) -> int:
-    if isinstance(data, (dict, list)):
-        return len(data)
-    return 1
-
-
-def save_backtest_dataset(dataset_name: str, data: dict | list) -> None:
-    init_storage()
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO backtest_datasets(dataset_name, updated_at, item_count, payload)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(dataset_name) DO UPDATE SET
-                updated_at = excluded.updated_at,
-                item_count = excluded.item_count,
-                payload = excluded.payload
-            """,
-            (
-                dataset_name,
-                _now_iso(),
-                _dataset_count(data),
-                sqlite3.Binary(_encode_payload(data)),
-            ),
-        )
-
-
-def load_backtest_dataset(dataset_name: str) -> dict | list | None:
-    init_storage()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT payload FROM backtest_datasets WHERE dataset_name = ?",
-            (dataset_name,),
-        ).fetchone()
-    return _decode_payload(row["payload"]) if row else None
-
-
-def list_backtest_datasets() -> list[dict]:
-    init_storage()
-    with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT dataset_name, updated_at, item_count
-            FROM backtest_datasets
-            ORDER BY dataset_name ASC
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def save_legacy_json(path: Path, data: dict | list) -> None:
-    if not SAVE_LEGACY_JSON:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
-
-
-def prune_legacy_json(dir_path: Path, keep_recent_days: int | None = None) -> int:
-    keep_recent_days = (
-        LEGACY_JSON_RETENTION_DAYS if keep_recent_days is None else keep_recent_days
-    )
-    cutoff = datetime.now().date() - timedelta(days=max(keep_recent_days, 0))
-    removed = 0
-
-    for path in sorted(dir_path.glob("*.json")):
-        try:
-            day = datetime.strptime(path.stem, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if day >= cutoff:
-            continue
-        path.unlink(missing_ok=True)
-        removed += 1
-
-    return removed
-
-
-def _archive_json_file(path: Path, archive_dir: Path) -> Path:
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    target = archive_dir / f"{path.stem}.json.gz"
-    target.write_bytes(gzip.compress(path.read_bytes(), compresslevel=9))
-    return target
-
-
-def compact_runtime_json(
-    delete_after: bool = False,
-    keep_recent_days: int = 0,
-    gzip_archive: bool = False,
-) -> dict:
-    """
-    기존 logs/watchlist JSON을 DB로 이관한다.
-
-    delete_after=True 이면 keep_recent_days보다 오래된 JSON을 삭제한다.
-    gzip_archive=True 이면 삭제 전에 archive 디렉터리에 gzip으로 보관한다.
-    """
-    init_storage()
-    imported_logs = 0
-    imported_watchlists = 0
-    removed_logs = 0
-    removed_watchlists = 0
-    cutoff = datetime.now().date() - timedelta(days=max(keep_recent_days, 0))
-
-    for path in sorted(LOG_DIR.glob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload.get("date"):
-                save_screen_result(payload)
-                imported_logs += 1
-        except Exception:
-            continue
-
-        if not delete_after:
-            continue
-        try:
-            day = datetime.strptime(path.stem, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if day >= cutoff:
-            continue
-        if gzip_archive:
-            _archive_json_file(path, ARCHIVE_DIR / "logs")
-        path.unlink(missing_ok=True)
-        removed_logs += 1
-
-    for path in sorted(WATCHLIST_DIR.glob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload.get("created"):
-                save_watchlist_payload(payload)
-                imported_watchlists += 1
-        except Exception:
-            continue
-
-        if not delete_after:
-            continue
-        try:
-            day = datetime.strptime(path.stem, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if day >= cutoff:
-            continue
-        if gzip_archive:
-            _archive_json_file(path, ARCHIVE_DIR / "watchlist")
-        path.unlink(missing_ok=True)
-        removed_watchlists += 1
-
-    return {
-        "imported_logs": imported_logs,
-        "imported_watchlists": imported_watchlists,
-        "removed_logs": removed_logs,
-        "removed_watchlists": removed_watchlists,
-    }
-
-
-def load_screen_results_from_fs() -> list[dict]:
-    results = []
-    for path in sorted(LOG_DIR.glob("*.json")):
-        try:
-            results.append(json.loads(path.read_text(encoding="utf-8")))
-        except Exception:
-            pass
-    return results
-
-
-def load_watchlists_from_fs() -> list[dict]:
-    results = []
-    for path in sorted(WATCHLIST_DIR.glob("*.json"), reverse=True):
-        try:
-            results.append(json.loads(path.read_text(encoding="utf-8")))
-        except Exception:
-            pass
-    return results
-
-
-def load_backtest_dataset_from_fs(dataset_name: str) -> dict | list | None:
-    path = BACKTEST_DIR / f"{dataset_name}.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def compact_backtest_json(
-    delete_after: bool = False,
-    gzip_archive: bool = False,
-    keep_files: set[str] | None = None,
-) -> dict:
-    """
-    Import backtest JSON datasets into SQLite.
-
-    keep_files contains file names to preserve on disk even when delete_after=True.
-    """
-    init_storage()
-    keep_files = keep_files or set()
-    imported = 0
-    removed = 0
-
-    for path in sorted(BACKTEST_DIR.glob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            save_backtest_dataset(path.stem, payload)
-            imported += 1
-        except Exception:
-            continue
-
-        if not delete_after or path.name in keep_files:
-            continue
-        if gzip_archive:
-            _archive_json_file(path, ARCHIVE_DIR / "backtest")
-        path.unlink(missing_ok=True)
-        removed += 1
-
-    return {
-        "imported_backtests": imported,
-        "removed_backtests": removed,
-    }

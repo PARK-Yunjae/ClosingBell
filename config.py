@@ -1,34 +1,64 @@
 """
-ClosingBell v3.5 — 설정 및 상수
-==============================
-모든 튜닝 가능 값은 .env에서 변경 가능.
-.env에 없으면 아래 기본값 사용.
+ClosingBell runtime configuration.
+
+Keep operational tuning in `.env` so the live scheduler can be adjusted
+without changing code.
 """
+
+from __future__ import annotations
+
 import os
-from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def _env(key: str, default, type_fn=str):
-    """환경변수 읽기 헬퍼"""
-    val = os.getenv(key, "")
-    if not val:
+    value = os.getenv(key, "")
+    if value == "":
         return default
     try:
-        return type_fn(val)
-    except (ValueError, TypeError):
+        return type_fn(value)
+    except (TypeError, ValueError):
         return default
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    """불리언 환경변수 읽기 헬퍼"""
-    val = os.getenv(key, "")
-    if not val:
+    value = os.getenv(key, "")
+    if value == "":
         return default
-    return val.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_int_list(key: str, default: list[int]) -> list[int]:
+    value = os.getenv(key, "")
+    if value == "":
+        return default
+    result: list[int] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            result.append(int(part))
+        except ValueError:
+            return default
+    return result or default
+
+
+def _env_str_list(key: str, default: list[str]) -> list[str]:
+    value = os.getenv(key, "")
+    if value == "":
+        return default
+    result = [part.strip() for part in value.split(",") if part.strip()]
+    return result or default
 
 
 def _env_path(key: str, default) -> Path:
@@ -36,93 +66,62 @@ def _env_path(key: str, default) -> Path:
     return Path(raw or str(default)).expanduser()
 
 
-def _slugify(text: str) -> str:
-    cleaned = []
-    for char in text.strip():
-        if char.isalnum():
-            cleaned.append(char.lower())
-        elif char in {" ", "-", "_"}:
-            cleaned.append("_")
-    return "".join(cleaned).strip("_")
-
-# ============================================================
-# 경로
-# ============================================================
 PROJECT_DIR = Path(__file__).resolve().parent
+
 DATA_DIR = _env_path("DATA_DIR", "C:/Coding/data")
 META_DIR = _env_path("META_DIR", DATA_DIR / "meta")
 OHLCV_DIR = _env_path("OHLCV_DIR", DATA_DIR / "ohlcv")
 GLOBAL_CSV = _env_path("GLOBAL_CSV", DATA_DIR / "global" / "global_merged.csv")
 MAPPING_CSV = _env_path("MAPPING_CSV", DATA_DIR / "stock_mapping.csv")
 MAJOR_HOLDER_CSV = _env_path("MAJOR_HOLDER_CSV", META_DIR / "major_holder.csv")
-HOLDER_ANALYSIS_CSV = _env_path("HOLDER_ANALYSIS_CSV", META_DIR / "holder_analysis.csv")
+COMPANY_PROFILE_CSV = _env_path("COMPANY_PROFILE_CSV", META_DIR / "company_profile.csv")
+
 APP_DATA_DIR = _env_path("APP_DATA_DIR", PROJECT_DIR / "data")
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 REFERENCE_DIR = _env_path("REFERENCE_DIR", APP_DATA_DIR / "reference")
 REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+
 LOG_DIR = _env_path("LOG_DIR", APP_DATA_DIR / "logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-BACKTEST_DIR = _env_path("BACKTEST_DIR", APP_DATA_DIR / "backtest")
-BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-ARCHIVE_DIR = _env_path("ARCHIVE_DIR", APP_DATA_DIR / "archive")
-ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-WATCHLIST_DIR = _env_path("WATCHLIST_DIR", APP_DATA_DIR / "watchlist")
-WATCHLIST_DIR.mkdir(parents=True, exist_ok=True)
+
 PERFORMANCE_DIR = _env_path("PERFORMANCE_DIR", APP_DATA_DIR / "performance")
 PERFORMANCE_DIR.mkdir(parents=True, exist_ok=True)
-ANALYSIS_DIR = _env_path("ANALYSIS_DIR", APP_DATA_DIR / "analysis")
-ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
-ANALYSIS_KEEP_LATEST = _env("ANALYSIS_KEEP_LATEST", 2, int)
-APP_DB_PATH = _env_path("APP_DB_PATH", APP_DATA_DIR / "closingbell.db")
-KRX_HOLIDAYS_PATH = _env_path("KRX_HOLIDAYS_PATH", REFERENCE_DIR / "krx_holidays.json")
-MARKET_CALENDAR_PATH = _env_path("MARKET_CALENDAR_PATH", REFERENCE_DIR / "market_calendar.json")
-TRADING_CALENDAR_REFERENCE_CODE = _env("TRADING_CALENDAR_REFERENCE_CODE", "005930")
-SAVE_LEGACY_JSON = _env_bool("SAVE_LEGACY_JSON", False)
-LEGACY_JSON_RETENTION_DAYS = _env("LEGACY_JSON_RETENTION_DAYS", 5, int)
 
-# ============================================================
-# 키움 REST API
-# ============================================================
+APP_DB_PATH = _env_path("APP_DB_PATH", APP_DATA_DIR / "closingbell.db")
+KRX_HOLIDAYS_PATH = _env_path(
+    "KRX_HOLIDAYS_PATH",
+    REFERENCE_DIR / "krx_holidays.json",
+)
+MARKET_CALENDAR_PATH = _env_path(
+    "MARKET_CALENDAR_PATH",
+    REFERENCE_DIR / "market_calendar.json",
+)
+TRADING_CALENDAR_REFERENCE_CODE = _env(
+    "TRADING_CALENDAR_REFERENCE_CODE",
+    "005930",
+)
+
 KIWOOM_BASE_URL = _env("KIWOOM_BASE_URL", "https://api.kiwoom.com")
 KIWOOM_APPKEY = _env("KIWOOM_APPKEY", "")
 KIWOOM_SECRETKEY = _env("KIWOOM_SECRETKEY", "")
 
-# ============================================================
-# Gemini AI
-# ============================================================
+DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL", "")
 GEMINI_API_KEY = _env("GEMINI_API_KEY", "")
 GEMINI_MODEL = _env("GEMINI_MODEL", "gemini-2.0-flash")
-
-# ============================================================
-# DART 공시
-# ============================================================
 DART_API_KEY = _env("DART_API_KEY", "")
-
-# ============================================================
-# 디스코드
-# ============================================================
-DISCORD_WEBHOOK_URL = _env("DISCORD_WEBHOOK_URL", "")
-DASHBOARD_URL = _env("DASHBOARD_URL", "https://closingbell.streamlit.app")
-
-# ============================================================
-# 네이버 뉴스 API (https://developers.naver.com/apps/)
-# ============================================================
 NAVER_CLIENT_ID = _env("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = _env("NAVER_CLIENT_SECRET", "")
 
-# ============================================================
-# 점수 파라미터 (.env에서 튜닝 가능)
-# ============================================================
 CCI_PERIOD = _env("CCI_PERIOD", 14, int)
 RSI_PERIOD = _env("RSI_PERIOD", 14, int)
 
-# 종형분포 최적 구간
 CCI_OPTIMAL = (
-    _env("CCI_OPTIMAL_LOW", 160, float),
-    _env("CCI_OPTIMAL_HIGH", 180, float),
+    _env("CCI_OPTIMAL_LOW", 160.0, float),
+    _env("CCI_OPTIMAL_HIGH", 180.0, float),
 )
-CCI_ZERO_LOW = _env("CCI_ZERO_LOW", 80, float)
-CCI_ZERO_HIGH = _env("CCI_ZERO_HIGH", 300, float)
+CCI_ZERO_LOW = _env("CCI_ZERO_LOW", 80.0, float)
+CCI_ZERO_HIGH = _env("CCI_ZERO_HIGH", 300.0, float)
 
 MA20_GAP_OPTIMAL = (
     _env("MA20_GAP_OPTIMAL_LOW", 2.0, float),
@@ -137,72 +136,75 @@ CHANGE_OPTIMAL = (
 CHANGE_ZERO = _env("CHANGE_ZERO", 20.0, float)
 
 RSI_OPTIMAL = (
-    _env("RSI_OPTIMAL_LOW", 50, float),
-    _env("RSI_OPTIMAL_HIGH", 70, float),
+    _env("RSI_OPTIMAL_LOW", 50.0, float),
+    _env("RSI_OPTIMAL_HIGH", 70.0, float),
 )
-RSI_ZERO_LOW = _env("RSI_ZERO_LOW", 25, float)
-RSI_ZERO_HIGH = _env("RSI_ZERO_HIGH", 85, float)
+RSI_ZERO_LOW = _env("RSI_ZERO_LOW", 25.0, float)
+RSI_ZERO_HIGH = _env("RSI_ZERO_HIGH", 85.0, float)
 
-# 배점 (합계 100점)
-SCORE_CCI = _env("SCORE_CCI", 22, float)           # 25→22 (거래량 폭발 추가분)
-SCORE_MA20_GAP = _env("SCORE_MA20_GAP", 18, float)  # 20→18
-SCORE_CHANGE = _env("SCORE_CHANGE", 15, float)
-SCORE_CCI_SLOPE = _env("SCORE_CCI_SLOPE", 10, float)
-SCORE_MA20_SLOPE = _env("SCORE_MA20_SLOPE", 10, float)
-SCORE_RSI = _env("SCORE_RSI", 5, float)
-SCORE_VOLUME_PROFILE = _env("SCORE_VOLUME_PROFILE", 10, float)
-SCORE_BROKER_FLOW = _env("SCORE_BROKER_FLOW", 5, float)
-SCORE_VOLUME_BURST = _env("SCORE_VOLUME_BURST", 5, float)  # 거래량 폭발 (22+18+15+10+10+5+10+5+5=100)
+SCORE_CCI = _env("SCORE_CCI", 22.0, float)
+SCORE_MA20_GAP = _env("SCORE_MA20_GAP", 18.0, float)
+SCORE_CHANGE = _env("SCORE_CHANGE", 15.0, float)
+SCORE_CCI_SLOPE = _env("SCORE_CCI_SLOPE", 10.0, float)
+SCORE_MA20_SLOPE = _env("SCORE_MA20_SLOPE", 10.0, float)
+SCORE_RSI = _env("SCORE_RSI", 5.0, float)
+SCORE_VOLUME_PROFILE = _env("SCORE_VOLUME_PROFILE", 10.0, float)
+SCORE_BROKER_FLOW = _env("SCORE_BROKER_FLOW", 5.0, float)
+SCORE_VOLUME_BURST = _env("SCORE_VOLUME_BURST", 5.0, float)
 
-# 과열 복합 감점 (CCI>200 & RSI>80 & MA20이격>15% 동시 충족 시)
 OVERHEAT_PENALTY = _env("OVERHEAT_PENALTY", 8.0, float)
-OVERHEAT_CCI_THRESH = _env("OVERHEAT_CCI_THRESH", 200, float)
-OVERHEAT_RSI_THRESH = _env("OVERHEAT_RSI_THRESH", 80, float)
+OVERHEAT_CCI_THRESH = _env("OVERHEAT_CCI_THRESH", 200.0, float)
+OVERHEAT_RSI_THRESH = _env("OVERHEAT_RSI_THRESH", 80.0, float)
 OVERHEAT_GAP_THRESH = _env("OVERHEAT_GAP_THRESH", 15.0, float)
 
-# 거래량 폭발 최적 구간 (당일거래량 / 20일평균)
 VOL_BURST_OPTIMAL = (
     _env("VOL_BURST_OPTIMAL_LOW", 2.0, float),
     _env("VOL_BURST_OPTIMAL_HIGH", 5.0, float),
 )
 VOL_BURST_ZERO_HIGH = _env("VOL_BURST_ZERO_HIGH", 10.0, float)
 
-# ============================================================
-# 눌림목 모니터 (2단계 아키텍처)
-# ============================================================
-WATCHLIST_MAX_DAYS = _env("WATCHLIST_MAX_DAYS", 5, int)  # 워치리스트 유효기간
-WATCHLIST_MAX_STOCKS = _env("WATCHLIST_MAX_STOCKS", 5, int)
+WATCHLIST_MAX_DAYS = _env("WATCHLIST_MAX_DAYS", 5, int)
+WATCHLIST_MAX_STOCKS = _env("WATCHLIST_MAX_STOCKS", 3, int)
 DAILY_PICK_TOP_K = _env("DAILY_PICK_TOP_K", 3, int)
-RANK1_PULLBACK_BONUS = _env("RANK1_PULLBACK_BONUS", 20, float)
-RANK2_PULLBACK_BONUS = _env("RANK2_PULLBACK_BONUS", -5, float)
-RANK3_PULLBACK_BONUS = _env("RANK3_PULLBACK_BONUS", 15, float)
-RANK4_PULLBACK_BONUS = _env("RANK4_PULLBACK_BONUS", 5, float)
-RANK5_PULLBACK_BONUS = _env("RANK5_PULLBACK_BONUS", 5, float)
+WATCHLIST_ALLOWED_RANKS = tuple(
+    _env_int_list("WATCHLIST_ALLOWED_RANKS", [1, 2, 3])
+)
+
+RANK1_SWEET_SPOT = _env("RANK1_SWEET_SPOT", 1, int)
+RANK1_WINDOW_START = _env("RANK1_WINDOW_START", 1, int)
+RANK1_WINDOW_END = _env("RANK1_WINDOW_END", 2, int)
+RANK2_SWEET_SPOT = _env("RANK2_SWEET_SPOT", 4, int)
+RANK2_WINDOW_START = _env("RANK2_WINDOW_START", 3, int)
+RANK2_WINDOW_END = _env("RANK2_WINDOW_END", 5, int)
+RANK3_SWEET_SPOT = _env("RANK3_SWEET_SPOT", 3, int)
+RANK3_WINDOW_START = _env("RANK3_WINDOW_START", 2, int)
+RANK3_WINDOW_END = _env("RANK3_WINDOW_END", 4, int)
+
+RANK1_PULLBACK_BONUS = _env("RANK1_PULLBACK_BONUS", 20.0, float)
+RANK2_PULLBACK_BONUS = _env("RANK2_PULLBACK_BONUS", -5.0, float)
+RANK3_PULLBACK_BONUS = _env("RANK3_PULLBACK_BONUS", 15.0, float)
+
 BUY_REGIME_CHAOTIC_BONUS = _env("BUY_REGIME_CHAOTIC_BONUS", 3.0, float)
 BUY_REGIME_RISING_PENALTY = _env("BUY_REGIME_RISING_PENALTY", 2.0, float)
 BUY_REGIME_WEAK_PENALTY = _env("BUY_REGIME_WEAK_PENALTY", 1.0, float)
 REGIME_CHAOTIC_NASDAQ_ABS = _env("REGIME_CHAOTIC_NASDAQ_ABS", 1.5, float)
 REGIME_EVENT_HIGH_IMPACT = _env("REGIME_EVENT_HIGH_IMPACT", 3, int)
 
-# 눌림목 진입 조건
-PULLBACK_MA5_GAP = _env("PULLBACK_MA5_GAP", 1.5, float)     # MA5 이격도 ±% 이내
-PULLBACK_VOL_DECLINE = _env("PULLBACK_VOL_DECLINE", 0.5, float)  # 거래량 감소율 (50% 이하)
-PULLBACK_BB_LOWER = _env("PULLBACK_BB_LOWER", 0.3, float)     # 볼린저 하단 근접도 (0~1)
-BUY_A_MIN_SCORE = _env("BUY_A_MIN_SCORE", 60, float)
-BUY_B_MIN_SCORE = _env("BUY_B_MIN_SCORE", 40, float)
-BUY_DART_DANGER_PENALTY = _env("BUY_DART_DANGER_PENALTY", 10, float)
-BUY_DART_CAUTION_PENALTY = _env("BUY_DART_CAUTION_PENALTY", 7, float)
-BUY_NEWS_DANGER_PENALTY = _env("BUY_NEWS_DANGER_PENALTY", 10, float)
-BUY_NEWS_CAUTION_PENALTY = _env("BUY_NEWS_CAUTION_PENALTY", 3, float)
+PULLBACK_MA5_GAP = _env("PULLBACK_MA5_GAP", 1.5, float)
+PULLBACK_VOL_DECLINE = _env("PULLBACK_VOL_DECLINE", 0.5, float)
+PULLBACK_BB_LOWER = _env("PULLBACK_BB_LOWER", 0.3, float)
+BUY_A_MIN_SCORE = _env("BUY_A_MIN_SCORE", 60.0, float)
+BUY_B_MIN_SCORE = _env("BUY_B_MIN_SCORE", 40.0, float)
+BUY_DART_DANGER_PENALTY = _env("BUY_DART_DANGER_PENALTY", 10.0, float)
+BUY_DART_CAUTION_PENALTY = _env("BUY_DART_CAUTION_PENALTY", 7.0, float)
+BUY_NEWS_DANGER_PENALTY = _env("BUY_NEWS_DANGER_PENALTY", 10.0, float)
+BUY_NEWS_CAUTION_PENALTY = _env("BUY_NEWS_CAUTION_PENALTY", 5.0, float)
+DISCORD_SCREEN_TOP_N = _env("DISCORD_SCREEN_TOP_N", 3, int)
+DISCORD_PICK_TOP_N = _env("DISCORD_PICK_TOP_N", 3, int)
+NOTIFIER_RECENT_SESSIONS = _env("NOTIFIER_RECENT_SESSIONS", 20, int)
 
-# ============================================================
-# 성과 추적
-# ============================================================
 PERFORMANCE_TRACK_DAYS = _env("PERFORMANCE_TRACK_DAYS", 5, int)
 
-# ============================================================
-# 필터 (.env에서 튜닝 가능)
-# ============================================================
 TOP_N = _env("TOP_N", 3, int)
 TOP_N_CONSERVATIVE = _env("TOP_N_CONSERVATIVE", 2, int)
 MIN_PRICE = _env("MIN_PRICE", 3000, int)
@@ -211,52 +213,49 @@ NASDAQ_DROP_THRESHOLD = _env("NASDAQ_DROP_THRESHOLD", -2.0, float)
 NASDAQ_PENALTY = _env("NASDAQ_PENALTY", 5.0, float)
 MIN_CHANGE_RATE = _env("MIN_CHANGE_RATE", 1.0, float)
 MAX_CHANGE_RATE = _env("MAX_CHANGE_RATE", 29.0, float)
-MIN_TRADING_VALUE = _env("MIN_TRADING_VALUE", "1000")  # 키움 API용 (백만원 단위)
+MIN_TRADING_VALUE = _env("MIN_TRADING_VALUE", "1000")
 
-# 제외 키워드
-EXCLUDE_NAMES = [
-    "스팩", "SPAC", "ETN", "인버스", "레버리지", "리츠", "REIT", "인프라",
-]
-ETF_KEYWORDS = [
-    "KODEX", "TIGER", "KBSTAR", "HANARO", "SOL ", "ARIRANG",
-    "KOSEF", "ACE ", "PLUS ", "BNK", "RISE", "TIMEFOLIO",
-    "파워", "레버리지", "인버스",
-]
-EXCLUDE_PREF_STOCK = True
-EXCLUDE_ETF = True
+EXCLUDE_NAMES = _env_str_list(
+    "EXCLUDE_NAME_KEYWORDS",
+    ["스팩", "SPAC", "ETN", "우선주", "리츠", "REIT", "ETF"],
+)
+ETF_KEYWORDS = _env_str_list(
+    "ETF_KEYWORDS",
+    [
+        "KODEX",
+        "TIGER",
+        "KBSTAR",
+        "HANARO",
+        "SOL ",
+        "ARIRANG",
+        "KOSEF",
+        "ACE ",
+        "PLUS ",
+        "BNK",
+        "RISE",
+        "TIMEFOLIO",
+        "레버",
+        "인버스",
+        "채권",
+    ],
+)
+EXCLUDE_PREF_STOCK = _env_bool("EXCLUDE_PREF_STOCK", True)
+EXCLUDE_ETF = _env_bool("EXCLUDE_ETF", True)
 
-# ============================================================
-# 스케줄 (.env에서 시간 변경 가능)
-# ============================================================
 SCHEDULE = {
-    "daily_pick": _env("SCHEDULE_DAILY_PICK", "15:00"),    # 감시 종목 스캔 → TOP3 웹훅
-    "screen": _env("SCHEDULE_SCREEN", "15:40"),             # 스크리닝 → 워치리스트 저장 (웹훅 없음)
-    # 스크리닝 후 순차 실행: OHLCV → 글로벌 → 성과추적 → (월)매핑+메타 → (월초)재무 → git push → 종료
+    "daily_pick": _env("SCHEDULE_DAILY_PICK", "15:00"),
+    "screen": _env("SCHEDULE_SCREEN", "15:40"),
 }
-
-# API 속도 제한
+GLOBAL_UPDATE_RETRY_COUNT = _env("GLOBAL_UPDATE_RETRY_COUNT", 3, int)
+GLOBAL_UPDATE_RETRY_SLEEP_SEC = _env("GLOBAL_UPDATE_RETRY_SLEEP_SEC", 3, int)
+SCHEDULER_LOOP_SLEEP_SEC = _env("SCHEDULER_LOOP_SLEEP_SEC", 30, int)
+SCHEDULER_MAX_FAILS = _env("SCHEDULER_MAX_FAILS", 5, int)
+MONTHLY_FINSTATE_DAY_CUTOFF = _env("MONTHLY_FINSTATE_DAY_CUTOFF", 10, int)
 API_DELAY = _env("API_DELAY", 0.12, float)
 
-# ============================================================
-# v3.6 — 대주주 지분 필터
-# ============================================================
 HOLDER_DUMP_THRESHOLD = _env("HOLDER_DUMP_THRESHOLD", -10.0, float)
 HOLDER_LOW_PENALTY = _env("HOLDER_LOW_PENALTY", 2.0, float)
 HOLDER_LOW_THRESH = _env("HOLDER_LOW_THRESH", 30.0, float)
 HOLDER_LOW_PRICE_MAX = _env("HOLDER_LOW_PRICE_MAX", 10000, int)
-
-# ============================================================
-# v3.6 — 캘린더 이벤트 감점
-# ============================================================
 FOMC_PENALTY = _env("FOMC_PENALTY", 3.0, float)
 POLITICAL_CRISIS_MODE = _env("POLITICAL_CRISIS_MODE", "top1")
-
-
-def create_analysis_run_dir(label: str = "") -> Path:
-    suffix = _slugify(label)
-    name = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if suffix:
-        name = f"{name}_{suffix}"
-    path = ANALYSIS_DIR / name
-    path.mkdir(parents=True, exist_ok=True)
-    return path

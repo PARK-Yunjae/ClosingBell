@@ -1,4 +1,4 @@
-﻿"""
+"""
 Performance tracking utilities for screening picks and saved daily buy picks.
 """
 
@@ -21,11 +21,9 @@ from config import (
     PERFORMANCE_TRACK_DAYS,
 )
 from storage import (
-
     get_buy_picks,
     iter_screen_results,
     list_buy_pick_dates,
-    load_screen_results_from_fs,
     save_buy_pick_outcomes,
 )
 from trading_calendar import trading_days_between
@@ -49,10 +47,7 @@ def _save_tracking(data: dict) -> None:
 
 
 def _iter_screen_logs() -> list[dict]:
-    logs = iter_screen_results()
-    if logs:
-        return logs
-    return load_screen_results_from_fs()
+    return iter_screen_results()
 
 
 def _load_ohlcv(code: str) -> pd.DataFrame:
@@ -265,8 +260,6 @@ def track_buy_picks_from_ohlcv() -> int:
                         "ai_action": pick.get("ai_action", ""),
                         "watchlist_date": pick.get("watchlist_date", ""),
                         "days_elapsed": pick.get("days_elapsed", 0),
-                        "expected_wr": pick.get("expected_wr", 0),
-                        "expected_ret": pick.get("expected_ret", 0),
                         "risk_flags": pick.get("risk_flags", []),
                         "buy_price": int(round(base_price)),
                         "track_day": day_no,
