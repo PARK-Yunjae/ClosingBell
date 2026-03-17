@@ -1,7 +1,7 @@
 """
-ClosingBell v3.7 — 스크리닝 + 9지표 점수 계산 + 시장 컨텍스트
+ClosingBell v4.0 — 스크리닝 + 9지표 점수 계산 + 시장 컨텍스트
 =============================================================
-키움 REST API 기반 / 유니버스 전체 분석 / 매물대+거래원+AI 통합
+키움 REST API 기반 / 유니버스 교집합·합집합 선택 / 매물대+거래원+AI 통합
 """
 import logging
 import pandas as pd
@@ -10,6 +10,10 @@ from datetime import datetime
 from collections import defaultdict
 from config import (
     CCI_PERIOD, RSI_PERIOD,
+    RSI_DEAD_ZONE_ENABLED, RSI_DEAD_ZONE_LOW, RSI_DEAD_ZONE_HIGH,
+    RSI_DEAD_ZONE_LOOKBACK, RSI_DEAD_ZONE_RATIO,
+    OBV_DIVERGENCE_ENABLED, OBV_DIVERGENCE_LOOKBACK, OBV_DIVERGENCE_PRICE_THRESH,
+    SCORE_OBV_BULLISH_BONUS, SCORE_OBV_BEARISH_PENALTY,
     CCI_OPTIMAL, CCI_ZERO_LOW, CCI_ZERO_HIGH,
     MA20_GAP_OPTIMAL, MA20_GAP_ZERO,
     CHANGE_OPTIMAL, CHANGE_ZERO,
@@ -24,7 +28,7 @@ from config import (
     MIN_CHANGE_RATE, MAX_CHANGE_RATE,
     NASDAQ_DROP_THRESHOLD, NASDAQ_PENALTY,
     OHLCV_DIR, GLOBAL_CSV, MAPPING_CSV,
-    MIN_TRADING_VALUE,
+    MIN_TRADING_VALUE, UNIVERSE_TOP_N,
     EXCLUDE_NAMES, ETF_KEYWORDS, EXCLUDE_PREF_STOCK, EXCLUDE_ETF,
     API_DELAY,
 )
@@ -88,7 +92,7 @@ class Screener:
 
         # 종목유형 필터
         universe = [s for s in universe if not self._is_excluded(s)]
-        # 등락률 필터
+        # 등락률 필터 (v4: ±30%로 사실상 제거 — CCI/이격도가 과열 처리)
         universe = [s for s in universe
                     if MIN_CHANGE_RATE <= s.get("change_rate", 0) <= MAX_CHANGE_RATE]
         # 가격 필터
@@ -203,32 +207,51 @@ class Screener:
     # 유니버스 확보 (ka10030 + ka10032 합집합)
     # ──────────────────────────────────────────────
     def _get_universe(self) -> list[dict]:
-        """거래량상위 + 거래대금상위 합집합"""
-        seen = {}
+        """
+        거래량상위 + 거래대금상위 유니버스 확보.
+        v4: 항상 합집합 수집, Core(교집합)/Fringe(나머지) 태깅.
+        """
+        top_n = UNIVERSE_TOP_N
 
-        # ka10030: 거래량상위
+        # ka10030: 거래량상위 (TOP N)
+        vol_stocks = {}
         try:
             vol_rank = self.api.get_volume_rank(min_trading_value=MIN_TRADING_VALUE)
-            for s in vol_rank:
-                code = s["code"]
-                if code not in seen:
-                    seen[code] = s
+            for s in vol_rank[:top_n]:
+                vol_stocks[s["code"]] = s
         except Exception as e:
             logger.warning("ka10030 실패: %s", e)
 
-        vol_count = len(seen)
-
-        # ka10032: 거래대금상위
+        # ka10032: 거래대금상위 (TOP N)
+        val_stocks = {}
         try:
             val_rank = self.api.get_trading_value_rank()
-            for s in val_rank:
-                code = s["code"]
-                if code not in seen:
-                    seen[code] = s
+            for s in val_rank[:top_n]:
+                val_stocks[s["code"]] = s
         except Exception as e:
             logger.warning("ka10032 실패: %s", e)
 
+        vol_codes = set(vol_stocks.keys())
+        val_codes = set(val_stocks.keys())
+        core_codes = vol_codes & val_codes
+
+        # 합집합 수집 + pool_type 태깅
+        seen = {}
+        for code, s in vol_stocks.items():
+            s["pool_type"] = "core" if code in core_codes else "fringe"
+            seen[code] = s
+        for code, s in val_stocks.items():
+            if code not in seen:
+                s["pool_type"] = "fringe"
+                seen[code] = s
+
         result = list(seen.values())
+        core_count = sum(1 for s in result if s.get("pool_type") == "core")
+        logger.info(
+            "유니버스: Core %d / Fringe %d = 총 %d종목 (거래량 %d, 거래대금 %d)",
+            core_count, len(result) - core_count, len(result),
+            len(vol_codes), len(val_codes),
+        )
 
         # stock_map에서 이름/섹터 보완
         for s in result:
@@ -237,8 +260,6 @@ class Screener:
                 s["name"] = info.get("name", s["code"])
             s["sector"] = info.get("sector", "")
 
-        logger.info("유니버스 합집합: %d종목 (거래량 %d + 거래대금 %d 추가)",
-                     len(result), vol_count, len(result) - vol_count)
         return result
 
     # ──────────────────────────────────────────────
@@ -291,6 +312,11 @@ class Screener:
         rs = gain / loss.replace(0, np.nan)
         df["rsi"] = 100 - (100 / (1 + rs))
 
+        # OBV (On-Balance Volume)
+        direction = np.sign(df["close"].diff().fillna(0))
+        df["obv"] = (direction * df["volume"]).cumsum()
+        df["obv_ma20"] = df["obv"].rolling(20).mean()
+
         latest = df.iloc[-1]
         prev_4 = df.tail(4)
 
@@ -324,6 +350,37 @@ class Screener:
             )
         else:
             stock["vol_ratio"] = 1.0
+
+        stock["obv"] = int(round(float(latest["obv"]))) if pd.notna(latest["obv"]) else 0
+        stock["obv_ma20"] = (
+            int(round(float(latest["obv_ma20"])))
+            if pd.notna(latest["obv_ma20"])
+            else 0
+        )
+        stock["obv_above_ma"] = bool(
+            pd.notna(latest["obv_ma20"]) and latest["obv"] > latest["obv_ma20"]
+        )
+
+        stock["obv_divergence"] = "none"
+        obv_lookback = max(1, OBV_DIVERGENCE_LOOKBACK)
+        if OBV_DIVERGENCE_ENABLED and len(df) > obv_lookback:
+            base_close = float(df["close"].iloc[-(obv_lookback + 1)])
+            if base_close > 0:
+                price_move = (float(latest["close"]) / base_close - 1) * 100
+                obv_move = float(latest["obv"]) - float(df["obv"].iloc[-(obv_lookback + 1)])
+                if price_move <= -OBV_DIVERGENCE_PRICE_THRESH and obv_move > 0:
+                    stock["obv_divergence"] = "bullish"
+                elif price_move >= OBV_DIVERGENCE_PRICE_THRESH and obv_move < 0:
+                    stock["obv_divergence"] = "bearish"
+
+        stock["rsi_dead_zone"] = False
+        if RSI_DEAD_ZONE_ENABLED:
+            zone_lookback = max(1, RSI_DEAD_ZONE_LOOKBACK)
+            rsi_vals = df["rsi"].dropna().tail(zone_lookback)
+            required = max(1, int(np.ceil(zone_lookback * RSI_DEAD_ZONE_RATIO)))
+            if len(rsi_vals) >= required:
+                in_zone = ((rsi_vals >= RSI_DEAD_ZONE_LOW) & (rsi_vals <= RSI_DEAD_ZONE_HIGH)).sum()
+                stock["rsi_dead_zone"] = bool(in_zone >= required)
 
         # 매물대 자체 계산 (OHLCV 기반 가격대별 거래량)
         vp = self._calc_volume_profile(df, float(latest["close"]))
@@ -415,13 +472,15 @@ class Screener:
                             CHANGE_OPTIMAL[0], CHANGE_OPTIMAL[1],
                             0, CHANGE_ZERO, SCORE_CHANGE)
 
-        # 4. CCI 기울기 (10점)
-        score += min(SCORE_CCI_SLOPE, max(0, stock.get("cci_slope", 0)) * 3.33)
+        # 4. CCI 기울기 (최근 4일 상승 비율 기반)
+        cci_slope = max(0.0, min(1.0, float(stock.get("cci_slope", 0) or 0)))
+        score += SCORE_CCI_SLOPE * cci_slope
 
-        # 5. MA20 기울기 (10점)
-        score += min(SCORE_MA20_SLOPE, max(0, stock.get("ma20_slope", 0)) * 3.33)
+        # 5. MA20 기울기 (최근 4일 상승 비율 기반)
+        ma20_slope = max(0.0, min(1.0, float(stock.get("ma20_slope", 0) or 0)))
+        score += SCORE_MA20_SLOPE * ma20_slope
 
-        # 6. RSI (5점)
+        # 6. RSI (배점 상향)
         score += bell_score(stock.get("rsi", 50),
                             RSI_OPTIMAL[0], RSI_OPTIMAL[1],
                             RSI_ZERO_LOW, RSI_ZERO_HIGH, SCORE_RSI)
@@ -448,6 +507,13 @@ class Screener:
             score += bell_score(vol_ratio,
                                 VOL_BURST_OPTIMAL[0], VOL_BURST_OPTIMAL[1],
                                 1.0, VOL_BURST_ZERO_HIGH, SCORE_VOLUME_BURST)
+
+        # v4.1: OBV divergence is useful only as a light ranking nudge.
+        obv_divergence = stock.get("obv_divergence", "none")
+        if obv_divergence == "bullish":
+            score += SCORE_OBV_BULLISH_BONUS
+        elif obv_divergence == "bearish":
+            score -= SCORE_OBV_BEARISH_PENALTY
 
         # Apply market-context score adjustments when available.
         market_ctx = get_market_context()
@@ -609,6 +675,11 @@ class Screener:
             "broker_score": stock.get("broker_score", 0),
             "broker_signal": stock.get("broker_signal", ""),
             "vol_ratio": stock.get("vol_ratio", 1.0),
+            "obv": stock.get("obv", 0),
+            "obv_ma20": stock.get("obv_ma20", 0),
+            "obv_above_ma": stock.get("obv_above_ma", False),
+            "obv_divergence": stock.get("obv_divergence", "none"),
+            "rsi_dead_zone": stock.get("rsi_dead_zone", False),
             # 추가 지표
             "ma5_gap": stock.get("ma5_gap", 0),
             "overheat": stock.get("overheat", False),
@@ -629,6 +700,7 @@ class Screener:
             "calendar_adj": stock.get("calendar_adj", 0),
             "holder_penalty": stock.get("holder_penalty", 0),
             "market_flags": stock.get("market_flags", []),
+            "pool_type": stock.get("pool_type", "unknown"),
         }
 
 
@@ -649,13 +721,15 @@ def bell_score(value, opt_low, opt_high, zero_low, zero_high, max_points):
         return max_points * (zero_high - value) / span if span > 0 else 0.0
 
 
-def _count_rising(values: list) -> int:
+def _count_rising(values: list) -> float:
     if len(values) < 2:
-        return 0
-    count = 0
-    for i in range(len(values) - 1, 0, -1):
-        if values[i] > values[i - 1]:
-            count += 1
-        else:
-            break
-    return min(count, 3)
+        return 0.0
+    rises = 0
+    comparisons = 0
+    for prev, curr in zip(values, values[1:]):
+        comparisons += 1
+        if curr > prev:
+            rises += 1
+    if comparisons == 0:
+        return 0.0
+    return round(rises / comparisons, 2)

@@ -1,6 +1,7 @@
 """
-ClosingBell v3.8 시뮬레이터
+ClosingBell v4.0 시뮬레이터
 ============================
+100점 4계층 점수 체계 기반, 5순위 지원.
 330일 실전 데이터 기반 가중치 최적화.
 
 사용법:
@@ -34,6 +35,7 @@ from itertools import product as iter_product
 from config import (
     APP_DB_PATH, OHLCV_DIR,
     RANK1_PULLBACK_BONUS, RANK2_PULLBACK_BONUS, RANK3_PULLBACK_BONUS,
+    RANK4_PULLBACK_BONUS, RANK5_PULLBACK_BONUS,
     BUY_A_MIN_SCORE, BUY_B_MIN_SCORE,
 )
 
@@ -118,7 +120,7 @@ def get_return(ohlcv_cache: dict, code: str, base_date: str, days: int) -> float
 
 
 def rescore_stocks(stocks: list[dict], rank_bonus: dict,
-                   a_min: float = 60, b_min: float = 40) -> list[dict]:
+                   a_min: float = 68, b_min: float = 45) -> list[dict]:
     """
     기존 bell_score를 유지하면서, rank 보너스만 재적용.
     실제 _score_stock 전체를 재현하기엔 정보가 부족하므로,
@@ -151,9 +153,9 @@ def simulate_config(
     runs: list[dict],
     ohlcv_cache: dict,
     rank_bonus: dict,
-    a_min: float = 60,
-    b_min: float = 40,
-    top_k: int = 3,
+    a_min: float = 68,
+    b_min: float = 45,
+    top_k: int = 5,
     track_days: list[int] | None = None,
     min_score: float = 0,       # 이 점수 이하면 관망 (0=필터 없음)
     exclude_c: bool = False,     # C등급 제외
@@ -272,21 +274,25 @@ def print_summary(name: str, summary: dict, show_positive: bool = False):
 
 
 def rank_sweep(runs, ohlcv_cache):
-    """rank 보너스 조합 탐색"""
+    """rank 보너스 조합 탐색 (v4: 5순위)"""
     print("\n" + "=" * 60)
-    print("  Rank 보너스 스윕")
+    print("  Rank 보너스 스윕 (v4: 5순위)")
     print("=" * 60)
 
     # 현재 설정
-    current = {1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS}
-    print(f"\n현재 설정: #1={current[1]:+.0f}, #2={current[2]:+.0f}, #3={current[3]:+.0f}")
+    current = {
+        1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS,
+        4: RANK4_PULLBACK_BONUS, 5: RANK5_PULLBACK_BONUS,
+    }
+    print(f"\n현재 설정: #1={current[1]:+.0f}, #2={current[2]:+.0f}, #3={current[3]:+.0f}, "
+          f"#4={current[4]:+.0f}, #5={current[5]:+.0f}")
     result = simulate_config(runs, ohlcv_cache, current)
     print_summary("현재 설정", result)
 
-    # 탐색 범위
-    r1_range = [10, 15, 20, 25]
-    r2_range = [-10, -5, 0, 5, 10, 15]
-    r3_range = [-10, -5, 0, 5, 10, 15]
+    # 탐색 범위 (rank 1~3만 스윕, 4/5는 고정 -5)
+    r1_range = [5, 10, 15]
+    r2_range = [-5, 0, 5, 10]
+    r3_range = [-5, 0, 5, 10]
 
     best_config = None
     best_avg_d3 = -999
@@ -295,7 +301,7 @@ def rank_sweep(runs, ohlcv_cache):
     total = len(r1_range) * len(r2_range) * len(r3_range)
 
     for r1, r2, r3 in iter_product(r1_range, r2_range, r3_range):
-        bonus = {1: r1, 2: r2, 3: r3}
+        bonus = {1: r1, 2: r2, 3: r3, 4: -5, 5: -5}
         result = simulate_config(runs, ohlcv_cache, bonus, track_days=[3])
         configs_tested += 1
 
@@ -306,7 +312,7 @@ def rank_sweep(runs, ohlcv_cache):
             best_avg_d3 = avg
             best_config = (r1, r2, r3, result)
 
-        if configs_tested % 24 == 0:
+        if configs_tested % 12 == 0:
             print(f"  진행: {configs_tested}/{total}...", end="\r")
 
     print(f"  완료: {configs_tested}개 조합 테스트")
@@ -314,10 +320,9 @@ def rank_sweep(runs, ohlcv_cache):
     if best_config:
         r1, r2, r3, result = best_config
         print(f"\n{'='*60}")
-        print(f"  🏆 최적 rank 보너스: #1={r1:+.0f}, #2={r2:+.0f}, #3={r3:+.0f}")
+        print(f"  🏆 최적 rank 보너스: #1={r1:+.0f}, #2={r2:+.0f}, #3={r3:+.0f}, #4=-5, #5=-5")
         print(f"{'='*60}")
-        # 최적으로 재시뮬 (D+1~5 전부)
-        best_result = simulate_config(runs, ohlcv_cache, {1: r1, 2: r2, 3: r3})
+        best_result = simulate_config(runs, ohlcv_cache, {1: r1, 2: r2, 3: r3, 4: -5, 5: -5})
         print_summary("최적 설정", best_result)
 
     # 현재 vs 최적 비교
@@ -337,7 +342,10 @@ def grade_sweep(runs, ohlcv_cache):
     print("  등급 기준값 + 필터링 전략 스윕")
     print("=" * 60)
 
-    rank_bonus = {1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS}
+    rank_bonus = {
+        1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS,
+        4: RANK4_PULLBACK_BONUS, 5: RANK5_PULLBACK_BONUS,
+    }
 
     # 1) C등급 제외 효과
     print("\n  --- C등급 제외 효과 ---")
@@ -382,7 +390,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  ClosingBell v3.8 시뮬레이터")
+    print("  ClosingBell v4.0 시뮬레이터")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
 
@@ -404,9 +412,13 @@ def main():
         return
 
     # 현재 설정 기준 시뮬
-    current_bonus = {1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS}
-    print(f"\n현재 rank 보너스: #1={current_bonus[1]:+.0f}, #2={current_bonus[2]:+.0f}, #3={current_bonus[3]:+.0f}")
-    print(f"등급 기준: A≥{BUY_A_MIN_SCORE}, B≥{BUY_B_MIN_SCORE}")
+    current_bonus = {
+        1: RANK1_PULLBACK_BONUS, 2: RANK2_PULLBACK_BONUS, 3: RANK3_PULLBACK_BONUS,
+        4: RANK4_PULLBACK_BONUS, 5: RANK5_PULLBACK_BONUS,
+    }
+    print(f"\n현재 rank 보너스: #1={current_bonus[1]:+.0f}, #2={current_bonus[2]:+.0f}, "
+          f"#3={current_bonus[3]:+.0f}, #4={current_bonus[4]:+.0f}, #5={current_bonus[5]:+.0f}")
+    print(f"등급 기준: A≥{BUY_A_MIN_SCORE}, B≥{BUY_B_MIN_SCORE} (100점 만점)")
 
     current_result = simulate_config(runs, ohlcv_cache, current_bonus)
     print_summary("현재 설정 시뮬레이션", current_result, show_positive=True)

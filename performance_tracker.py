@@ -25,6 +25,7 @@ from storage import (
     iter_screen_results,
     list_buy_pick_dates,
     save_buy_pick_outcomes,
+    update_pick_snapshot_returns,
 )
 from trading_calendar import trading_days_between
 
@@ -277,7 +278,9 @@ def track_buy_picks_from_ohlcv() -> int:
                     }
                 )
 
-    return save_buy_pick_outcomes(records)
+    saved = save_buy_pick_outcomes(records)
+    update_pick_snapshot_returns(records)
+    return saved
 
 
 def generate_report() -> dict:

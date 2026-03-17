@@ -21,12 +21,24 @@ from config import (
     FOREIGN_NEWS_ENABLED,
     FOREIGN_NEWS_API_KEY,
     FOREIGN_NEWS_DAYS,
+    FOREIGN_NEWS_MACRO_MAX_QUERIES,
+    FOREIGN_NEWS_MACRO_MODE,
     FOREIGN_NEWS_MAX_RESULTS,
 )
 
 logger = logging.getLogger("closingbell")
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
+MACRO_QUERIES = [
+    '"Middle East" OR Iran OR Israel OR oil price OR crude',
+    'FOMC OR "Federal Reserve" OR "interest rate" OR CPI OR inflation',
+    'tariff OR "trade war" OR sanctions OR "semiconductor export"',
+]
+MACRO_NEGATIVE_KEYWORDS = {
+    "war", "strike", "attack", "missile", "sanction", "tariff",
+    "inflation", "hawkish", "rate hike", "surge", "selloff", "crash",
+    "oil spike", "export curb", "restriction",
+}
 
 
 def check_foreign_news(
@@ -71,16 +83,35 @@ def check_foreign_news(
     if not all_articles:
         return {"signal": "중립", "note": "외신 뚜렷한 재료 없음", "hits": 0, "score": 0}
 
-    # 중복 제거 (URL 기준)
-    seen = set()
-    unique = []
-    for a in all_articles:
-        url = a.get("url", "")
-        if url and url not in seen:
-            seen.add(url)
-            unique.append(a)
+    return _analyze_articles(_dedupe_articles(all_articles))
 
-    return _analyze_articles(unique)
+
+def check_macro_risk(theme_names: list[str] | None = None) -> dict:
+    """
+    시장 전체용 거시 리스크 체크.
+
+    종목 단건이 아니라 유가/전쟁/FOMC/관세 같은 상위 변수를 한 번만 조회한다.
+    """
+    if not FOREIGN_NEWS_ENABLED or not FOREIGN_NEWS_API_KEY or not FOREIGN_NEWS_MACRO_MODE:
+        return _neutral()
+
+    queries = list(MACRO_QUERIES)
+    if theme_names:
+        joined = " OR ".join(f'"{name}"' for name in theme_names if name)[:120]
+        if joined:
+            queries.append(f"({joined}) AND (market OR stocks)")
+
+    all_articles = []
+    for q in queries[:max(1, FOREIGN_NEWS_MACRO_MAX_QUERIES)]:
+        try:
+            all_articles.extend(_search_newsapi(q))
+        except Exception as e:
+            logger.debug("거시 외신 검색 실패 [%s]: %s", q, e)
+
+    articles = _dedupe_articles(all_articles)
+    if not articles:
+        return _neutral()
+    return _analyze_macro_articles(articles)
 
 
 def _build_queries(name_en: str, aliases: list[str] | None,
@@ -127,6 +158,17 @@ def _search_newsapi(query: str) -> list[dict]:
         return []
 
     return data.get("articles", [])
+
+
+def _dedupe_articles(articles: list[dict]) -> list[dict]:
+    seen = set()
+    unique = []
+    for article in articles:
+        url = article.get("url", "")
+        if url and url not in seen:
+            seen.add(url)
+            unique.append(article)
+    return unique
 
 
 def _analyze_articles(articles: list[dict]) -> dict:
@@ -189,6 +231,38 @@ def _analyze_articles(articles: list[dict]) -> dict:
         "hits": hits,
         "score": 0,
     }
+
+
+def _analyze_macro_articles(articles: list[dict]) -> dict:
+    hits = len(articles)
+    risk_hits = 0
+    latest_title = ""
+
+    for idx, article in enumerate(articles):
+        title = (article.get("title") or "").strip()
+        text = " ".join(
+            filter(
+                None,
+                [
+                    title.lower(),
+                    (article.get("description") or "").lower(),
+                ],
+            )
+        )
+        if idx == 0 and title:
+            latest_title = title if len(title) <= 70 else title[:67] + "..."
+        if any(keyword in text for keyword in MACRO_NEGATIVE_KEYWORDS):
+            risk_hits += 1
+
+    if risk_hits >= 2:
+        return {
+            "signal": "주의",
+            "note": f"거시 악재 외신 {risk_hits}건 — {latest_title}",
+            "hits": hits,
+            "score": -2,
+        }
+
+    return {"signal": "중립", "note": "", "hits": hits, "score": 0}
 
 
 def _neutral() -> dict:

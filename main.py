@@ -1,5 +1,5 @@
 """
-ClosingBell v3.7 — 메인 스케줄러
+ClosingBell v4.0 — 메인 스케줄러
 =================================
 [매일]
   15:00  감시 종목 스캔 → TOP3 디스코드 웹훅
@@ -47,8 +47,8 @@ logger = logging.getLogger("closingbell")
 
 
 def run_daily_pick():
-    """매일 15시: 워치리스트 전체 스코어링 → TOP3 웹훅"""
-    logger.info("일일 매수 후보 TOP3 선정 시작...")
+    """매일 15시: 워치리스트 전체 스코어링 → 당일 매수 후보 웹훅"""
+    logger.info("일일 매수 후보 선정 시작...")
     try:
         from watchlist_monitor import daily_top3
         from notifier import Notifier
@@ -73,7 +73,7 @@ def run_screening(once: bool = False):
     from enricher import Enricher
 
     logger.info("=" * 50)
-    logger.info("ClosingBell v3.7 스크리닝 시작")
+    logger.info("ClosingBell v4.0 스크리닝 시작")
     logger.info("=" * 50)
 
     # Log daily market context when optional data is available.
@@ -203,7 +203,7 @@ def run_scheduler():
     import schedule as sched
 
     logger.info("스케줄러 시작")
-    logger.info("  %s → 🎯 TOP3 웹훅", SCHEDULE["daily_pick"])
+    logger.info("  %s → 🎯 매수 후보 웹훅", SCHEDULE["daily_pick"])
     logger.info("  %s → 🔇 스크리닝 → OHLCV → 글로벌 → 성과추적", SCHEDULE["screen"])
     logger.info("         → [월] 매핑+메타 → [월초] 재무 → 종료")
 
@@ -216,7 +216,7 @@ def run_scheduler():
         sys.exit(0)
     signal.signal(signal.SIGINT, signal_handler)
 
-    logger.info("대기 중... (TOP3: %s, 파이프라인: %s)",
+    logger.info("대기 중... (매수후보: %s, 파이프라인: %s)",
                 SCHEDULE["daily_pick"], SCHEDULE["screen"])
     fail_count = 0
     while True:
@@ -242,9 +242,9 @@ def run_scheduler():
 # ══════════════════════════════════════════════
 def main():
     init_storage()
-    parser = argparse.ArgumentParser(description="ClosingBell v3.7")
+    parser = argparse.ArgumentParser(description="ClosingBell v4.0")
     parser.add_argument("--once", action="store_true", help="즉시 1회 스크리닝 (조용히)")
-    parser.add_argument("--pick", action="store_true", help="즉시 TOP3 선정 + 웹훅")
+    parser.add_argument("--pick", action="store_true", help="즉시 매수 후보 선정 + 웹훅")
     parser.add_argument("--weekly", action="store_true", help="수동 주간 갱신")
     args = parser.parse_args()
 

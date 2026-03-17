@@ -1,5 +1,5 @@
 """
-Discord notifications for ClosingBell v3.7
+Discord notifications for ClosingBell v4.0
 ==========================================
 읽기 쉬운 한국어 웹훅 — "그래서 사?"에 바로 답하는 구조.
 
@@ -221,7 +221,6 @@ class Notifier:
     # ═══════════════════════════════════════
     def _daily_pick_summary_embed(self, picks: list[dict]) -> dict:
         grade_counts = Counter(p.get("conviction", "C") for p in picks)
-        avg = sum(float(p.get("conviction_score", 0) or 0) for p in picks) / max(len(picks), 1)
         top = picks[0]
         recent = self._recent_screen_snapshot()
 
@@ -229,12 +228,39 @@ class Notifier:
         top_action = top.get("action", {})
         action_line = f"{top_action.get('label', '관심')} — {top_action.get('detail', '')}"
 
+        # 시장 지수 한줄 (코스피/코스닥/나스닥)
+        ms = top.get("market_snapshot", {})
+        market_parts = []
+        if ms.get("kospi"):
+            market_parts.append(f"코스피 {ms['kospi']:,.0f} ({_pct(ms.get('kospi_change'))})")
+        if ms.get("kosdaq"):
+            market_parts.append(f"코스닥 {ms['kosdaq']:,.0f} ({_pct(ms.get('kosdaq_change'))})")
+        nasdaq_chg = ms.get("nasdaq_change", 0)
+        if nasdaq_chg:
+            market_parts.append(f"나스닥(전일) {_pct(nasdaq_chg)}")
+        market_line = "📈 " + " | ".join(market_parts) if market_parts else ""
+
         lines = [
             action_line,
             "",
+        ]
+        if market_line:
+            lines.append(market_line)
+        # 장세 프리셋 표시
+        regime = top.get("market_regime", "")
+        regime_display = {"rising": "🟢 공격장", "mixed": "🟡 중립장", "weak": "🔴 방어장", "chaotic": "🌪️ 혼란장"}.get(regime, "")
+        if regime_display:
+            lines.append(f"🌡 장세: {regime_display}")
+        macro_note = _safe(top.get("macro_risk_note"), "")
+        if macro_note and macro_note != "-":
+            lines.append(f"⚠️ 거시 경고: {macro_note}")
+        event_warning = _safe(top.get("event_warning"), "")
+        if event_warning and event_warning != "-":
+            lines.append(f"📅 이벤트: {event_warning}")
+        lines += [
             f"후보 {len(picks)}개 | "
             f"A {grade_counts.get('A', 0)}건 / B {grade_counts.get('B', 0)}건 / C {grade_counts.get('C', 0)}건",
-            f"1순위 {top.get('name', '-')} | 확신 {_score(top.get('conviction_score'))} | D+{top.get('days_elapsed', '-')}일째 추적",
+            f"1순위 {top.get('name', '-')} | 등급 {top.get('conviction', 'C')} | D+{top.get('days_elapsed', '-')}일째 추적",
         ]
         if recent:
             lines.append(f"📊 {recent}")
@@ -244,6 +270,7 @@ class Notifier:
             flag for pick in picks
             for flag in pick.get("risk_flags", [])
             if str(flag).strip()
+            and str(flag).strip() not in {"수급양호"}
         )
         risk_text = ", ".join(f"{n}" for n, _ in common_risks.most_common(3)) if common_risks else "없음"
 
@@ -251,7 +278,7 @@ class Notifier:
         market_themes = _safe(picks[0].get("market_themes") if picks else "", "")
 
         fields = [
-            _field("평균 확신", _score(avg), True),
+            _field("등급 분포", f"A {grade_counts.get('A', 0)} / B {grade_counts.get('B', 0)} / C {grade_counts.get('C', 0)}", True),
             _field("주의사항", risk_text, True),
         ]
         if market_themes and market_themes != "-":
@@ -340,10 +367,10 @@ class Notifier:
             f"스크리닝 이후 {_pct(pick.get('price_change_from_screen'))}",
         ]
 
-        # 판단 (쉬운 말)
+        # 판단 (ABC만 표시, 점수 비노출)
         timing_text = f"D+{days}일째" + (f" (최적 D+{sweet})" if days != sweet else " 최적 타이밍")
         judge_lines = [
-            f"확신 {_score(pick.get('conviction_score'))} ({GRADE_LABEL.get(conv, conv)})",
+            f"등급 {GRADE_EMOJI.get(conv, '🥉')} {conv} ({GRADE_LABEL.get(conv, conv)})",
             f"추적 {timing_text}",
         ]
 
@@ -371,13 +398,18 @@ class Notifier:
             "DART위험": "",
             "DART주의": "",
             "뉴스위험": "",
+            "뉴스주의": "📰 뉴스 주의",
             "약세장": "📉 시장 약세",
             "상승장보수": "📈 상승장 보수 접근",
             "이벤트주의": "📅 이벤트 주의",
             "대주주투매": "⚠️ 대주주 매도",
             "저지분소형주": "소형주 (저지분)",
             "정치위기TOP1만": "🏛️ 정치 위기 모드",
+            "수급위험": "💹 수급 위험",
             "수급주의": "💹 수급 악화",
+            "수급양호": "✅ 수급 양호",
+            "외신경고": "🌍 거시 경고",
+            "테마과열": "📺 테마 과열",
         }
         risk_flags = pick.get("risk_flags", [])
         if risk_flags:
@@ -513,6 +545,7 @@ class Notifier:
     # 공개 메서드
     # ═══════════════════════════════════════
     def send_recommendation(self, result: dict) -> None:
+        """v3 15:40 스크리닝 웹훅 (v4에서는 main.py에서 호출 안 함. 필요시 재활용 가능)"""
         if result.get("skipped"):
             reason = _safe(result.get("reason"), "사유 없음")
             embed = {

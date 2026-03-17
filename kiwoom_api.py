@@ -1,5 +1,5 @@
 """
-ClosingBell v3.7 Kiwoom REST API client
+ClosingBell v4.0 Kiwoom REST API client
 ==========================================
 KIS API를 대체하는 키움 REST API 래퍼.
 기존 screener.py와 동일한 인터페이스를 제공하면서
@@ -584,8 +584,10 @@ class KiwoomAPI:
 
         result = []
         for item in data.get("shrts_trnsn", [])[:days]:
+            close_str = str(item.get("close_pric", item.get("cur_prc", "0")) or "0")
             result.append({
                 "date": item.get("dt", ""),
+                "close": abs(int(close_str.replace(",", ""))),
                 "short_qty": int(item.get("shrts_qty", "0").replace(",", "")),
                 "trade_qty": int(item.get("trde_qty", "0").replace(",", "")),
                 "short_ratio": float(item.get("trde_wght", "0")
@@ -685,5 +687,79 @@ class KiwoomAPI:
                 "strength": float(item.get("cntr_str", "0") or "0"),
                 "strength_5d": float(item.get("cntr_str_5min", "0") or "0"),
                 "strength_20d": float(item.get("cntr_str_20min", "0") or "0"),
+            })
+        return result
+
+    def get_foreign_exhaust_rank(self, market: str = "000",
+                                 period: str = "0") -> list[dict]:
+        """
+        ka10036: 외인한도소진율증가상위
+        market: "000"=전체, "001"=코스피, "101"=코스닥
+        period: "0"=당일, "1"=전일, "5"=5일, "20"=20일
+        """
+        data = self._post("/api/dostk/rkinfo", "ka10036", {
+            "mrkt_tp": market,
+            "dt": period,
+            "stex_tp": "3",
+        })
+
+        result = []
+        for item in data.get("for_limit_exh_rt_incrs_upper", []):
+            result.append({
+                "rank": int(item.get("rank", "0")),
+                "code": self._clean_code(item.get("stk_cd", "")),
+                "name": item.get("stk_nm", "").strip(),
+                "price": abs(int(item.get("cur_prc", "0").replace(",", ""))),
+                "held_shares": int(item.get("poss_stkcnt", "0").replace(",", "")),
+                "available_shares": int(item.get("gain_pos_stkcnt", "0").replace(",", "")),
+                "exhaust_rate": float(
+                    item.get("base_limit_exh_rt", "0").replace(",", "").replace("+", "") or "0"
+                ),
+            })
+        return result
+
+    def get_foreign_daily(self, code: str) -> list[dict]:
+        """
+        ka10008: 주식외국인종목별매매동향
+        종목별 외국인 보유/한도소진율 일별 추이.
+        """
+        data = self._post("/api/dostk/frgnistt", "ka10008", {
+            "stk_cd": code,
+        })
+
+        result = []
+        for item in data.get("stk_frgnr", []):
+            result.append({
+                "date": item.get("dt", ""),
+                "close": abs(int(item.get("close_pric", "0").replace(",", ""))),
+                "change_qty": int(item.get("chg_qty", "0").replace(",", "")),
+                "held_shares": int(item.get("poss_stkcnt", "0").replace(",", "")),
+                "weight_pct": float(item.get("wght", "0").replace(",", "") or "0"),
+                "exhaust_rate": float(
+                    item.get("limit_exh_rt", "0").replace(",", "").replace("+", "") or "0"
+                ),
+            })
+        return result
+
+    def get_minute_chart(self, code: str, interval: str = "15") -> list[dict]:
+        """
+        ka10080: 주식분봉차트조회요청
+        interval: "1","3","5","10","15","30","45","60"
+        """
+        data = self._post("/api/dostk/chart", "ka10080", {
+            "stk_cd": code,
+            "tic_scope": interval,
+            "upd_stkpc_tp": "1",
+        })
+
+        result = []
+        for item in data.get("stk_min_pole_chart_qry", []):
+            result.append({
+                "time": item.get("cntr_tm", ""),
+                "open": abs(int(item.get("open_pric", "0").replace(",", ""))),
+                "high": abs(int(item.get("high_pric", "0").replace(",", ""))),
+                "low": abs(int(item.get("low_pric", "0").replace(",", ""))),
+                "close": abs(int(item.get("cur_prc", "0").replace(",", ""))),
+                "volume": int(item.get("trde_qty", "0").replace(",", "")),
             })
         return result

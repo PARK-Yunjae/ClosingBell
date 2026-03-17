@@ -144,7 +144,26 @@ def trading_days_between(start, end) -> int:
 
 
 def trading_days_since(start, asof=None) -> int:
-    end_day = _coerce_date(asof) if asof is not None else datetime.now().date()
+    """
+    start 이후 경과 거래일 수.
+    asof 미지정 시 현재 시각 기준:
+    - 장 마감(15:30) 후 → 오늘 포함
+    - 장 개장 전(09:00 이전) → 오늘 미포함 (아직 거래 안 됨)
+    """
+    if asof is not None:
+        end_day = _coerce_date(asof)
+    else:
+        now = datetime.now()
+        end_day = now.date()
+        # 장 개장 전이면 오늘을 거래일로 카운트하지 않음
+        if now.hour < 9 and is_projected_trading_day(end_day):
+            # 직전 거래일까지만 카운트
+            d = end_day - timedelta(days=1)
+            while d > (end_day - timedelta(days=7)):
+                if is_projected_trading_day(d) or d in known_session_set():
+                    end_day = d
+                    break
+                d -= timedelta(days=1)
     return trading_days_between(start, end_day)
 
 

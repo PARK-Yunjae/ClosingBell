@@ -21,6 +21,7 @@ from config import (
     YOUTUBE_API_KEY,
     YOUTUBE_SEARCH_DAYS,
     YOUTUBE_MAX_RESULTS,
+    YOUTUBE_THEME_MODE,
 )
 
 logger = logging.getLogger("closingbell")
@@ -37,6 +38,8 @@ CHANNEL_WEIGHTS = {
     "이데일리": 0.8,
     "전인구경제연구소": 0.3,  # 역지표 성향
 }
+THEME_HYPE_KEYWORDS = {"급등", "폭등", "필수", "놓치면", "무조건", "대장", "끝판왕"}
+THEME_CAUTION_VIEWS = 30000
 
 
 def check_youtube(
@@ -98,6 +101,41 @@ def check_youtube(
         logger.debug("유튜브 통계 조회 실패: %s", e)
 
     return _analyze_videos(unique, stock_name)
+
+
+def check_theme_overheat(theme_name: str) -> dict:
+    """테마 키워드 중심의 유튜브 과열 체크."""
+    if not YOUTUBE_CHECK_ENABLED or not YOUTUBE_API_KEY or not YOUTUBE_THEME_MODE:
+        return _neutral()
+    theme_name = str(theme_name or "").strip()
+    if not theme_name:
+        return _neutral()
+
+    queries = [f'"{theme_name}" 주식', f'"{theme_name}" 전망']
+    all_videos = []
+    for q in queries[:2]:
+        try:
+            all_videos.extend(_search_youtube(q))
+        except Exception as e:
+            logger.debug("유튜브 테마 검색 실패 [%s]: %s", q, e)
+
+    if not all_videos:
+        return _neutral()
+
+    seen = set()
+    unique = []
+    for video in all_videos:
+        vid = video.get("video_id", "")
+        if vid and vid not in seen:
+            seen.add(vid)
+            unique.append(video)
+
+    try:
+        unique = _enrich_stats(unique)
+    except Exception as e:
+        logger.debug("유튜브 테마 통계 조회 실패: %s", e)
+
+    return _analyze_theme_videos(unique, theme_name)
 
 
 def _build_queries(name: str, products: str, theme: str) -> list[str]:
@@ -250,6 +288,44 @@ def _analyze_videos(videos: list[dict], stock_name: str) -> dict:
         "top_title": top_title,
         "top_channel": top_channel,
         "score": score,
+    }
+
+
+def _analyze_theme_videos(videos: list[dict], theme_name: str) -> dict:
+    count = len(videos)
+    if count == 0:
+        return _neutral()
+
+    videos.sort(key=lambda v: v.get("view_count", 0), reverse=True)
+    top = videos[0]
+    total_views = sum(v.get("view_count", 0) for v in videos[:5])
+    hype_titles = sum(
+        1
+        for video in videos
+        if any(keyword in video.get("title", "") for keyword in THEME_HYPE_KEYWORDS)
+    )
+
+    top_title = top.get("title", "")
+    if len(top_title) > 50:
+        top_title = top_title[:47] + "..."
+
+    if count >= 3 and (total_views >= THEME_CAUTION_VIEWS or hype_titles >= 2):
+        return {
+            "signal": "주의",
+            "note": f"📺 {theme_name} 과열 영상 {count}건 — {top_title}",
+            "video_count": count,
+            "top_title": top_title,
+            "top_channel": top.get("channel", ""),
+            "score": -1,
+        }
+
+    return {
+        "signal": "중립",
+        "note": "",
+        "video_count": count,
+        "top_title": top_title,
+        "top_channel": top.get("channel", ""),
+        "score": 0,
     }
 
 

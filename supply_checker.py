@@ -11,6 +11,10 @@ ClosingBell v3.8 supply checker (수급 체커)
   - 체결강도 (ka10047)
 
 daily_top3 파이프라인에서 DART/뉴스 체크 직후 호출.
+
+v4 메모:
+  - 체결강도는 참고 메모만 남기고 종합 점수에서는 제외
+  - 공매도 최신 비중과 외인/기관 순매수 수치도 같이 반환
 """
 import logging
 from typing import Optional
@@ -23,6 +27,8 @@ from config import (
     SUPPLY_CREDIT_HOT_RATIO,
     SUPPLY_STRENGTH_WEAK,
     SUPPLY_STRENGTH_STRONG,
+    FOREIGN_EXHAUST_WARN,
+    FOREIGN_EXHAUST_STRONG,
 )
 
 logger = logging.getLogger("closingbell")
@@ -51,6 +57,7 @@ def check_supply(code: str, api) -> dict:
         "loan": _neutral("대차"),
         "credit": _neutral("신용"),
         "investor": _neutral("수급"),
+        "foreign_exhaust": _neutral("외국인한도"),
         "strength": _neutral("체결강도"),
     }
 
@@ -78,14 +85,21 @@ def check_supply(code: str, api) -> dict:
     except Exception as e:
         logger.debug("투자자 체크 실패 [%s]: %s", code, e)
 
-    # ⑤ 체결강도
+    # ⑤ 외국인 한도소진율
+    try:
+        result["foreign_exhaust"] = _analyze_foreign_exhaust(code, api)
+    except Exception as e:
+        logger.debug("외국인 한도 체크 실패 [%s]: %s", code, e)
+
+    # ⑥ 체결강도
     try:
         result["strength"] = _analyze_strength(code, api)
     except Exception as e:
         logger.debug("체결강도 체크 실패 [%s]: %s", code, e)
 
     # 종합
-    total = sum(r.get("score", 0) for r in result.values())
+    scored_keys = ("short_selling", "loan", "credit", "investor", "foreign_exhaust")
+    total = sum(result[key].get("score", 0) for key in scored_keys)
     result["total_score"] = max(-10, min(10, total))
     result["summary_line"] = _build_summary_line(result)
 
@@ -104,30 +118,64 @@ def _analyze_short_selling(code: str, api) -> dict:
 
     ratios = [r["short_ratio"] for r in rows if r["short_ratio"] > 0]
     if not ratios:
-        return {"signal": "양호", "note": "공매도 없음", "score": 1}
+        return {"signal": "양호", "note": "공매도 없음", "score": 1, "short_ratio": 0.0}
 
     avg_ratio = sum(ratios) / len(ratios)
     latest = ratios[0] if ratios else 0
 
-    # 추세 판단: 최근 값이 평균 대비 증가세인지
+    # rows are newest-first.
     increasing = len(ratios) >= 2 and ratios[0] > ratios[-1]
+    decreasing = len(ratios) >= 3 and ratios[0] < ratios[-1] and ratios[0] < ratios[1]
+
+    prices = []
+    for row in rows:
+        try:
+            close_price = int(str(row.get("close", "0")).replace(",", ""))
+        except (TypeError, ValueError):
+            close_price = 0
+        if close_price > 0:
+            prices.append(close_price)
+    price_rising = len(prices) >= 2 and prices[0] > prices[-1]
+
+    if decreasing and price_rising and latest < avg_ratio:
+        return {
+            "signal": "양호",
+            "note": f"숏커버링 ({ratios[-1]:.1f}%→{latest:.1f}%, 주가 상승)",
+            "score": 2,
+            "short_ratio": latest,
+            "short_covering": True,
+        }
 
     if latest >= SUPPLY_SHORT_INCREASE_THRESH and increasing:
         return {
             "signal": "주의",
             "note": f"공매도 비중 {latest:.1f}% (3일 증가)",
             "score": -2,
+            "short_ratio": latest,
         }
     elif latest >= SUPPLY_SHORT_INCREASE_THRESH:
         return {
             "signal": "주의",
             "note": f"공매도 비중 {latest:.1f}%",
             "score": -1,
+            "short_ratio": latest,
+        }
+    elif decreasing:
+        return {
+            "signal": "양호",
+            "note": f"공매도 감소 ({ratios[-1]:.1f}%→{latest:.1f}%)",
+            "score": 1,
+            "short_ratio": latest,
         }
     elif latest < 2.0:
-        return {"signal": "양호", "note": f"공매도 비중 낮음 ({latest:.1f}%)", "score": 1}
+        return {
+            "signal": "양호",
+            "note": f"공매도 비중 낮음 ({latest:.1f}%)",
+            "score": 1,
+            "short_ratio": latest,
+        }
 
-    return {"signal": "중립", "note": f"공매도 {latest:.1f}%", "score": 0}
+    return {"signal": "중립", "note": f"공매도 {latest:.1f}%", "score": 0, "short_ratio": latest}
 
 
 def _analyze_lending(code: str, api) -> dict:
@@ -207,6 +255,8 @@ def _analyze_investor(code: str, api) -> dict:
             "signal": "양호",
             "note": "외인·기관 동반 순매수",
             "score": 2,
+            "foreign_net": foreign,
+            "institution_net": inst,
         }
     elif foreign > 0 or inst > 0:
         who = "외인" if foreign > 0 else "기관"
@@ -214,15 +264,25 @@ def _analyze_investor(code: str, api) -> dict:
             "signal": "양호",
             "note": f"{who} 순매수",
             "score": 1,
+            "foreign_net": foreign,
+            "institution_net": inst,
         }
     elif foreign < 0 and inst < 0:
         return {
             "signal": "주의",
             "note": "외인·기관 동반 순매도",
             "score": -2,
+            "foreign_net": foreign,
+            "institution_net": inst,
         }
 
-    return {"signal": "중립", "note": "수급 혼조", "score": 0}
+    return {
+        "signal": "중립",
+        "note": "수급 혼조",
+        "score": 0,
+        "foreign_net": foreign,
+        "institution_net": inst,
+    }
 
 
 def _analyze_strength(code: str, api) -> dict:
@@ -250,6 +310,53 @@ def _analyze_strength(code: str, api) -> dict:
     return {"signal": "중립", "note": f"체결강도 {s20:.0f}%", "score": 0}
 
 
+def _analyze_foreign_exhaust(code: str, api) -> dict:
+    """외국인 한도소진율 + 최근 순매수 흐름 분석"""
+    rows = api.get_foreign_daily(code)
+    if not rows or len(rows) < 2:
+        return _neutral("외국인한도")
+
+    latest = rows[0]
+    exhaust = float(latest.get("exhaust_rate", 0) or 0)
+    weight = float(latest.get("weight_pct", 0) or 0)
+
+    recent = rows[:5]
+    net_buying = sum(1 for row in recent if row.get("change_qty", 0) > 0)
+
+    if exhaust >= FOREIGN_EXHAUST_WARN:
+        return {
+            "signal": "주의",
+            "note": f"외국인 한도 {exhaust:.0f}% (매수 여력 부족)",
+            "score": -1,
+            "exhaust_rate": exhaust,
+            "foreign_weight": weight,
+        }
+    if exhaust >= FOREIGN_EXHAUST_STRONG and net_buying >= 3:
+        return {
+            "signal": "양호",
+            "note": f"외국인 적극매수 (한도 {exhaust:.0f}%, {net_buying}/5일)",
+            "score": 2,
+            "exhaust_rate": exhaust,
+            "foreign_weight": weight,
+        }
+    if net_buying >= 4:
+        return {
+            "signal": "양호",
+            "note": f"외국인 연속순매수 ({net_buying}/5일)",
+            "score": 1,
+            "exhaust_rate": exhaust,
+            "foreign_weight": weight,
+        }
+
+    return {
+        "signal": "중립",
+        "note": f"외국인 한도 {exhaust:.0f}% / 비중 {weight:.1f}%",
+        "score": 0,
+        "exhaust_rate": exhaust,
+        "foreign_weight": weight,
+    }
+
+
 # ──────────────────────────────────────────────
 # 유틸리티
 # ──────────────────────────────────────────────
@@ -264,6 +371,7 @@ def _empty_result() -> dict:
         "loan": _neutral("대차"),
         "credit": _neutral("신용"),
         "investor": _neutral("수급"),
+        "foreign_exhaust": _neutral("외국인한도"),
         "strength": _neutral("체결강도"),
         "summary_line": "",
         "total_score": 0,
@@ -278,7 +386,14 @@ def _build_summary_line(result: dict) -> str:
     caution_items = []
     good_items = []
 
-    for key in ("short_selling", "loan", "credit", "investor", "strength"):
+    for key in (
+        "short_selling",
+        "loan",
+        "credit",
+        "investor",
+        "foreign_exhaust",
+        "strength",
+    ):
         item = result.get(key, {})
         sig = item.get("signal", "중립")
         note = item.get("note", "")

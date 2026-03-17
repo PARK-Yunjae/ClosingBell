@@ -1,10 +1,10 @@
 """
-ClosingBell v3.7 watchlist monitor.
+ClosingBell v4.0 watchlist monitor.
 
 Runtime-only watchlist logic:
-- store and evaluate ranks 1, 2, 3 only
-- remove ranks 4 and 5 from both persistence and pick flow
+- store and evaluate ranked watchlist candidates (v4: 1~5위)
 - send the 15:00 Discord pick based on live watchlist checks
+- v3.8: 최소 기술적 조건 필터 (BUY_MIN_CONDITIONS), rank 보너스 평탄화
 """
 import logging
 import pandas as pd
@@ -17,7 +17,7 @@ from config import (
     GLOBAL_CSV, OHLCV_DIR, WATCHLIST_MAX_DAYS, WATCHLIST_MAX_STOCKS,
     PULLBACK_MA5_GAP, PULLBACK_VOL_DECLINE, PULLBACK_BB_LOWER,
     DAILY_PICK_TOP_K,
-    BUY_A_MIN_SCORE, BUY_B_MIN_SCORE,
+    BUY_A_MIN_SCORE, BUY_B_MIN_SCORE, BUY_MIN_CONDITIONS,
     BUY_DART_DANGER_PENALTY, BUY_DART_CAUTION_PENALTY,
     BUY_NEWS_DANGER_PENALTY, BUY_NEWS_CAUTION_PENALTY,
     BUY_REGIME_CHAOTIC_BONUS, BUY_REGIME_RISING_PENALTY, BUY_REGIME_WEAK_PENALTY,
@@ -27,10 +27,16 @@ from config import (
     RANK1_SWEET_SPOT, RANK1_WINDOW_START, RANK1_WINDOW_END,
     RANK2_SWEET_SPOT, RANK2_WINDOW_START, RANK2_WINDOW_END,
     RANK3_SWEET_SPOT, RANK3_WINDOW_START, RANK3_WINDOW_END,
-    SUPPLY_CAUTION_PENALTY,
+    RANK4_SWEET_SPOT, RANK4_WINDOW_START, RANK4_WINDOW_END,
+    RANK5_SWEET_SPOT, RANK5_WINDOW_START, RANK5_WINDOW_END,
+    RANK4_PULLBACK_BONUS, RANK5_PULLBACK_BONUS,
+    SUPPLY_CAUTION_PENALTY, SUPPLY_DANGER_PENALTY,
+    SUPPLY_DANGER_THRESH, SUPPLY_CAUTION_THRESH,
+    SUPPLY_GOOD_BONUS, SUPPLY_GOOD_THRESH,
 )
 from storage import (
     load_active_watchlists as load_active_watchlists_db,
+    save_market_regime_daily,
     save_watchlist_payload,
 )
 from trading_calendar import add_trading_days, trading_days_since
@@ -42,6 +48,19 @@ except Exception:
         return None
 
 logger = logging.getLogger("closingbell")
+CONVICTION_FORCE_C_FLAGS = {"DART위험", "뉴스위험", "대주주투매"}
+CONVICTION_A_CAP_FLAGS = {
+    "DART주의",
+    "뉴스주의",
+    "수급위험",
+    "수급주의",
+    "과열",
+    "급락",
+    "약세장",
+    "이벤트주의",
+    "외신경고",
+    "테마과열",
+}
 
 # ──────────────────────────────────────────────
 # Rank timing windows loaded from .env-backed config.
@@ -62,11 +81,23 @@ RANK_TIMING = {
         "window": (RANK3_WINDOW_START, RANK3_WINDOW_END),
         "note": "깊은 조정 후 반등형",
     },
+    4: {
+        "sweet_spot": RANK4_SWEET_SPOT,
+        "window": (RANK4_WINDOW_START, RANK4_WINDOW_END),
+        "note": "중기 눌림형",
+    },
+    5: {
+        "sweet_spot": RANK5_SWEET_SPOT,
+        "window": (RANK5_WINDOW_START, RANK5_WINDOW_END),
+        "note": "초기 모멘텀형",
+    },
 }
 RANK_PULLBACK_BONUS = {
     1: RANK1_PULLBACK_BONUS,
     2: RANK2_PULLBACK_BONUS,
     3: RANK3_PULLBACK_BONUS,
+    4: RANK4_PULLBACK_BONUS,
+    5: RANK5_PULLBACK_BONUS,
 }
 DEFAULT_TIMING_RANK = max(RANK_TIMING)
 
@@ -143,6 +174,38 @@ def _conviction_from_score(score: float) -> str:
     return "C"
 
 
+def _dedupe_flags(flags: list[str] | None) -> list[str]:
+    result = []
+    seen = set()
+    for flag in flags or []:
+        text = str(flag).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _conviction_with_guardrails(
+    score: float,
+    risk_flags: list[str] | None,
+    dart_risk: str = "",
+    news_risk: str = "",
+) -> str:
+    flags = set(_dedupe_flags(risk_flags))
+    if dart_risk == "위험" or news_risk == "위험" or flags & CONVICTION_FORCE_C_FLAGS:
+        return "C"
+
+    conviction = _conviction_from_score(score)
+    if conviction == "A" and (
+        dart_risk == "주의"
+        or news_risk == "주의"
+        or bool(flags & CONVICTION_A_CAP_FLAGS)
+    ):
+        return "B"
+    return conviction
+
+
 def make_action_label(pick: dict) -> dict:
     """
     종목 데이터로부터 한줄 액션 라벨 + 색상을 생성.
@@ -158,7 +221,7 @@ def make_action_label(pick: dict) -> dict:
     in_window = pick.get("in_window", False)
 
     # 위험 종목
-    danger_flags = {"DART위험", "뉴스위험", "대주주투매"}
+    danger_flags = {"DART위험", "뉴스위험", "대주주투매", "수급위험"}
     if danger_flags & set(flags):
         reasons = []
         if "DART위험" in flags or dart_risk == "위험":
@@ -167,6 +230,8 @@ def make_action_label(pick: dict) -> dict:
             reasons.append("악재 뉴스")
         if "대주주투매" in flags:
             reasons.append("대주주 매도")
+        if "수급위험" in flags:
+            reasons.append("수급 위험")
         return {
             "label": "⛔ 진입 비추",
             "detail": " + ".join(reasons),
@@ -182,7 +247,7 @@ def make_action_label(pick: dict) -> dict:
         }
 
     # 주의 종목 (뉴스/DART 주의 or 과열)
-    caution_flags = {"DART주의", "과열", "급락", "약세장", "수급주의"}
+    caution_flags = {"DART주의", "뉴스주의", "과열", "급락", "약세장", "수급주의", "외신경고", "테마과열"}
     active_cautions = caution_flags & set(flags)
     if news_risk == "주의":
         active_cautions.add("뉴스주의")
@@ -403,9 +468,13 @@ def save_watchlist(result: dict):
             "rank": rank,
             "score": stock["score"],
             "entry_price": stock["price"],
+            "change_rate": stock.get("change_rate", 0),
             "cci_at_screen": stock.get("cci", 0),
             "rsi_at_screen": stock.get("rsi", 0),
             "ma20_gap_at_screen": stock.get("ma20_gap", 0),
+            "vp_above_pct": stock.get("vp_above_pct", 50),
+            "foreign_net": stock.get("foreign_net", 0),
+            "pool_type": stock.get("pool_type", "unknown"),
             "overheat": stock.get("overheat", False),
             "sweet_spot_day": timing["sweet_spot"],
             "window_start": timing["window"][0],
@@ -530,7 +599,7 @@ def check_pullback() -> list[dict]:
 # ──────────────────────────────────────────────
 def daily_top3() -> list[dict]:
     """
-    활성 워치리스트 전체를 스코어링 → TOP3 반환.
+    활성 워치리스트 전체를 스코어링 → 당일 매수 후보 반환.
     15:00에 호출 — 키움 API로 현재가 + DART 재확인 + 네이버 뉴스.
     """
     from kiwoom_api import KiwoomAPI
@@ -543,6 +612,35 @@ def daily_top3() -> list[dict]:
     api = KiwoomAPI(KIWOOM_APPKEY, KIWOOM_SECRETKEY, KIWOOM_BASE_URL, API_DELAY)
     api.ensure_token()
     today = datetime.now().strftime("%Y-%m-%d")
+    market_ctx = get_market_context()
+    today_ctx = market_ctx.today_context(today) if market_ctx else {}
+
+    # ⓪ 시장 지수 조회 (웹훅 상단 표시용)
+    market_snapshot = {}
+    try:
+        kospi = api.get_index_price("001")
+        market_snapshot["kospi"] = kospi["price"]
+        market_snapshot["kospi_change"] = kospi["change_rate"]
+    except Exception:
+        market_snapshot["kospi"] = 0
+        market_snapshot["kospi_change"] = 0
+    try:
+        kosdaq = api.get_index_price("101")
+        market_snapshot["kosdaq"] = kosdaq["price"]
+        market_snapshot["kosdaq_change"] = kosdaq["change_rate"]
+    except Exception:
+        market_snapshot["kosdaq"] = 0
+        market_snapshot["kosdaq_change"] = 0
+    try:
+        gdf = pd.read_csv(GLOBAL_CSV)
+        gdf.columns = [c.strip().lower() for c in gdf.columns]
+        nasdaq_valid = gdf.dropna(subset=["nasdaq_change_pct"])
+        if len(nasdaq_valid) > 0:
+            market_snapshot["nasdaq_change"] = round(float(nasdaq_valid.iloc[-1]["nasdaq_change_pct"]), 2)
+        else:
+            market_snapshot["nasdaq_change"] = 0
+    except Exception:
+        market_snapshot["nasdaq_change"] = 0
 
     all_scored = []
     checked = set()
@@ -601,6 +699,7 @@ def daily_top3() -> list[dict]:
                     result["risk_flags"] = result.get("risk_flags", []) + ["뉴스위험"]
                 elif news_info["risk"] == "주의":
                     result["conviction_score"] -= BUY_NEWS_CAUTION_PENALTY
+                    result["risk_flags"] = result.get("risk_flags", []) + ["뉴스주의"]
 
                 # ⑤ 수급 체크 (공매도·대차·신용·투자자·체결강도)
                 supply_info = _check_supply(code, api)
@@ -608,14 +707,26 @@ def daily_top3() -> list[dict]:
                 result["supply_line"] = supply_info.get("summary_line", "")
                 supply_score = supply_info.get("total_score", 0)
 
-                # 수급 주의 시 감점
-                if supply_score <= -3:
+                # 수급 2단계 감점/가점
+                if supply_score <= SUPPLY_DANGER_THRESH:
+                    result["conviction_score"] -= SUPPLY_DANGER_PENALTY
+                    result["risk_flags"] = result.get("risk_flags", []) + ["수급위험"]
+                elif supply_score <= SUPPLY_CAUTION_THRESH:
                     result["conviction_score"] -= SUPPLY_CAUTION_PENALTY
                     result["risk_flags"] = result.get("risk_flags", []) + ["수급주의"]
+                elif supply_score >= SUPPLY_GOOD_THRESH:
+                    result["conviction_score"] += SUPPLY_GOOD_BONUS
+                    result["risk_flags"] = result.get("risk_flags", []) + ["수급양호"]
 
                 # 등급 재계산 (감점 반영)
                 s = result["conviction_score"]
-                result["conviction"] = _conviction_from_score(s)
+                result["risk_flags"] = _dedupe_flags(result.get("risk_flags", []))
+                result["conviction"] = _conviction_with_guardrails(
+                    s,
+                    result.get("risk_flags", []),
+                    dart_risk=result.get("dart_risk", ""),
+                    news_risk=result.get("news_risk", ""),
+                )
 
                 result["watchlist_date"] = created
                 result["rank"] = rank
@@ -634,9 +745,36 @@ def daily_top3() -> list[dict]:
     market_ctx = get_market_context()
     if market_ctx and market_ctx.should_conservative(today):
         pick_limit = 1
+
+    # ── v4 장세 프리셋 ──
+    regime_ctx = _market_regime_context(today)
+    regime = regime_ctx.get("regime", "mixed")
+    if regime == "rising":
+        # 공격장: 기본 TOP5, A 기준 완화(-3)
+        logger.info("📈 장세 프리셋: 공격장 (rising)")
+        for s in all_scored:
+            s["conviction_score"] += 3  # 기대감 보정
+            s["conviction"] = _conviction_from_score(s["conviction_score"])
+    elif regime == "weak":
+        # 방어장: TOP3만, A만 추천
+        pick_limit = min(pick_limit, 3)
+        logger.info("📉 장세 프리셋: 방어장 (weak) → TOP%d", pick_limit)
+        # C등급 제거
+        all_scored = [s for s in all_scored if s.get("conviction") in ("A", "B")]
+    elif regime == "chaotic":
+        # 혼란장: TOP3만, 보수적
+        pick_limit = min(pick_limit, 3)
+        logger.info("🌪️ 장세 프리셋: 혼란장 (chaotic) → TOP%d", pick_limit)
+
     top3 = all_scored[:pick_limit]
 
-    # ⑦ 테마 강도 (TOP3에만 — API 3회)
+    # 시장 지수 데이터 + 장세 프리셋을 각 pick에 첨부
+    for pick in top3:
+        pick["market_snapshot"] = market_snapshot
+        pick["market_regime"] = pick.get("market_regime", regime)
+        pick["pick_date"] = today
+
+    # ⑦ 테마 강도 (TOP에만 — API)
     for pick in top3:
         try:
             themes = api.get_stock_themes(pick["code"])
@@ -657,12 +795,15 @@ def daily_top3() -> list[dict]:
                         + (f" 외 {len(themes)-1}개 테마" if len(themes) > 1 else "")
                     )
             else:
+                pick["theme_name"] = ""
                 pick["theme_line"] = ""
         except Exception as e:
             logger.debug("테마 조회 실패 [%s]: %s", pick.get("name"), e)
+            pick["theme_name"] = ""
             pick["theme_line"] = ""
 
     # 시장 전체 핫 테마 (1회 호출)
+    hot_themes = []
     try:
         hot_themes = api.get_theme_groups(sort="3", period="1")[:3]
         market_theme_text = " | ".join(
@@ -670,30 +811,107 @@ def daily_top3() -> list[dict]:
         )
         for pick in top3:
             pick["market_themes"] = market_theme_text
+            pick["market_theme_items"] = hot_themes
     except Exception:
         pass
 
-    # ⑧ 외신 + 유튜브 (TOP3에만 — API 절약)
+    # ⑧ 외신 거시 리스크 (1회) + 유튜브 테마 과열 (테마별 최대 3회)
+    macro_theme_names = []
     for pick in top3:
-        name = pick.get("name", "")
-        products = pick.get("main_products", "")
+        theme_name = pick.get("theme_name", "")
+        if theme_name and theme_name not in macro_theme_names:
+            macro_theme_names.append(theme_name)
+    for theme in hot_themes:
+        theme_name = theme.get("name", "")
+        if theme_name and theme_name not in macro_theme_names:
+            macro_theme_names.append(theme_name)
 
-        # 외신
-        foreign = _check_foreign_news(name, products)
-        pick["foreign_news_note"] = foreign.get("note", "")
-        pick["foreign_news_score"] = foreign.get("score", 0)
+    macro_risk = _check_foreign_macro(macro_theme_names[:3])
+    macro_note = macro_risk.get("note", "")
+    macro_signal = macro_risk.get("signal", "중립")
+    if macro_note:
+        logger.info("  외신 거시: %s (hits=%s)", macro_note, macro_risk.get("hits", 0))
 
-        # 유튜브
-        yt = _check_youtube(name, products)
-        pick["youtube_note"] = yt.get("note", "")
-        pick["youtube_score"] = yt.get("score", 0)
+    theme_risk_map = {}
+    theme_names = []
+    for pick in top3:
+        theme_name = pick.get("theme_name", "")
+        if theme_name and theme_name not in theme_names:
+            theme_names.append(theme_name)
+    for theme in theme_names[:3]:
+        yt = _check_theme_youtube(theme)
+        theme_risk_map[theme] = yt
+        yt_note = yt.get("note", "") or "결과없음"
+        logger.info("  유튜브 테마 [%s]: %s (videos=%s)", theme, yt_note, yt.get("video_count", 0))
+
+    for pick in top3:
+        pick["macro_risk_note"] = macro_note
+        pick["foreign_macro_risk"] = macro_signal
+
+        if macro_signal == "주의":
+            pick["risk_flags"] = pick.get("risk_flags", []) + ["외신경고"]
+
+        theme_result = theme_risk_map.get(pick.get("theme_name", ""), {})
+        pick["youtube_note"] = theme_result.get("note", "")
+        pick["youtube_risk"] = theme_result.get("signal", "중립")
+        if theme_result.get("signal") == "주의":
+            pick["risk_flags"] = pick.get("risk_flags", []) + ["테마과열"]
+
+        if not pick.get("event_warning"):
+            pick["event_warning"] = today_ctx.get("event_warning", "")
+
+        pick["risk_flags"] = _dedupe_flags(pick.get("risk_flags", []))
+        pick["conviction"] = _conviction_with_guardrails(
+            pick.get("conviction_score", 0),
+            pick.get("risk_flags", []),
+            dart_risk=pick.get("dart_risk", ""),
+            news_risk=pick.get("news_risk", ""),
+        )
+        pick["action"] = make_action_label(pick)
 
     logger.info("daily_top3: %d종목 스코어링 → TOP%d 선정", len(all_scored), pick_limit)
     for i, s in enumerate(top3):
         flags = ", ".join(s.get("risk_flags", [])) or "없음"
-        logger.info("  %d. [%s] #%d %s — %d점 (%s) 위험:%s",
+        extras = []
+        if s.get("foreign_news_note"):
+            extras.append(f"외신:{s['foreign_news_note'][:20]}")
+        if s.get("youtube_note"):
+            extras.append(f"YT:{s['youtube_note'][:20]}")
+        extra_str = f" | {', '.join(extras)}" if extras else ""
+        logger.info("  %d. [%s] #%d %s — %d점 (%s) 조건%d개 위험:%s%s",
                      i + 1, s["conviction"], s["rank"], s["name"],
-                     s["conviction_score"], s["signal_type"] or "조건없음", flags)
+                     s["conviction_score"], s["signal_type"] or "조건없음",
+                     s.get("conditions_met", 0), flags, extra_str)
+
+    try:
+        regime = top3[0].get("market_regime") if top3 else _market_regime_context(today).get("regime", "")
+        save_market_regime_daily(
+            {
+                "date": today,
+                "kospi_change": market_snapshot.get("kospi_change"),
+                "kosdaq_change": market_snapshot.get("kosdaq_change"),
+                "nasdaq_change": market_snapshot.get("nasdaq_change"),
+                "regime": regime,
+                "themes": [
+                    {"name": item.get("name", ""), "change_rate": item.get("change_rate", 0)}
+                    for item in hot_themes
+                ],
+                "macro_risk": macro_note,
+                "event_warning": today_ctx.get("event_warning", ""),
+            }
+        )
+    except Exception as e:
+        logger.debug("market_regime_daily 저장 실패: %s", e)
+
+    # v4: 조건 스냅샷 DB 저장 (분석용)
+    try:
+        from storage import delete_pick_snapshots, save_pick_snapshot
+        delete_pick_snapshots(today)
+        for pick in top3:
+            save_pick_snapshot(pick, market_snapshot)
+        logger.info("pick_snapshots 저장: %d건", len(top3))
+    except Exception as e:
+        logger.debug("스냅샷 저장 실패: %s", e)
 
     return top3
 
@@ -726,23 +944,23 @@ def _check_supply(code: str, api) -> dict:
         return {"summary_line": "", "total_score": 0}
 
 
-def _check_foreign_news(stock_name: str, products: str = "") -> dict:
-    """외신 체크 (NewsAPI)"""
+def _check_foreign_macro(theme_names: list[str] | None = None) -> dict:
+    """시장 전체용 거시 외신 체크"""
     try:
-        from foreign_news_checker import check_foreign_news
-        # 종목명 → 영문 변환은 향후 매핑 사전으로 개선
-        # 지금은 종목명 그대로 전달 (영문명이 있는 종목만 작동)
-        return check_foreign_news(stock_name, products=products)
-    except Exception:
+        from foreign_news_checker import check_macro_risk
+        return check_macro_risk(theme_names=theme_names)
+    except Exception as e:
+        logger.debug("외신 거시 체크 실패: %s", e)
         return {"signal": "중립", "note": "", "hits": 0, "score": 0}
 
 
-def _check_youtube(stock_name: str, products: str = "") -> dict:
-    """유튜브 체크 (YouTube Data API)"""
+def _check_theme_youtube(theme_name: str) -> dict:
+    """유튜브 테마 과열 체크"""
     try:
-        from youtube_checker import check_youtube
-        return check_youtube(stock_name, products=products)
-    except Exception:
+        from youtube_checker import check_theme_overheat
+        return check_theme_overheat(theme_name)
+    except Exception as e:
+        logger.debug("유튜브 체크 실패 [%s]: %s", theme_name, e)
         return {"signal": "중립", "note": "", "video_count": 0, "score": 0}
 
 
@@ -772,92 +990,119 @@ def _score_stock(
     bb_position = snapshot["bb_position"]
     price_change = snapshot["price_change"]
     cci_now, rsi_now = _calc_rsi_cci(df)
+    recent_20 = list(df["close"].tail(19).values) + [price]
+    ma20_now = float(np.mean(recent_20)) if len(recent_20) == 20 else 0
+    ma20_gap_now = (price / ma20_now - 1) * 100 if ma20_now > 0 else 0
 
-    # ── 기술적 조건 점수화 ──
+    # ── 구조점수 (0~55점): 차트가 지금 예쁜가 ──
     tech = []
-    score = 0
+    structure = 0
     risk_flags = []
 
+    # MA5 근접 (0~15)
     if ma5_gap <= PULLBACK_MA5_GAP:
         tech.append("MA5터치")
-        score += 15
+        structure += 15
     elif ma5_gap <= PULLBACK_MA5_GAP * 2:
-        score += 8
+        structure += 8
 
+    # 거래량 감소 (0~12)
     if vol_decline <= PULLBACK_VOL_DECLINE:
         tech.append("거래량감소")
-        score += 10
+        structure += 12
     elif vol_decline <= PULLBACK_VOL_DECLINE * 1.5:
-        score += 5
+        structure += 6
 
+    # BB 하단 (0~10)
     if bb_position <= PULLBACK_BB_LOWER:
         tech.append("BB하단")
-        score += 10
+        structure += 10
     elif bb_position <= PULLBACK_BB_LOWER * 1.5:
-        score += 5
+        structure += 5
 
+    # 가격 조정 깊이 (0~6)
     if price_change < -5:
         tech.append("깊은조정")
-        score += 5
+        structure += 6
     elif price_change < -2:
         tech.append("가격조정")
-        score += 3
+        structure += 3
 
+    # CCI 냉각 (0~6)
     cci_at_screen = stock_info.get("cci_at_screen", 0)
     if cci_at_screen > 150 and cci_now < cci_at_screen * 0.7:
         tech.append("CCI냉각")
-        score += 5
+        structure += 6
 
+    # RSI 위치 (0~6)
     if rsi_now < 40:
         tech.append("RSI과매도")
-        score += 5
+        structure += 6
     elif rsi_now < 50:
-        score += 2
+        structure += 3
 
-    # ── 타이밍 (0~30점) ──
+    # 최소 1개 이상 충족해야 매수 후보
+    if len(tech) == 0:
+        return None
+
+    # ── 기대감점수 (0~45점): 왜 다시 갈 수 있는가 ──
+    expectation = 0
+
+    # 복합 신호 보너스 (0~5)
+    if len(tech) >= 3:
+        expectation += 5
+    elif len(tech) >= BUY_MIN_CONDITIONS:
+        expectation += 3
+
+    # 타이밍 정확도 (0~30)
     window_start = stock_info.get("window_start", 1)
     window_end = stock_info.get("window_end", 5)
     timing_diff = abs(days_elapsed - sweet_spot)
     in_window = window_start <= days_elapsed <= window_end
 
     if in_window and timing_diff == 0:
-        score += 30
+        expectation += 30
     elif in_window and timing_diff == 1:
-        score += 22
+        expectation += 22
     elif in_window:
-        score += 15
+        expectation += 15
     elif days_elapsed < window_start:
-        score += 5
-    else:
-        score += 0
+        expectation += 5
 
-    # ── D+1 명시적 감점 (백테스트: 42% vs D+2~3: 71~75%) ──
-    if days_elapsed <= 1:
-        score -= 8
-        risk_flags.append("D+1이른진입")
-
-    # ── 순위 보너스 (0~20점) ──
+    # 순위 보너스 (0~10)
     rank = stock_info.get("rank", 99)
     rank_bonus = RANK_PULLBACK_BONUS.get(rank, 0)
-    score += rank_bonus
+    expectation += max(0, rank_bonus + 5)  # shift: rank1=10, rank2=5, rank3=5, rank4=0, rank5=0
 
-    # ── 과열 감점 ──
+    # ── 리스크감점 (0~-30): 좋아 보여도 위험한가 ──
+    risk_penalty = 0
+
+    # D+1 이른 진입
+    if days_elapsed <= 1:
+        risk_penalty -= 8
+        risk_flags.append("D+1이른진입")
+
+    # 과열
     if stock_info.get("overheat"):
-        score -= 15
+        risk_penalty -= 12
         risk_flags.append("과열")
 
-    # ── 급락 감점 ──
+    # 급락
     if price_change < -10:
-        score -= 5
+        risk_penalty -= 5
         risk_flags.append("급락")
+
+    # ── 최종 합산 (100점 만점) ──
+    score = structure + expectation + risk_penalty
 
     score, regime = _apply_regime_adjustment(score, risk_flags, date_str)
     score, market_ctx_info = _apply_market_context_adjustment(code, rank, price, score, risk_flags, date_str)
     if market_ctx_info["blocked"]:
         return None
 
-    # ── 확신도 등급 ──
-    conviction = _conviction_from_score(score)
+    # ── ABC 등급 ──
+    risk_flags = _dedupe_flags(risk_flags)
+    conviction = _conviction_with_guardrails(score, risk_flags)
 
     rank_info = _rank_timing(rank)
     meta = _merged_company_context(stock_info, price)
@@ -871,24 +1116,33 @@ def _score_stock(
         "main_products": meta["main_products"],
         "holder_tag": meta["holder_tag"],
         "current_price": price,
+        "change_rate": cur_price.get("change_rate", 0),
         "signal_type": "+".join(tech) if tech else "",
         "ma5_gap": round(ma5_gap, 1),
+        "ma20_gap": round(ma20_gap_now, 1),
         "vol_decline": round(vol_decline, 2),
         "bb_position": round(bb_position, 2),
         "price_change_from_screen": round(price_change, 1),
         "conditions_met": len(tech),
         "conviction": conviction,
         "conviction_score": score,
+        "structure_score": structure,
+        "expectation_score": expectation,
+        "risk_score": risk_penalty,
         "sweet_spot_day": sweet_spot,
         "in_window": in_window,
         "cci": round(cci_now, 1),
         "rsi": round(rsi_now, 1),
+        "vp_above_pct": stock_info.get("vp_above_pct"),
+        "overheat": bool(stock_info.get("overheat")),
         "rank_note": rank_info.get("note", ""),
         "market_regime": regime,
         "event_warning": market_ctx_info["event_warning"],
         "calendar_adj": market_ctx_info["event_adj"],
         "holder_penalty": market_ctx_info["holder_penalty"],
         "risk_flags": risk_flags,
+        "pool_type": stock_info.get("pool_type", "unknown"),
+        "foreign_net": stock_info.get("foreign_net", 0),
         "dart_risk": "",
         "dart_note": "",
         "news_risk": "",
@@ -937,7 +1191,7 @@ def _check_single(
         tech.append("가격조정")
 
     if not tech:
-        return None
+        return None  # 기술조건 0개면 제외, 1개 이상이면 점수로 판단
 
     # ── 확신도 점수 (0~100) ──
     score = 0
@@ -1063,6 +1317,3 @@ if __name__ == "__main__":
             print(f"[{conv}] #{sig['rank']} {sig['name']} "
                   f"-- {sig['signal_type']} "
                   f"(D+{sig['days_elapsed']})")
-
-
-
